@@ -1,0 +1,33 @@
+# Dados gerados (parquets grandes, plaintexts, nonces)
+data/interim/
+data/processed/
+data/raw/
+
+# Outputs de experimentos (resultados, checkpoints, figuras)
+reports/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Logs de execução
+*.log
+
+# Ambientes virtuais
+.venv/
+venv/
+env/
+
+# Sessão Claude Code (privado)
+.claude/
+
+# Artefatos de build MSVC
+src/crypto/Release/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
