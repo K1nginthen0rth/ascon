@@ -180,12 +180,13 @@ def train_cnn(
     cnn_id:     str   = "cnn",
     ckpt_dir:   Optional[Path] = None,
     mlflow_prefix: str = "",
+    resume:     bool  = True,
 ) -> tuple[nn.Module, int]:
     """
     Treina CNN com early stopping no val_loss.
 
     Checkpoint salvo após cada epoch em ckpt_dir (se fornecido).
-    Resume automaticamente se checkpoint existir.
+    Resume a partir do checkpoint se resume=True e checkpoint existir.
 
     Returns:
         (model com melhor estado, best_epoch)
@@ -196,12 +197,13 @@ def train_cnn(
     best_val, best_state, best_ep, no_imp = float("inf"), None, 0, 0
     start_ep = 1
 
-    # Resume automático
     ckpt = _ckpt_path(ckpt_dir, fold_id, cnn_id)
-    if ckpt and ckpt.exists():
+    if resume and ckpt and ckpt.exists():
         start_ep, best_val, best_ep = _load_ckpt(ckpt, model, optim, device)
-        no_imp = 0  # reinicia contagem de paciência após resume
-        print(f"  Resuming fold {fold_id} {cnn_id} from epoch {start_ep}")
+        no_imp = 0
+        print(f"  Resumindo do fold {fold_id} {cnn_id} epoch {start_ep - 1}")
+    elif verbose:
+        print(f"  Iniciando do zero (fold {fold_id} {cnn_id})")
 
     train_loader = _loader(train_ds, shuffle=True)
     val_loader   = _loader(val_ds,   shuffle=False)
@@ -284,6 +286,7 @@ def train_cnn_fixed(
     cnn_id:   str   = "final",
     ckpt_dir: Optional[Path] = None,
     mlflow_prefix: str = "",
+    resume:   bool  = True,
 ) -> nn.Module:
     """Treina por n_epochs fixo sem early stopping (modelo final)."""
     torch.manual_seed(seed)
@@ -293,9 +296,11 @@ def train_cnn_fixed(
     ckpt   = _ckpt_path(ckpt_dir, fold_id, cnn_id)
     start_ep = 1
 
-    if ckpt and ckpt.exists():
+    if resume and ckpt and ckpt.exists():
         start_ep, _, _ = _load_ckpt(ckpt, model, optim, device)
-        print(f"  Resuming final {cnn_id} from epoch {start_ep}")
+        print(f"  Resumindo checkpoint final {cnn_id} epoch {start_ep - 1}")
+    else:
+        print(f"  Iniciando do zero (modelo final {cnn_id})")
 
     for ep in range(start_ep, n_epochs + 1):
         model.train()
@@ -420,13 +425,20 @@ class HybridExtractor:
         y_train:   np.ndarray,
         cts_val:   list,
         y_val:     np.ndarray,
-        fold_id:   int  = 0,
-        verbose:   bool = False,
+        fold_id:   int            = 0,
+        verbose:   bool           = False,
+        resume:    bool           = True,
+        ckpt_dir:  Optional[Path] = None,
     ) -> "HybridExtractor":
-        """Treina CNN1D e CNN2D com early stopping. Salva checkpoints se ckpt_dir definido."""
-        cfg       = self.cfg
-        dev       = cfg.device
-        seed_fold = cfg.seed_model + fold_id * 100   # seeds independentes por fold
+        """Treina CNN1D e CNN2D com early stopping.
+
+        resume=True carrega checkpoint de ckpt_dir (ou cfg.ckpt_dir) se existir.
+        ckpt_dir sobrescreve cfg.ckpt_dir quando fornecido.
+        """
+        cfg      = self.cfg
+        dev      = cfg.device
+        ckpt_dir = ckpt_dir if ckpt_dir is not None else cfg.ckpt_dir
+        seed_fold = cfg.seed_model + fold_id * 100
         seed_1d   = seed_fold + 1
         seed_2d   = seed_fold + 2
 
@@ -434,26 +446,27 @@ class HybridExtractor:
             print(f"    [CNN1D] max_len={cfg.max_len_1d}")
         torch.manual_seed(seed_1d)
         self.model1d = CiphertextCNN1D(
-            n_classes    = cfg.n_classes,
-            max_len      = cfg.max_len_1d,
-            n_filters    = cfg.n_filters_1d,
+            n_classes     = cfg.n_classes,
+            max_len       = cfg.max_len_1d,
+            n_filters     = cfg.n_filters_1d,
             n_conv_blocks = cfg.n_conv_1d,
         ).to(dev)
         t0 = time.perf_counter()
         self.model1d, self.best_epoch_1d = train_cnn(
-            model     = self.model1d,
-            train_ds  = CiphertextSeqDataset(cts_train, y_train, cfg.max_len_1d),
-            val_ds    = CiphertextSeqDataset(cts_val,   y_val,   cfg.max_len_1d),
-            device    = dev,
-            lr        = cfg.lr,
-            n_epochs  = cfg.n_epochs,
-            patience  = cfg.patience,
-            seed      = seed_1d,
-            verbose   = verbose,
-            fold_id   = fold_id,
-            cnn_id    = "1d",
-            ckpt_dir  = cfg.ckpt_dir,
+            model         = self.model1d,
+            train_ds      = CiphertextSeqDataset(cts_train, y_train, cfg.max_len_1d),
+            val_ds        = CiphertextSeqDataset(cts_val,   y_val,   cfg.max_len_1d),
+            device        = dev,
+            lr            = cfg.lr,
+            n_epochs      = cfg.n_epochs,
+            patience      = cfg.patience,
+            seed          = seed_1d,
+            verbose       = verbose,
+            fold_id       = fold_id,
+            cnn_id        = "1d",
+            ckpt_dir      = ckpt_dir,
             mlflow_prefix = f"fold{fold_id:02d}_1d",
+            resume        = resume,
         )
         if verbose:
             print(f"    CNN1D ok: best_ep={self.best_epoch_1d}  t={time.perf_counter()-t0:.1f}s")
@@ -465,19 +478,20 @@ class HybridExtractor:
         self.model2d = CiphertextCNN2D(n_classes=cfg.n_classes).to(dev)
         t0 = time.perf_counter()
         self.model2d, self.best_epoch_2d = train_cnn(
-            model     = self.model2d,
-            train_ds  = CiphertextCoocDataset(cts_train, y_train),
-            val_ds    = CiphertextCoocDataset(cts_val,   y_val),
-            device    = dev,
-            lr        = cfg.lr,
-            n_epochs  = cfg.n_epochs,
-            patience  = cfg.patience,
-            seed      = seed_2d,
-            verbose   = verbose,
-            fold_id   = fold_id,
-            cnn_id    = "2d",
-            ckpt_dir  = cfg.ckpt_dir,
+            model         = self.model2d,
+            train_ds      = CiphertextCoocDataset(cts_train, y_train),
+            val_ds        = CiphertextCoocDataset(cts_val,   y_val),
+            device        = dev,
+            lr            = cfg.lr,
+            n_epochs      = cfg.n_epochs,
+            patience      = cfg.patience,
+            seed          = seed_2d,
+            verbose       = verbose,
+            fold_id       = fold_id,
+            cnn_id        = "2d",
+            ckpt_dir      = ckpt_dir,
             mlflow_prefix = f"fold{fold_id:02d}_2d",
+            resume        = resume,
         )
         if verbose:
             print(f"    CNN2D ok: best_ep={self.best_epoch_2d}  t={time.perf_counter()-t0:.1f}s")
@@ -491,32 +505,39 @@ class HybridExtractor:
         y_train:     np.ndarray,
         n_epochs_1d: int,
         n_epochs_2d: int,
-        verbose:     bool = False,
+        verbose:     bool           = False,
+        resume:      bool           = True,
+        ckpt_dir:    Optional[Path] = None,
     ) -> "HybridExtractor":
-        """Treina CNNs por épocas fixas (modelo final — sem early stopping)."""
-        cfg     = self.cfg
-        dev     = cfg.device
-        seed_1d = cfg.seed_model + 1   # seeds fixas para modelo final (sem fold offset)
-        seed_2d = cfg.seed_model + 2
+        """Treina CNNs por épocas fixas (modelo final — sem early stopping).
+
+        resume=True carrega checkpoint de ckpt_dir (ou cfg.ckpt_dir) se existir.
+        """
+        cfg      = self.cfg
+        dev      = cfg.device
+        ckpt_dir = ckpt_dir if ckpt_dir is not None else cfg.ckpt_dir
+        seed_1d  = cfg.seed_model + 1
+        seed_2d  = cfg.seed_model + 2
 
         torch.manual_seed(seed_1d)
         self.model1d = CiphertextCNN1D(
-            n_classes    = cfg.n_classes,
-            max_len      = cfg.max_len_1d,
-            n_filters    = cfg.n_filters_1d,
+            n_classes     = cfg.n_classes,
+            max_len       = cfg.max_len_1d,
+            n_filters     = cfg.n_filters_1d,
             n_conv_blocks = cfg.n_conv_1d,
         ).to(dev)
         t0 = time.perf_counter()
         self.model1d = train_cnn_fixed(
-            model    = self.model1d,
-            train_ds = CiphertextSeqDataset(cts_train, y_train, cfg.max_len_1d),
-            n_epochs = n_epochs_1d,
-            device   = dev,
-            lr       = cfg.lr,
-            seed     = seed_1d,
-            cnn_id   = "final_1d",
-            ckpt_dir = cfg.ckpt_dir,
+            model         = self.model1d,
+            train_ds      = CiphertextSeqDataset(cts_train, y_train, cfg.max_len_1d),
+            n_epochs      = n_epochs_1d,
+            device        = dev,
+            lr            = cfg.lr,
+            seed          = seed_1d,
+            cnn_id        = "final_1d",
+            ckpt_dir      = ckpt_dir,
             mlflow_prefix = "final_1d",
+            resume        = resume,
         )
         if verbose:
             print(f"    CNN1D: {n_epochs_1d} épocas  t={time.perf_counter()-t0:.1f}s")
@@ -525,15 +546,16 @@ class HybridExtractor:
         self.model2d = CiphertextCNN2D(n_classes=cfg.n_classes).to(dev)
         t0 = time.perf_counter()
         self.model2d = train_cnn_fixed(
-            model    = self.model2d,
-            train_ds = CiphertextCoocDataset(cts_train, y_train),
-            n_epochs = n_epochs_2d,
-            device   = dev,
-            lr       = cfg.lr,
-            seed     = seed_2d,
-            cnn_id   = "final_2d",
-            ckpt_dir = cfg.ckpt_dir,
+            model         = self.model2d,
+            train_ds      = CiphertextCoocDataset(cts_train, y_train),
+            n_epochs      = n_epochs_2d,
+            device        = dev,
+            lr            = cfg.lr,
+            seed          = seed_2d,
+            cnn_id        = "final_2d",
+            ckpt_dir      = ckpt_dir,
             mlflow_prefix = "final_2d",
+            resume        = resume,
         )
         if verbose:
             print(f"    CNN2D: {n_epochs_2d} épocas  t={time.perf_counter()-t0:.1f}s")

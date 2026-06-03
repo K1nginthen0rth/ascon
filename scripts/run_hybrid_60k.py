@@ -18,6 +18,7 @@ Uso:
 """
 from __future__ import annotations
 
+import argparse
 import json
 import math
 import pickle
@@ -25,6 +26,7 @@ import sys
 import time
 from itertools import combinations
 from pathlib import Path
+from typing import Optional
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -54,8 +56,11 @@ FEAT_PARQUET = DATA_DIR / f"{DATASET_ID}_features.parquet"
 REPORTS_DIR  = REPO_ROOT / "reports" / f"{DATASET_ID}_hybrid"
 CM_DIR       = REPORTS_DIR / "confusion_matrices"
 
+CKPT_DIR = REPORTS_DIR / "ckpts"
+
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 CM_DIR.mkdir(parents=True, exist_ok=True)
+CKPT_DIR.mkdir(parents=True, exist_ok=True)
 
 N_FOLDS        = 5
 N_BOOTSTRAP    = 1000
@@ -216,6 +221,8 @@ def run_cv(
     classes:   list[str],
     label_map: dict[str, int],
     feat_cols: list[str],
+    resume:    bool           = True,
+    ckpt_dir:  Optional[Path] = None,
 ) -> dict:
     """
     5-fold GroupKFold CV.
@@ -227,6 +234,7 @@ def run_cv(
       5. Treina RF e XGBoost nos features selecionados
       6. Avalia no val
     """
+    ckpt_dir = ckpt_dir or CKPT_DIR
     gkf    = GroupKFold(n_splits=N_FOLDS)
     groups = trainval["key_id"].to_numpy()
     y_all  = _label_encode(trainval["algorithm"], classes)
@@ -236,11 +244,32 @@ def run_cv(
     best_epochs_1d: list[int] = []
     best_epochs_2d: list[int] = []
 
+    # Progresso por fold: permite retomar folds já concluídos
+    progress_file   = ckpt_dir / "_cv_progress.pkl"
+    completed: dict[int, dict] = {}
+    if resume and progress_file.exists():
+        with progress_file.open("rb") as f:
+            completed = pickle.load(f)
+        if completed:
+            print(f"  [--resume] {len(completed)}/{N_FOLDS} folds já concluídos")
+    else:
+        print("  Iniciando do zero" if not resume else "  Sem progresso salvo — iniciando do zero")
+
     for fold_idx, (tr_idx, val_idx) in enumerate(gkf.split(trainval, y_all, groups)):
         fold_num = fold_idx + 1
         tr_keys  = set(groups[tr_idx])
         val_keys = set(groups[val_idx])
         assert not (tr_keys & val_keys), f"Fold {fold_num}: vazamento!"
+
+        # Fold já concluído — pular treino
+        if fold_idx in completed:
+            fold_res = completed[fold_idx]
+            print(f"\n  [Fold {fold_num}/{N_FOLDS}] Retomando resultados salvos — pulando treino")
+            fold_results.append(fold_res)
+            best_epochs_1d.append(fold_res.get("best_epoch_1d", 0))
+            best_epochs_2d.append(fold_res.get("best_epoch_2d", 0))
+            selected_per_fold.append(fold_res.get("_selected_features", []))
+            continue
 
         df_tr  = trainval.iloc[tr_idx]
         df_val = trainval.iloc[val_idx]
@@ -258,7 +287,10 @@ def run_cv(
             y_train   = y_tr,
             cts_val   = df_val["ciphertext"].tolist(),
             y_val     = y_val,
+            fold_id   = fold_idx,
             verbose   = True,
+            resume    = resume,
+            ckpt_dir  = ckpt_dir,
         )
         best_epochs_1d.append(extractor.best_epoch_1d)
         best_epochs_2d.append(extractor.best_epoch_2d)
@@ -299,13 +331,14 @@ def run_cv(
 
         # ── Classificadores ──────────────────────────────────────────────
         fold_res: dict = {
-            "fold": fold_num,
+            "fold":            fold_num,
             "n_train_keys":    len(tr_keys),
             "n_val_keys":      len(val_keys),
             "hybrid_dim":      int(X_tr.shape[1]),
             "n_selected":      len(selected),
             "best_epoch_1d":   extractor.best_epoch_1d,
             "best_epoch_2d":   extractor.best_epoch_2d,
+            "_selected_features": list(selected),  # salvo para retomada
         }
 
         for name, clf in _build_classifiers().items():
@@ -320,6 +353,9 @@ def run_cv(
                               "train_time_s": round(t_tr, 2)}
 
         fold_results.append(fold_res)
+        completed[fold_idx] = fold_res
+        with progress_file.open("wb") as f:
+            pickle.dump(completed, f)
 
     # Estabilidade Jaccard das features híbridas selecionadas
     pairs_jac = []
@@ -367,6 +403,8 @@ def run_final(
     feat_cols:  list[str],
     mean_ep_1d: int,
     mean_ep_2d: int,
+    resume:     bool           = True,
+    ckpt_dir:   Optional[Path] = None,
 ) -> tuple[dict, np.ndarray]:
     """
     Treina CNNs por épocas fixas no trainval completo (sem early stopping),
@@ -378,6 +416,8 @@ def run_final(
     y_tv  = _label_encode(trainval["algorithm"], classes)
     y_tst = _label_encode(test["algorithm"],     classes)
 
+    ckpt_dir = ckpt_dir or CKPT_DIR
+
     # Treinar CNNs
     extractor = HybridExtractor(CNN_CFG)
     extractor.fit_fixed(
@@ -386,6 +426,8 @@ def run_final(
         n_epochs_1d = mean_ep_1d,
         n_epochs_2d = mean_ep_2d,
         verbose     = True,
+        resume      = resume,
+        ckpt_dir    = ckpt_dir,
     )
 
     # Construir vetores híbridos
@@ -451,7 +493,18 @@ def run_final(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    skip_cv   = "--skip-cv" in sys.argv
+    ap = argparse.ArgumentParser(description="Caminho D — Híbrido (60k)")
+    ap.add_argument("--skip-cv",        action="store_true",
+                    help="Reutiliza cache CV existente")
+    ap.add_argument("--resume",         action="store_true",
+                    help="Retoma de checkpoint existente (fold + epoch)")
+    ap.add_argument("--checkpoint-dir", type=Path, default=None, metavar="DIR",
+                    help="Diretório de checkpoints (default: reports/.../ckpts/)")
+    args = ap.parse_args()
+
+    ckpt_dir  = Path(args.checkpoint_dir) if args.checkpoint_dir else CKPT_DIR
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+
     cv_cache  = REPORTS_DIR / "_cv_cache.pkl"
     fin_cache = REPORTS_DIR / "_final_cache.pkl"
 
@@ -461,6 +514,7 @@ def main() -> None:
     print(f"  Protocolo: 80/20 key-holdout + {N_FOLDS}-fold GroupKFold CV")
     print(f"  CNN1D max_len (Caminho B ref.) : {MAX_LEN_B} bytes")
     print(f"  CNN1D max_len (Caminho D)      : {CNN_CFG.max_len_1d} bytes")
+    print(f"  resume={args.resume}  checkpoint_dir={ckpt_dir.relative_to(REPO_ROOT)}")
     print(f"{'='*70}\n")
 
     if CNN_CFG.max_len_1d == MAX_LEN_B:
@@ -489,17 +543,18 @@ def main() -> None:
           f"(307 + {512} CNN1D + {128} CNN2D)")
 
     # ── CV ───────────────────────────────────────────────────────────────────
-    if cv_cache.exists() and skip_cv:
+    if cv_cache.exists() and args.skip_cv:
         print(f"\n  [--skip-cv] Carregando cache CV: {cv_cache.name}")
         with cv_cache.open("rb") as f:
             cv_data = pickle.load(f)
-    elif cv_cache.exists():
+    elif cv_cache.exists() and not args.resume:
         print(f"\n  Cache CV encontrado ({cv_cache.name}). Carregando.")
         with cv_cache.open("rb") as f:
             cv_data = pickle.load(f)
     else:
         print(f"\n--- {N_FOLDS}-fold GroupKFold CV ---")
-        cv_data = run_cv(trainval, classes, label_map, feat_cols)
+        cv_data = run_cv(trainval, classes, label_map, feat_cols,
+                         resume=args.resume, ckpt_dir=ckpt_dir)
         with cv_cache.open("wb") as f:
             pickle.dump(cv_data, f)
         print(f"  Cache CV salvo: {cv_cache.name}")
@@ -517,7 +572,7 @@ def main() -> None:
           f"CNN2D={cv_data['mean_best_epoch_2d']}")
 
     # ── Modelo final ─────────────────────────────────────────────────────────
-    if fin_cache.exists():
+    if fin_cache.exists() and not args.resume:
         print(f"\n  Cache final encontrado ({fin_cache.name}). Carregando.")
         with fin_cache.open("rb") as f:
             final_metrics, y_tst = pickle.load(f)
@@ -526,6 +581,8 @@ def main() -> None:
             trainval, test, classes, label_map, feat_cols,
             mean_ep_1d = cv_data["mean_best_epoch_1d"],
             mean_ep_2d = cv_data["mean_best_epoch_2d"],
+            resume     = args.resume,
+            ckpt_dir   = ckpt_dir,
         )
         with fin_cache.open("wb") as f:
             pickle.dump((final_metrics, y_tst), f)

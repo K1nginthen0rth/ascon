@@ -22,6 +22,7 @@ Uso:
 """
 from __future__ import annotations
 
+import argparse
 import json
 import math
 import pickle
@@ -165,16 +166,18 @@ def _train_cnn(
     val_ds:      Dataset,
     y_val:       np.ndarray,
     device:      str,
-    fold_id:     int           = 0,
-    model_name:  str           = "",
+    fold_id:     int            = 0,
+    model_name:  str            = "",
     ckpt_dir:    Optional[Path] = None,
-    verbose:     bool          = False,
-    seed:        int           = SEED_MODEL,
+    verbose:     bool           = False,
+    seed:        int            = SEED_MODEL,
+    resume:      bool           = True,
 ) -> tuple[nn.Module, int, dict]:
     """Treina model com early stopping no val_loss.
 
     Salva checkpoint após cada época (retomável em spot instances).
     Loga train_loss / val_loss / val_f1_macro por época no MLflow se disponível.
+    resume=True carrega checkpoint existente; False ignora e começa do zero.
     Retorna (model_com_best_weights, best_epoch, history).
     """
     torch.manual_seed(seed)
@@ -191,7 +194,7 @@ def _train_cnn(
 
     ckpt_path = (ckpt_dir / f"{model_name}_fold{fold_id}.pt") if ckpt_dir else None
 
-    if ckpt_path and ckpt_path.exists():
+    if resume and ckpt_path and ckpt_path.exists():
         ckpt = torch.load(ckpt_path, map_location=device)
         model.load_state_dict(ckpt["model_state"])
         optim.load_state_dict(ckpt["optimizer_state"])
@@ -203,8 +206,10 @@ def _train_cnn(
         best_state = {k: v.clone().cpu() for k, v in model.state_dict().items()}
         history    = ckpt.get("history", history)
         if verbose:
-            print(f"       Retomando checkpoint ep {ckpt['epoch']} "
+            print(f"       Resumindo do fold {fold_id} epoch {ckpt['epoch']} "
                   f"(best_ep={best_epoch}  best_val={best_val:.4f})")
+    elif verbose:
+        print(f"       Iniciando do zero (fold {fold_id} {model_name})")
 
     for ep in range(start_ep, N_EPOCHS + 1):
         # Treino
@@ -405,25 +410,58 @@ def run_cv(
     classes:   list[str],
     label_map: dict[str, int],
     device:    str,
+    mode:      str            = "both",
+    resume:    bool           = True,
+    ckpt_dir:  Optional[Path] = None,
 ) -> dict:
-    """5-fold GroupKFold CV. Retorna métricas agregadas por modo."""
+    """5-fold GroupKFold CV. Retorna métricas agregadas por modo.
+
+    mode: 'cnn1d' | 'cnn2d' | 'both'
+    resume: carrega checkpoints de epoch e folds anteriores se True.
+    """
+    ckpt_dir = ckpt_dir or CKPT_DIR
+    run_1d   = mode in ("cnn1d", "both")
+    run_2d   = mode in ("cnn2d", "both")
+    modes    = (
+        (["cnn1d_direct", "cnn1d_latent_rf", "cnn1d_latent_lsvc"] if run_1d else []) +
+        (["cnn2d_direct", "cnn2d_latent_rf", "cnn2d_latent_lsvc"] if run_2d else [])
+    )
+
     gkf    = GroupKFold(n_splits=N_FOLDS)
     groups = trainval["key_id"].to_numpy()
     y_all  = _encode(trainval, label_map)
 
-    modes = [
-        "cnn1d_direct", "cnn1d_latent_rf", "cnn1d_latent_lsvc",
-        "cnn2d_direct", "cnn2d_latent_rf", "cnn2d_latent_lsvc",
-    ]
-    fold_results: list[dict] = []
-    best_epochs_1d: list[int] = []
-    best_epochs_2d: list[int] = []
+    fold_results:   list[dict] = []
+    best_epochs_1d: list[int]  = []
+    best_epochs_2d: list[int]  = []
+
+    # Progresso por fold: permite retomar folds já concluídos
+    progress_file   = ckpt_dir / "_cv_progress.pkl"
+    completed: dict[int, dict] = {}
+    if resume and progress_file.exists():
+        with progress_file.open("rb") as f:
+            completed = pickle.load(f)
+        if completed:
+            print(f"  [--resume] {len(completed)}/{N_FOLDS} folds já concluídos")
+    else:
+        print("  Iniciando do zero" if not resume else "  Sem progresso salvo — iniciando do zero")
 
     for fold_idx, (tr_idx, val_idx) in enumerate(gkf.split(trainval, y_all, groups)):
         fold_num = fold_idx + 1
         tr_keys  = set(groups[tr_idx])
         val_keys = set(groups[val_idx])
         assert not (tr_keys & val_keys), f"Fold {fold_num}: vazamento de chave!"
+
+        # Fold já concluído — pular treino
+        if fold_idx in completed:
+            fold_res = completed[fold_idx]
+            print(f"\n  [Fold {fold_num}/{N_FOLDS}] Retomando resultados salvos — pulando treino")
+            fold_results.append(fold_res)
+            if run_1d:
+                best_epochs_1d.append(fold_res.get("cnn1d_direct", {}).get("best_epoch", 0))
+            if run_2d:
+                best_epochs_2d.append(fold_res.get("cnn2d_direct", {}).get("best_epoch", 0))
+            continue
 
         df_tr  = trainval.iloc[tr_idx]
         df_val = trainval.iloc[val_idx]
@@ -437,103 +475,106 @@ def run_cv(
         fold_res: dict = {"fold": fold_num,
                           "n_train_keys": len(tr_keys),
                           "n_val_keys":   len(val_keys)}
+        seed_fold = SEED_MODEL + fold_idx * 100
 
         # ── CNN 1D ──────────────────────────────────────────────────────────
-        seed_fold = SEED_MODEL + fold_idx * 100
-        print(f"    [CNN1D]  max_len={CNN1D_MAX_LEN}")
-        torch.manual_seed(seed_fold + 1)
-        model1d = CiphertextCNN1D(
-            n_classes=len(classes), max_len=CNN1D_MAX_LEN,
-            n_filters=128, n_conv_blocks=3,
-        ).to(device)
+        if run_1d:
+            print(f"    [CNN1D]  max_len={CNN1D_MAX_LEN}")
+            torch.manual_seed(seed_fold + 1)
+            model1d = CiphertextCNN1D(
+                n_classes=len(classes), max_len=CNN1D_MAX_LEN,
+                n_filters=128, n_conv_blocks=3,
+            ).to(device)
 
-        ds_tr1d  = _make_ds_1d(df_tr,  label_map)
-        ds_val1d = _make_ds_1d(df_val, label_map)
+            ds_tr1d  = _make_ds_1d(df_tr,  label_map)
+            ds_val1d = _make_ds_1d(df_val, label_map)
 
-        t0 = time.perf_counter()
-        model1d, best_ep1d, _ = _train_cnn(
-            model1d, ds_tr1d, ds_val1d, y_val, device,
-            fold_id=fold_idx, model_name="cnn1d", ckpt_dir=CKPT_DIR, verbose=True,
-            seed=seed_fold + 1,
-        )
-        t_cnn1d = time.perf_counter() - t0
-        best_epochs_1d.append(best_ep1d)
-        print(f"    CNN1D treinado: best_ep={best_ep1d}  t={t_cnn1d:.1f}s")
+            t0 = time.perf_counter()
+            model1d, best_ep1d, _ = _train_cnn(
+                model1d, ds_tr1d, ds_val1d, y_val, device,
+                fold_id=fold_idx, model_name="cnn1d",
+                ckpt_dir=ckpt_dir, verbose=True,
+                seed=seed_fold + 1, resume=resume,
+            )
+            t_cnn1d = time.perf_counter() - t0
+            best_epochs_1d.append(best_ep1d)
+            print(f"    CNN1D treinado: best_ep={best_ep1d}  t={t_cnn1d:.1f}s")
 
-        if _MLFLOW:
-            mlflow.log_metric(f"cnn1d_fold{fold_num}_best_epoch", best_ep1d)
+            if _MLFLOW:
+                mlflow.log_metric(f"cnn1d_fold{fold_num}_best_epoch", best_ep1d)
 
-        # Direct
-        y_pred1d, _ = _predict_cnn(model1d, ds_val1d, device)
-        f1_1d_dir   = float(f1_score(y_val, y_pred1d, average="macro", zero_division=0))
-        bac_1d_dir  = float(balanced_accuracy_score(y_val, y_pred1d))
-        print(f"    cnn1d_direct    F1={f1_1d_dir:.4f}  BalAcc={bac_1d_dir:.4f}")
+            y_pred1d, _ = _predict_cnn(model1d, ds_val1d, device)
+            f1_1d_dir   = float(f1_score(y_val, y_pred1d, average="macro", zero_division=0))
+            bac_1d_dir  = float(balanced_accuracy_score(y_val, y_pred1d))
+            print(f"    cnn1d_direct    F1={f1_1d_dir:.4f}  BalAcc={bac_1d_dir:.4f}")
 
-        # Latent
-        Z_tr1d    = _extract_latents(model1d, ds_tr1d,  device)
-        Z_val1d   = _extract_latents(model1d, ds_val1d, device)
-        lat_res1d = _fit_predict_on_latents(Z_tr1d, y_tr, Z_val1d, y_val)
-        for name, r in lat_res1d.items():
-            print(f"    cnn1d_latent_{name.lower():4s}  F1={r['f1_macro']:.4f}  "
-                  f"BalAcc={r['balanced_accuracy']:.4f}  t_clf={r['train_time_s']:.1f}s")
+            Z_tr1d    = _extract_latents(model1d, ds_tr1d,  device)
+            Z_val1d   = _extract_latents(model1d, ds_val1d, device)
+            lat_res1d = _fit_predict_on_latents(Z_tr1d, y_tr, Z_val1d, y_val)
+            for name, r in lat_res1d.items():
+                print(f"    cnn1d_latent_{name.lower():4s}  F1={r['f1_macro']:.4f}  "
+                      f"BalAcc={r['balanced_accuracy']:.4f}  t_clf={r['train_time_s']:.1f}s")
 
-        fold_res["cnn1d_direct"]      = {"f1_macro": f1_1d_dir, "balanced_accuracy": bac_1d_dir,
-                                          "train_time_s": round(t_cnn1d, 2), "best_epoch": best_ep1d}
-        fold_res["cnn1d_latent_rf"]   = {"f1_macro": lat_res1d["RF"]["f1_macro"],
-                                          "balanced_accuracy": lat_res1d["RF"]["balanced_accuracy"]}
-        fold_res["cnn1d_latent_lsvc"] = {"f1_macro": lat_res1d["LSVC"]["f1_macro"],
-                                          "balanced_accuracy": lat_res1d["LSVC"]["balanced_accuracy"]}
+            fold_res["cnn1d_direct"]      = {"f1_macro": f1_1d_dir, "balanced_accuracy": bac_1d_dir,
+                                              "train_time_s": round(t_cnn1d, 2), "best_epoch": best_ep1d}
+            fold_res["cnn1d_latent_rf"]   = {"f1_macro": lat_res1d["RF"]["f1_macro"],
+                                              "balanced_accuracy": lat_res1d["RF"]["balanced_accuracy"]}
+            fold_res["cnn1d_latent_lsvc"] = {"f1_macro": lat_res1d["LSVC"]["f1_macro"],
+                                              "balanced_accuracy": lat_res1d["LSVC"]["balanced_accuracy"]}
 
         # ── CNN 2D ──────────────────────────────────────────────────────────
-        print(f"    [CNN2D]  co-ocorrência 256×256 (CT completo)")
-        torch.manual_seed(seed_fold + 2)
-        model2d = CiphertextCNN2D(n_classes=len(classes)).to(device)
+        if run_2d:
+            print(f"    [CNN2D]  co-ocorrência 256×256 (CT completo)")
+            torch.manual_seed(seed_fold + 2)
+            model2d = CiphertextCNN2D(n_classes=len(classes)).to(device)
 
-        ds_tr2d  = _make_ds_2d(df_tr,  label_map)
-        ds_val2d = _make_ds_2d(df_val, label_map)
+            ds_tr2d  = _make_ds_2d(df_tr,  label_map)
+            ds_val2d = _make_ds_2d(df_val, label_map)
 
-        t0 = time.perf_counter()
-        model2d, best_ep2d, _ = _train_cnn(
-            model2d, ds_tr2d, ds_val2d, y_val, device,
-            fold_id=fold_idx, model_name="cnn2d", ckpt_dir=CKPT_DIR, verbose=True,
-            seed=seed_fold + 2,
-        )
-        t_cnn2d = time.perf_counter() - t0
-        best_epochs_2d.append(best_ep2d)
-        print(f"    CNN2D treinado: best_ep={best_ep2d}  t={t_cnn2d:.1f}s")
+            t0 = time.perf_counter()
+            model2d, best_ep2d, _ = _train_cnn(
+                model2d, ds_tr2d, ds_val2d, y_val, device,
+                fold_id=fold_idx, model_name="cnn2d",
+                ckpt_dir=ckpt_dir, verbose=True,
+                seed=seed_fold + 2, resume=resume,
+            )
+            t_cnn2d = time.perf_counter() - t0
+            best_epochs_2d.append(best_ep2d)
+            print(f"    CNN2D treinado: best_ep={best_ep2d}  t={t_cnn2d:.1f}s")
 
-        if _MLFLOW:
-            mlflow.log_metric(f"cnn2d_fold{fold_num}_best_epoch", best_ep2d)
+            if _MLFLOW:
+                mlflow.log_metric(f"cnn2d_fold{fold_num}_best_epoch", best_ep2d)
 
-        # Direct
-        y_pred2d, _ = _predict_cnn(model2d, ds_val2d, device)
-        f1_2d_dir   = float(f1_score(y_val, y_pred2d, average="macro", zero_division=0))
-        bac_2d_dir  = float(balanced_accuracy_score(y_val, y_pred2d))
-        print(f"    cnn2d_direct    F1={f1_2d_dir:.4f}  BalAcc={bac_2d_dir:.4f}")
+            y_pred2d, _ = _predict_cnn(model2d, ds_val2d, device)
+            f1_2d_dir   = float(f1_score(y_val, y_pred2d, average="macro", zero_division=0))
+            bac_2d_dir  = float(balanced_accuracy_score(y_val, y_pred2d))
+            print(f"    cnn2d_direct    F1={f1_2d_dir:.4f}  BalAcc={bac_2d_dir:.4f}")
 
-        # Latent
-        Z_tr2d    = _extract_latents(model2d, ds_tr2d,  device)
-        Z_val2d   = _extract_latents(model2d, ds_val2d, device)
-        lat_res2d = _fit_predict_on_latents(Z_tr2d, y_tr, Z_val2d, y_val)
-        for name, r in lat_res2d.items():
-            print(f"    cnn2d_latent_{name.lower():4s}  F1={r['f1_macro']:.4f}  "
-                  f"BalAcc={r['balanced_accuracy']:.4f}  t_clf={r['train_time_s']:.1f}s")
+            Z_tr2d    = _extract_latents(model2d, ds_tr2d,  device)
+            Z_val2d   = _extract_latents(model2d, ds_val2d, device)
+            lat_res2d = _fit_predict_on_latents(Z_tr2d, y_tr, Z_val2d, y_val)
+            for name, r in lat_res2d.items():
+                print(f"    cnn2d_latent_{name.lower():4s}  F1={r['f1_macro']:.4f}  "
+                      f"BalAcc={r['balanced_accuracy']:.4f}  t_clf={r['train_time_s']:.1f}s")
 
-        fold_res["cnn2d_direct"]      = {"f1_macro": f1_2d_dir, "balanced_accuracy": bac_2d_dir,
-                                          "train_time_s": round(t_cnn2d, 2), "best_epoch": best_ep2d}
-        fold_res["cnn2d_latent_rf"]   = {"f1_macro": lat_res2d["RF"]["f1_macro"],
-                                          "balanced_accuracy": lat_res2d["RF"]["balanced_accuracy"]}
-        fold_res["cnn2d_latent_lsvc"] = {"f1_macro": lat_res2d["LSVC"]["f1_macro"],
-                                          "balanced_accuracy": lat_res2d["LSVC"]["balanced_accuracy"]}
+            fold_res["cnn2d_direct"]      = {"f1_macro": f1_2d_dir, "balanced_accuracy": bac_2d_dir,
+                                              "train_time_s": round(t_cnn2d, 2), "best_epoch": best_ep2d}
+            fold_res["cnn2d_latent_rf"]   = {"f1_macro": lat_res2d["RF"]["f1_macro"],
+                                              "balanced_accuracy": lat_res2d["RF"]["balanced_accuracy"]}
+            fold_res["cnn2d_latent_lsvc"] = {"f1_macro": lat_res2d["LSVC"]["f1_macro"],
+                                              "balanced_accuracy": lat_res2d["LSVC"]["balanced_accuracy"]}
 
         fold_results.append(fold_res)
+        completed[fold_idx] = fold_res
+        with progress_file.open("wb") as f:
+            pickle.dump(completed, f)
 
     # Resumo CV
     cv_summary: dict = {}
-    for mode in modes:
-        vals = [r[mode]["f1_macro"] for r in fold_results]
-        bacs = [r[mode]["balanced_accuracy"] for r in fold_results]
-        cv_summary[mode] = {
+    for m in modes:
+        vals = [r[m]["f1_macro"] for r in fold_results]
+        bacs = [r[m]["balanced_accuracy"] for r in fold_results]
+        cv_summary[m] = {
             "f1_macro_mean": round(float(np.mean(vals)), 4),
             "f1_macro_std":  round(float(np.std(vals, ddof=1)), 4),
             "bal_acc_mean":  round(float(np.mean(bacs)), 4),
@@ -541,16 +582,16 @@ def run_cv(
         }
 
     if _MLFLOW:
-        for mode, stats in cv_summary.items():
-            mlflow.log_metric(f"cv_{mode}_f1_mean", stats["f1_macro_mean"])
-            mlflow.log_metric(f"cv_{mode}_f1_std",  stats["f1_macro_std"])
+        for m, stats in cv_summary.items():
+            mlflow.log_metric(f"cv_{m}_f1_mean", stats["f1_macro_mean"])
+            mlflow.log_metric(f"cv_{m}_f1_std",  stats["f1_macro_std"])
 
     return {
         "n_folds":            N_FOLDS,
         "folds":              fold_results,
         "cv_summary":         cv_summary,
-        "mean_best_epoch_1d": math.ceil(float(np.mean(best_epochs_1d))),
-        "mean_best_epoch_2d": math.ceil(float(np.mean(best_epochs_2d))),
+        "mean_best_epoch_1d": math.ceil(float(np.mean(best_epochs_1d))) if best_epochs_1d else 0,
+        "mean_best_epoch_2d": math.ceil(float(np.mean(best_epochs_2d))) if best_epochs_2d else 0,
     }
 
 
@@ -562,9 +603,10 @@ def _train_fixed_epochs(
     model:      nn.Module,
     train_ds:   Dataset,
     n_epochs:   int,
-    model_name: str           = "",
+    model_name: str            = "",
     ckpt_dir:   Optional[Path] = None,
-    seed:       int           = SEED_MODEL,
+    seed:       int            = SEED_MODEL,
+    resume:     bool           = True,
 ) -> nn.Module:
     """Treina por n_epochs exatos (sem early stopping). Checkpoint por época."""
     torch.manual_seed(seed)
@@ -575,13 +617,15 @@ def _train_fixed_epochs(
     start_ep   = 1
     ckpt_path  = (ckpt_dir / f"{model_name}_final.pt") if ckpt_dir else None
 
-    if ckpt_path and ckpt_path.exists():
+    if resume and ckpt_path and ckpt_path.exists():
         ckpt = torch.load(ckpt_path, map_location="cpu")
         model.load_state_dict(ckpt["model_state"])
         optim.load_state_dict(ckpt["optimizer_state"])
         start_ep = ckpt["epoch"] + 1
         torch.set_rng_state(ckpt["rng_state"])
-        print(f"    Retomando checkpoint final ep {ckpt['epoch']}")
+        print(f"    Resumindo checkpoint final {model_name} epoch {ckpt['epoch']}")
+    else:
+        print(f"    Iniciando do zero (modelo final {model_name})")
 
     for ep in range(start_ep, n_epochs + 1):
         model.train()
@@ -609,11 +653,20 @@ def run_final(
     mean_ep_1d: int,
     mean_ep_2d: int,
     device:     str,
+    mode:       str            = "both",
+    resume:     bool           = True,
+    ckpt_dir:   Optional[Path] = None,
 ) -> dict:
     """
     Treina CNNs no trainval completo por mean_best_epoch épocas (sem early stopping),
     extrai latents, treina classifiers — avalia no test holdout com bootstrap.
+
+    mode: 'cnn1d' | 'cnn2d' | 'both'
     """
+    ckpt_dir = ckpt_dir or CKPT_DIR
+    run_1d   = mode in ("cnn1d", "both")
+    run_2d   = mode in ("cnn2d", "both")
+
     print(f"\n--- Modelo Final: trainval ({len(trainval):,}) → test ({len(test):,}) ---")
     print(f"  Épocas CNN1D={mean_ep_1d}  CNN2D={mean_ep_2d}  (ceil(média best_epoch CV))")
 
@@ -622,99 +675,97 @@ def run_final(
     results: dict = {}
 
     # ── CNN 1D ──────────────────────────────────────────────────────────────
-    print(f"\n  CNN1D — treinando {mean_ep_1d} épocas no trainval completo...")
-    torch.manual_seed(SEED_MODEL + 1)
-    model1d = CiphertextCNN1D(
-        n_classes=len(classes), max_len=CNN1D_MAX_LEN,
-        n_filters=128, n_conv_blocks=3,
-    ).to(device)
-    ds_tv1d  = _make_ds_1d(trainval, label_map)
-    ds_tst1d = _make_ds_1d(test,     label_map)
+    if run_1d:
+        print(f"\n  CNN1D — treinando {mean_ep_1d} épocas no trainval completo...")
+        torch.manual_seed(SEED_MODEL + 1)
+        model1d = CiphertextCNN1D(
+            n_classes=len(classes), max_len=CNN1D_MAX_LEN,
+            n_filters=128, n_conv_blocks=3,
+        ).to(device)
+        ds_tv1d  = _make_ds_1d(trainval, label_map)
+        ds_tst1d = _make_ds_1d(test,     label_map)
 
-    t0 = time.perf_counter()
-    model1d = _train_fixed_epochs(model1d, ds_tv1d, mean_ep_1d,
-                                  model_name="cnn1d", ckpt_dir=CKPT_DIR,
-                                  seed=SEED_MODEL + 1)
-    t_1d = time.perf_counter() - t0
-    print(f"  CNN1D treinado em {t_1d:.1f}s")
-
-    # Direct
-    y_pred, y_proba = _predict_cnn(model1d, ds_tst1d, device)
-    rep = compute_metrics(y_tst, y_pred, y_proba=y_proba,
-                          n_bootstrap=N_BOOTSTRAP, seed=SEED_BOOT)
-    results["cnn1d_direct"] = {**rep.as_dict(), "train_time_s": round(t_1d, 2),
-                                "y_pred": y_pred.tolist()}
-    ci = rep.f1_macro_ci
-    print(f"  cnn1d_direct    F1={rep.f1_macro:.4f}  IC=[{ci[0]:.3f},{ci[1]:.3f}]  "
-          f"BalAcc={rep.balanced_accuracy:.4f}")
-
-    # Latent
-    Z_tv1d   = _extract_latents(model1d, ds_tv1d,  device)
-    Z_tst1d  = _extract_latents(model1d, ds_tst1d, device)
-    scaler1d = StandardScaler().fit(Z_tv1d)
-    Ztv_sc   = scaler1d.transform(Z_tv1d)
-    Ztst_sc  = scaler1d.transform(Z_tst1d)
-    for clf_name, clf in _build_classifiers().items():
         t0 = time.perf_counter()
-        clf.fit(Ztv_sc, y_tv)
-        t_clf       = time.perf_counter() - t0
-        y_pred_clf  = clf.predict(Ztst_sc)
-        y_proba_clf = clf.predict_proba(Ztst_sc) if hasattr(clf, "predict_proba") else None
-        rep_clf = compute_metrics(y_tst, y_pred_clf, y_proba=y_proba_clf,
-                                  n_bootstrap=N_BOOTSTRAP, seed=SEED_BOOT)
-        mode_key = f"cnn1d_latent_{clf_name.lower()}"
-        ci = rep_clf.f1_macro_ci
-        print(f"  {mode_key:22s}  F1={rep_clf.f1_macro:.4f}  IC=[{ci[0]:.3f},{ci[1]:.3f}]  "
-              f"t_clf={t_clf:.1f}s")
-        results[mode_key] = {**rep_clf.as_dict(),
-                             "train_time_s": round(t_1d + t_clf, 2),
-                             "y_pred": y_pred_clf.tolist()}
+        model1d = _train_fixed_epochs(model1d, ds_tv1d, mean_ep_1d,
+                                      model_name="cnn1d", ckpt_dir=ckpt_dir,
+                                      seed=SEED_MODEL + 1, resume=resume)
+        t_1d = time.perf_counter() - t0
+        print(f"  CNN1D treinado em {t_1d:.1f}s")
+
+        y_pred, y_proba = _predict_cnn(model1d, ds_tst1d, device)
+        rep = compute_metrics(y_tst, y_pred, y_proba=y_proba,
+                              n_bootstrap=N_BOOTSTRAP, seed=SEED_BOOT)
+        results["cnn1d_direct"] = {**rep.as_dict(), "train_time_s": round(t_1d, 2),
+                                    "y_pred": y_pred.tolist()}
+        ci = rep.f1_macro_ci
+        print(f"  cnn1d_direct    F1={rep.f1_macro:.4f}  IC=[{ci[0]:.3f},{ci[1]:.3f}]  "
+              f"BalAcc={rep.balanced_accuracy:.4f}")
+
+        Z_tv1d   = _extract_latents(model1d, ds_tv1d,  device)
+        Z_tst1d  = _extract_latents(model1d, ds_tst1d, device)
+        scaler1d = StandardScaler().fit(Z_tv1d)
+        Ztv_sc   = scaler1d.transform(Z_tv1d)
+        Ztst_sc  = scaler1d.transform(Z_tst1d)
+        for clf_name, clf in _build_classifiers().items():
+            t0 = time.perf_counter()
+            clf.fit(Ztv_sc, y_tv)
+            t_clf       = time.perf_counter() - t0
+            y_pred_clf  = clf.predict(Ztst_sc)
+            y_proba_clf = clf.predict_proba(Ztst_sc) if hasattr(clf, "predict_proba") else None
+            rep_clf = compute_metrics(y_tst, y_pred_clf, y_proba=y_proba_clf,
+                                      n_bootstrap=N_BOOTSTRAP, seed=SEED_BOOT)
+            mode_key = f"cnn1d_latent_{clf_name.lower()}"
+            ci = rep_clf.f1_macro_ci
+            print(f"  {mode_key:22s}  F1={rep_clf.f1_macro:.4f}  IC=[{ci[0]:.3f},{ci[1]:.3f}]  "
+                  f"t_clf={t_clf:.1f}s")
+            results[mode_key] = {**rep_clf.as_dict(),
+                                 "train_time_s": round(t_1d + t_clf, 2),
+                                 "y_pred": y_pred_clf.tolist()}
 
     # ── CNN 2D ──────────────────────────────────────────────────────────────
-    print(f"\n  CNN2D — treinando {mean_ep_2d} épocas no trainval completo...")
-    torch.manual_seed(SEED_MODEL + 2)
-    model2d  = CiphertextCNN2D(n_classes=len(classes)).to(device)
-    ds_tv2d  = _make_ds_2d(trainval, label_map)
-    ds_tst2d = _make_ds_2d(test,     label_map)
+    if run_2d:
+        print(f"\n  CNN2D — treinando {mean_ep_2d} épocas no trainval completo...")
+        torch.manual_seed(SEED_MODEL + 2)
+        model2d  = CiphertextCNN2D(n_classes=len(classes)).to(device)
+        ds_tv2d  = _make_ds_2d(trainval, label_map)
+        ds_tst2d = _make_ds_2d(test,     label_map)
 
-    t0 = time.perf_counter()
-    model2d = _train_fixed_epochs(model2d, ds_tv2d, mean_ep_2d,
-                                  model_name="cnn2d", ckpt_dir=CKPT_DIR,
-                                  seed=SEED_MODEL + 2)
-    t_2d = time.perf_counter() - t0
-    print(f"  CNN2D treinado em {t_2d:.1f}s")
-
-    # Direct
-    y_pred, y_proba = _predict_cnn(model2d, ds_tst2d, device)
-    rep = compute_metrics(y_tst, y_pred, y_proba=y_proba,
-                          n_bootstrap=N_BOOTSTRAP, seed=SEED_BOOT)
-    results["cnn2d_direct"] = {**rep.as_dict(), "train_time_s": round(t_2d, 2),
-                                "y_pred": y_pred.tolist()}
-    ci = rep.f1_macro_ci
-    print(f"  cnn2d_direct    F1={rep.f1_macro:.4f}  IC=[{ci[0]:.3f},{ci[1]:.3f}]  "
-          f"BalAcc={rep.balanced_accuracy:.4f}")
-
-    # Latent
-    Z_tv2d   = _extract_latents(model2d, ds_tv2d,  device)
-    Z_tst2d  = _extract_latents(model2d, ds_tst2d, device)
-    scaler2d = StandardScaler().fit(Z_tv2d)
-    Ztv_sc   = scaler2d.transform(Z_tv2d)
-    Ztst_sc  = scaler2d.transform(Z_tst2d)
-    for clf_name, clf in _build_classifiers().items():
         t0 = time.perf_counter()
-        clf.fit(Ztv_sc, y_tv)
-        t_clf       = time.perf_counter() - t0
-        y_pred_clf  = clf.predict(Ztst_sc)
-        y_proba_clf = clf.predict_proba(Ztst_sc) if hasattr(clf, "predict_proba") else None
-        rep_clf = compute_metrics(y_tst, y_pred_clf, y_proba=y_proba_clf,
-                                  n_bootstrap=N_BOOTSTRAP, seed=SEED_BOOT)
-        mode_key = f"cnn2d_latent_{clf_name.lower()}"
-        ci = rep_clf.f1_macro_ci
-        print(f"  {mode_key:22s}  F1={rep_clf.f1_macro:.4f}  IC=[{ci[0]:.3f},{ci[1]:.3f}]  "
-              f"t_clf={t_clf:.1f}s")
-        results[mode_key] = {**rep_clf.as_dict(),
-                             "train_time_s": round(t_2d + t_clf, 2),
-                             "y_pred": y_pred_clf.tolist()}
+        model2d = _train_fixed_epochs(model2d, ds_tv2d, mean_ep_2d,
+                                      model_name="cnn2d", ckpt_dir=ckpt_dir,
+                                      seed=SEED_MODEL + 2, resume=resume)
+        t_2d = time.perf_counter() - t0
+        print(f"  CNN2D treinado em {t_2d:.1f}s")
+
+        y_pred, y_proba = _predict_cnn(model2d, ds_tst2d, device)
+        rep = compute_metrics(y_tst, y_pred, y_proba=y_proba,
+                              n_bootstrap=N_BOOTSTRAP, seed=SEED_BOOT)
+        results["cnn2d_direct"] = {**rep.as_dict(), "train_time_s": round(t_2d, 2),
+                                    "y_pred": y_pred.tolist()}
+        ci = rep.f1_macro_ci
+        print(f"  cnn2d_direct    F1={rep.f1_macro:.4f}  IC=[{ci[0]:.3f},{ci[1]:.3f}]  "
+              f"BalAcc={rep.balanced_accuracy:.4f}")
+
+        Z_tv2d   = _extract_latents(model2d, ds_tv2d,  device)
+        Z_tst2d  = _extract_latents(model2d, ds_tst2d, device)
+        scaler2d = StandardScaler().fit(Z_tv2d)
+        Ztv_sc   = scaler2d.transform(Z_tv2d)
+        Ztst_sc  = scaler2d.transform(Z_tst2d)
+        for clf_name, clf in _build_classifiers().items():
+            t0 = time.perf_counter()
+            clf.fit(Ztv_sc, y_tv)
+            t_clf       = time.perf_counter() - t0
+            y_pred_clf  = clf.predict(Ztst_sc)
+            y_proba_clf = clf.predict_proba(Ztst_sc) if hasattr(clf, "predict_proba") else None
+            rep_clf = compute_metrics(y_tst, y_pred_clf, y_proba=y_proba_clf,
+                                      n_bootstrap=N_BOOTSTRAP, seed=SEED_BOOT)
+            mode_key = f"cnn2d_latent_{clf_name.lower()}"
+            ci = rep_clf.f1_macro_ci
+            print(f"  {mode_key:22s}  F1={rep_clf.f1_macro:.4f}  IC=[{ci[0]:.3f},{ci[1]:.3f}]  "
+                  f"t_clf={t_clf:.1f}s")
+            results[mode_key] = {**rep_clf.as_dict(),
+                                 "train_time_s": round(t_2d + t_clf, 2),
+                                 "y_pred": y_pred_clf.tolist()}
 
     return results
 
@@ -759,22 +810,37 @@ def _md_table(rows: list[list[str]], headers: list[str]) -> str:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    device  = "cuda" if torch.cuda.is_available() else "cpu"
-    skip_cv = "--skip-cv" in sys.argv
+    ap = argparse.ArgumentParser(description="CNN experiments — Ascon vs GIFT-COFB (60k)")
+    ap.add_argument("--skip-cv",        action="store_true",
+                    help="Reutiliza cache CV existente (ignora --resume para CV)")
+    ap.add_argument("--resume",         action="store_true",
+                    help="Retoma de checkpoint existente (fold + epoch)")
+    ap.add_argument("--checkpoint-dir", type=Path, default=None, metavar="DIR",
+                    help="Diretório de checkpoints (default: reports/.../ckpts/)")
+    ap.add_argument("--mode",           choices=["cnn1d", "cnn2d", "both"], default="both",
+                    help="Qual CNN treinar: cnn1d | cnn2d | both (default)")
+    args = ap.parse_args()
 
-    cv_cache    = REPORTS_DIR / "_cv_cache.pkl"
-    final_cache = REPORTS_DIR / "_final_cache.pkl"
+    device   = "cuda" if torch.cuda.is_available() else "cpu"
+    ckpt_dir = Path(args.checkpoint_dir) if args.checkpoint_dir else CKPT_DIR
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+
+    # Cache separado por modo para evitar conflitos entre runs parciais
+    cv_cache    = REPORTS_DIR / f"_cv_cache_{args.mode}.pkl"
+    final_cache = REPORTS_DIR / f"_final_cache_{args.mode}.pkl"
 
     print(f"\n{'='*70}")
     print(f"  Experimento CNN — Ascon vs GIFT-COFB (60k, 64KB CT)")
     print(f"  CNN1D max_len={CNN1D_MAX_LEN}  CNN2D co-ocorrência 256×256")
-    print(f"  device={device}  batch={BATCH_SIZE}  epochs≤{N_EPOCHS}  patience={PATIENCE}")
+    print(f"  device={device}  mode={args.mode}  resume={args.resume}")
+    print(f"  batch={BATCH_SIZE}  epochs≤{N_EPOCHS}  patience={PATIENCE}")
+    print(f"  checkpoint_dir={ckpt_dir.relative_to(REPO_ROOT)}")
     print(f"  MLflow={'ativo' if _MLFLOW else 'nao instalado'}")
     print(f"{'='*70}\n")
 
     t_total = time.perf_counter()
 
-    _run_ctx = mlflow.start_run(run_name="cnn_60k") if _MLFLOW else _nullctx()
+    _run_ctx = mlflow.start_run(run_name=f"cnn_60k_{args.mode}") if _MLFLOW else _nullctx()
     with _run_ctx:
         if _MLFLOW:
             mlflow.log_params({
@@ -787,36 +853,39 @@ def main() -> None:
                 "seed_model":       SEED_MODEL,
                 "n_folds":          N_FOLDS,
                 "rf_n_estimators":  RF_N_ESTIMATORS,
+                "mode":             args.mode,
+                "resume":           args.resume,
             })
 
         trainval, test, classes, label_map = load_data()
         y_tst = _encode(test, label_map)
 
         # ── CV ──────────────────────────────────────────────────────────────
-        if cv_cache.exists() and skip_cv:
+        if cv_cache.exists() and args.skip_cv:
             print(f"\n  [--skip-cv] Carregando cache CV de {cv_cache.name}")
             with cv_cache.open("rb") as f:
                 cv_data = pickle.load(f)
-        elif cv_cache.exists():
+        elif cv_cache.exists() and not args.resume:
             print(f"\n  Cache CV encontrado ({cv_cache.name}). Carregando.")
             with cv_cache.open("rb") as f:
                 cv_data = pickle.load(f)
         else:
             print(f"\n--- {N_FOLDS}-fold GroupKFold CV ---")
-            cv_data = run_cv(trainval, classes, label_map, device)
+            cv_data = run_cv(trainval, classes, label_map, device,
+                             mode=args.mode, resume=args.resume, ckpt_dir=ckpt_dir)
             with cv_cache.open("wb") as f:
                 pickle.dump(cv_data, f)
             print(f"\n  Cache CV salvo em: {cv_cache.name}")
 
         print(f"\n  CV Summary (mean ± std F1):")
-        for mode, stats in cv_data["cv_summary"].items():
+        for m, stats in cv_data["cv_summary"].items():
             folds_str = "  ".join(f"f{i+1}={v:.4f}"
                                   for i, v in enumerate(stats["f1_per_fold"]))
-            print(f"    {mode:22s}  F1={stats['f1_macro_mean']:.4f}±{stats['f1_macro_std']:.4f}"
+            print(f"    {m:22s}  F1={stats['f1_macro_mean']:.4f}±{stats['f1_macro_std']:.4f}"
                   f"  [{folds_str}]")
 
         # ── Modelo Final ─────────────────────────────────────────────────────
-        if final_cache.exists():
+        if final_cache.exists() and not args.resume:
             print(f"\n  Cache final encontrado ({final_cache.name}). Carregando.")
             with final_cache.open("rb") as f:
                 final_results, y_tst_saved = pickle.load(f)
@@ -827,6 +896,7 @@ def main() -> None:
                 mean_ep_1d=cv_data["mean_best_epoch_1d"],
                 mean_ep_2d=cv_data["mean_best_epoch_2d"],
                 device=device,
+                mode=args.mode, resume=args.resume, ckpt_dir=ckpt_dir,
             )
             with final_cache.open("wb") as f:
                 pickle.dump((final_results, y_tst), f)
