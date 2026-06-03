@@ -160,7 +160,10 @@ def _train(
         st = torch.load(ckpt, map_location=device)
         model.load_state_dict(st["model"])
         opt.load_state_dict(st["opt"])
-        torch.set_rng_state(st["rng"])
+        rng = st["rng"]
+        if not isinstance(rng, torch.ByteTensor):
+            rng = rng.cpu().to(torch.uint8)
+        torch.set_rng_state(rng)
         start = st["epoch"] + 1
         print(f"      [resume] {name} fold{fold} a partir da época {st['epoch']}")
 
