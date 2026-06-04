@@ -603,6 +603,7 @@ def _train_fixed_epochs(
     model:      nn.Module,
     train_ds:   Dataset,
     n_epochs:   int,
+    device:     str,
     model_name: str            = "",
     ckpt_dir:   Optional[Path] = None,
     seed:       int            = SEED_MODEL,
@@ -618,11 +619,14 @@ def _train_fixed_epochs(
     ckpt_path  = (ckpt_dir / f"{model_name}_final.pt") if ckpt_dir else None
 
     if resume and ckpt_path and ckpt_path.exists():
-        ckpt = torch.load(ckpt_path, map_location="cpu")
+        ckpt = torch.load(ckpt_path, map_location=device)
         model.load_state_dict(ckpt["model_state"])
         optim.load_state_dict(ckpt["optimizer_state"])
         start_ep = ckpt["epoch"] + 1
-        torch.set_rng_state(ckpt["rng_state"])
+        rng = ckpt["rng_state"]
+        if not isinstance(rng, torch.ByteTensor):
+            rng = rng.cpu().to(torch.uint8)
+        torch.set_rng_state(rng)
         print(f"    Resumindo checkpoint final {model_name} epoch {ckpt['epoch']}")
     else:
         print(f"    Iniciando do zero (modelo final {model_name})")
@@ -630,6 +634,7 @@ def _train_fixed_epochs(
     for ep in range(start_ep, n_epochs + 1):
         model.train()
         for xb, yb in loader:
+            xb, yb = xb.to(device), yb.to(device)
             optim.zero_grad()
             crit(model(xb), yb).backward()
             optim.step()
@@ -686,7 +691,7 @@ def run_final(
         ds_tst1d = _make_ds_1d(test,     label_map)
 
         t0 = time.perf_counter()
-        model1d = _train_fixed_epochs(model1d, ds_tv1d, mean_ep_1d,
+        model1d = _train_fixed_epochs(model1d, ds_tv1d, mean_ep_1d, device,
                                       model_name="cnn1d", ckpt_dir=ckpt_dir,
                                       seed=SEED_MODEL + 1, resume=resume)
         t_1d = time.perf_counter() - t0
@@ -731,7 +736,7 @@ def run_final(
         ds_tst2d = _make_ds_2d(test,     label_map)
 
         t0 = time.perf_counter()
-        model2d = _train_fixed_epochs(model2d, ds_tv2d, mean_ep_2d,
+        model2d = _train_fixed_epochs(model2d, ds_tv2d, mean_ep_2d, device,
                                       model_name="cnn2d", ckpt_dir=ckpt_dir,
                                       seed=SEED_MODEL + 2, resume=resume)
         t_2d = time.perf_counter() - t0
