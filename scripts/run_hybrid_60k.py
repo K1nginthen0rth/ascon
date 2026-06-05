@@ -79,15 +79,24 @@ try:
 except ImportError:
     _MLFLOW = False
 
+# CNN1D efetivo: CT completo na GPU, prefixo na CPU.
+_CNN1D_MAX_LEN = MAX_LEN_D_CNN1D if torch.cuda.is_available() else MAX_LEN_B
+
+# CNN1D sobre CT longo (>= 16384 bytes) exige batch pequeno para caber na VRAM.
+# CNN2D (co-ocorrência 256x256) e os classificadores clássicos seguem com batch 64.
+CNN1D_BATCH_SIZE = 8 if _CNN1D_MAX_LEN >= 16384 else 64
+
 CNN_CFG = HybridConfig(
-    max_len_1d   = MAX_LEN_D_CNN1D if torch.cuda.is_available() else MAX_LEN_B,
-    n_classes    = 2,
-    n_filters_1d = 128,
-    n_conv_1d    = 3,
-    lr           = 1e-3,
-    n_epochs     = 30,
-    patience     = 5,
-    seed_model   = SEED_MODELS,
+    max_len_1d    = _CNN1D_MAX_LEN,
+    n_classes     = 2,
+    n_filters_1d  = 128,
+    n_conv_1d     = 3,
+    lr            = 1e-3,
+    n_epochs      = 30,
+    patience      = 5,
+    seed_model    = SEED_MODELS,
+    batch_size_1d = CNN1D_BATCH_SIZE,
+    batch_size_2d = 64,
 )
 
 # Feature selection: top_k_mi aumentado para cobrir os ~947D do vetor combinado

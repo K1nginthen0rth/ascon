@@ -68,10 +68,10 @@ def _worker_init_fn(worker_id: int) -> None:
     np.random.seed(torch.initial_seed() % 2**32)
 
 
-def _loader(ds: Dataset, shuffle: bool) -> DataLoader:
+def _loader(ds: Dataset, shuffle: bool, batch_size: int = _BATCH_SIZE) -> DataLoader:
     return DataLoader(
         ds,
-        batch_size          = _BATCH_SIZE,
+        batch_size          = batch_size,
         shuffle             = shuffle,
         num_workers         = _NUM_WORKERS,
         persistent_workers  = _PERSISTENT if _NUM_WORKERS > 0 else False,
@@ -181,6 +181,7 @@ def train_cnn(
     ckpt_dir:   Optional[Path] = None,
     mlflow_prefix: str = "",
     resume:     bool  = True,
+    batch_size: int   = _BATCH_SIZE,
 ) -> tuple[nn.Module, int]:
     """
     Treina CNN com early stopping no val_loss.
@@ -205,8 +206,8 @@ def train_cnn(
     elif verbose:
         print(f"  Iniciando do zero (fold {fold_id} {cnn_id})")
 
-    train_loader = _loader(train_ds, shuffle=True)
-    val_loader   = _loader(val_ds,   shuffle=False)
+    train_loader = _loader(train_ds, shuffle=True,  batch_size=batch_size)
+    val_loader   = _loader(val_ds,   shuffle=False, batch_size=batch_size)
 
     for ep in range(start_ep, n_epochs + 1):
         # Treino
@@ -287,12 +288,13 @@ def train_cnn_fixed(
     ckpt_dir: Optional[Path] = None,
     mlflow_prefix: str = "",
     resume:   bool  = True,
+    batch_size: int = _BATCH_SIZE,
 ) -> nn.Module:
     """Treina por n_epochs fixo sem early stopping (modelo final)."""
     torch.manual_seed(seed)
     optim  = torch.optim.Adam(model.parameters(), lr=lr)
     crit   = nn.CrossEntropyLoss()
-    loader = _loader(train_ds, shuffle=True)
+    loader = _loader(train_ds, shuffle=True, batch_size=batch_size)
     ckpt   = _ckpt_path(ckpt_dir, fold_id, cnn_id)
     start_ep = 1
 
@@ -336,6 +338,7 @@ def extract_latents(
     max_len_or_size: int,
     mode:   str,
     device: str,
+    batch_size: int = _BATCH_SIZE,
 ) -> np.ndarray:
     """
     Extrai vetores latentes (antes do FC) para uma lista de ciphertexts.
@@ -354,7 +357,7 @@ def extract_latents(
     chunks: list[np.ndarray] = []
     model.eval()
     with torch.no_grad():
-        for xb, _ in _loader(ds, shuffle=False):
+        for xb, _ in _loader(ds, shuffle=False, batch_size=batch_size):
             chunks.append(model.extract_latent(xb.to(device)).cpu().numpy())
     return np.concatenate(chunks)
 
@@ -387,10 +390,17 @@ class HybridConfig:
     seed_model:    int   = 7
     device:        Optional[str]  = None
     ckpt_dir:      Optional[Path] = None
+    # Batch sizes separados por CNN. CNN1D sobre CT longo (>= 16384 bytes) precisa
+    # de batch pequeno para caber na VRAM; CNN2D (co-ocorrência 256x256) e os
+    # classificadores clássicos mantêm o batch padrão. None => derivado de max_len_1d.
+    batch_size_1d: Optional[int]  = None
+    batch_size_2d: int            = _BATCH_SIZE
 
     def __post_init__(self) -> None:
         if self.device is None:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        if self.batch_size_1d is None:
+            self.batch_size_1d = 8 if self.max_len_1d >= 16384 else _BATCH_SIZE
 
 
 # ---------------------------------------------------------------------------
@@ -467,6 +477,7 @@ class HybridExtractor:
             ckpt_dir      = ckpt_dir,
             mlflow_prefix = f"fold{fold_id:02d}_1d",
             resume        = resume,
+            batch_size    = cfg.batch_size_1d,
         )
         if verbose:
             print(f"    CNN1D ok: best_ep={self.best_epoch_1d}  t={time.perf_counter()-t0:.1f}s")
@@ -492,6 +503,7 @@ class HybridExtractor:
             ckpt_dir      = ckpt_dir,
             mlflow_prefix = f"fold{fold_id:02d}_2d",
             resume        = resume,
+            batch_size    = cfg.batch_size_2d,
         )
         if verbose:
             print(f"    CNN2D ok: best_ep={self.best_epoch_2d}  t={time.perf_counter()-t0:.1f}s")
@@ -538,6 +550,7 @@ class HybridExtractor:
             ckpt_dir      = ckpt_dir,
             mlflow_prefix = "final_1d",
             resume        = resume,
+            batch_size    = cfg.batch_size_1d,
         )
         if verbose:
             print(f"    CNN1D: {n_epochs_1d} épocas  t={time.perf_counter()-t0:.1f}s")
@@ -556,6 +569,7 @@ class HybridExtractor:
             ckpt_dir      = ckpt_dir,
             mlflow_prefix = "final_2d",
             resume        = resume,
+            batch_size    = cfg.batch_size_2d,
         )
         if verbose:
             print(f"    CNN2D: {n_epochs_2d} épocas  t={time.perf_counter()-t0:.1f}s")
@@ -575,8 +589,10 @@ class HybridExtractor:
         if self.model1d is None or self.model2d is None:
             raise RuntimeError("Chame fit() ou fit_fixed() antes de transform().")
         cfg = self.cfg
-        z1d = extract_latents(self.model1d, cts, cfg.max_len_1d, "1d", cfg.device)
-        z2d = extract_latents(self.model2d, cts, 0,              "2d", cfg.device)
+        z1d = extract_latents(self.model1d, cts, cfg.max_len_1d, "1d", cfg.device,
+                              batch_size=cfg.batch_size_1d)
+        z2d = extract_latents(self.model2d, cts, 0,              "2d", cfg.device,
+                              batch_size=cfg.batch_size_2d)
         return np.concatenate(
             [feat_matrix.astype(np.float64),
              z1d.astype(np.float64),
