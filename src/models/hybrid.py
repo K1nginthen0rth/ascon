@@ -158,7 +158,10 @@ def _load_ckpt(
     ckpt = torch.load(path, map_location=device)
     model.load_state_dict(ckpt["model_state"])
     optimizer.load_state_dict(ckpt["optimizer_state"])
-    torch.set_rng_state(ckpt["rng_state"])
+    rng = ckpt["rng_state"]
+    if not isinstance(rng, torch.ByteTensor):
+        rng = rng.cpu().to(torch.uint8)
+    torch.set_rng_state(rng)
     return ckpt["epoch"] + 1, ckpt["best_val_loss"], ckpt["best_epoch"]
 
 

@@ -24,6 +24,14 @@ env/
 
 # Artefatos de build MSVC
 src/crypto/Release/
+*.obj
+*.exe
+*.pyd
+
+# Repos C de referencia aninhados (so usados para gerar dataset/KAT localmente;
+# o C amalgamado para rebuild fica em src/crypto/. Nao sao necessarios no Kaggle).
+ascon-c/
+gift-cofb/
 
 # Jupyter
 .ipynb_checkpoints/
