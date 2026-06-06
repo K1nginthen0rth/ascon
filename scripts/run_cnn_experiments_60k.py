@@ -69,16 +69,18 @@ REPORTS_DIR  = REPO_ROOT / "reports" / f"{DATASET_ID}_cnn"
 CM_DIR       = REPORTS_DIR / "confusion_matrices"
 CKPT_DIR     = REPORTS_DIR / "ckpts"
 
-# Caminho B usa prefixo por viabilidade em CPU.
-# Caminho D (run_hybrid_60k.py) usa MAX_LEN_D_CNN1D (CT completo) — não este script.
-MAX_LEN_B        = 4096    # CNN1D Caminho B — prefixo; viável em CPU
-MAX_LEN_D_CNN1D  = 65552   # CNN1D Caminho D — referência; NÃO usado neste script
+# Caminho B agora usa o CT completo (mesmo comprimento do Caminho D).
+MAX_LEN_B        = 65552   # CNN1D Caminho B — CT completo (64KB + tag); requer GPU
+MAX_LEN_D_CNN1D  = 65552   # CNN1D Caminho D — CT completo
 
-CNN1D_MAX_LEN    = MAX_LEN_B   # Caminho B: prefixo
+CNN1D_MAX_LEN    = MAX_LEN_B   # Caminho B: CT completo
 CNN2D_IMAGE_SIZE = 256
 
 # Hiperparâmetros de treino CNN
 BATCH_SIZE  = 64
+# CNN1D sobre CT longo (>= 16384 bytes) exige batch pequeno para caber na VRAM.
+# CNN2D (co-ocorrência 256x256) e os classificadores clássicos seguem com BATCH_SIZE.
+CNN1D_BATCH_SIZE = 8 if MAX_LEN_B >= 16384 else BATCH_SIZE
 N_EPOCHS    = 30
 LR          = 1e-3
 PATIENCE    = 5
@@ -152,9 +154,9 @@ class _CoocDataset(Dataset):
 # Funções de treino/avaliação CNN (loop reutilizável)
 # ---------------------------------------------------------------------------
 
-def _make_loader(ds: Dataset, shuffle: bool) -> DataLoader:
+def _make_loader(ds: Dataset, shuffle: bool, batch_size: int = BATCH_SIZE) -> DataLoader:
     return DataLoader(
-        ds, batch_size=BATCH_SIZE, shuffle=shuffle,
+        ds, batch_size=batch_size, shuffle=shuffle,
         num_workers=4, persistent_workers=True,
         worker_init_fn=_worker_init_fn,
     )
@@ -172,6 +174,7 @@ def _train_cnn(
     verbose:     bool           = False,
     seed:        int            = SEED_MODEL,
     resume:      bool           = True,
+    batch_size:  int            = BATCH_SIZE,
 ) -> tuple[nn.Module, int, dict]:
     """Treina model com early stopping no val_loss.
 
@@ -185,8 +188,8 @@ def _train_cnn(
 
     optim        = torch.optim.Adam(model.parameters(), lr=LR)
     crit         = nn.CrossEntropyLoss()
-    train_loader = _make_loader(train_ds, shuffle=True)
-    val_loader   = _make_loader(val_ds,   shuffle=False)
+    train_loader = _make_loader(train_ds, shuffle=True,  batch_size=batch_size)
+    val_loader   = _make_loader(val_ds,   shuffle=False, batch_size=batch_size)
 
     history: dict = {"train_loss": [], "val_loss": [], "val_f1_macro": []}
     best_val, best_state, best_epoch, no_imp = float("inf"), None, 0, 0
@@ -285,9 +288,10 @@ def _train_cnn(
     return model, best_epoch, history
 
 
-def _predict_cnn(model: nn.Module, ds: Dataset, device: str) -> tuple[np.ndarray, np.ndarray]:
+def _predict_cnn(model: nn.Module, ds: Dataset, device: str,
+                 batch_size: int = BATCH_SIZE) -> tuple[np.ndarray, np.ndarray]:
     """Retorna (y_pred, y_proba) para todo o dataset."""
-    loader = _make_loader(ds, shuffle=False)
+    loader = _make_loader(ds, shuffle=False, batch_size=batch_size)
     chunks = []
     model.eval()
     with torch.no_grad():
@@ -299,9 +303,10 @@ def _predict_cnn(model: nn.Module, ds: Dataset, device: str) -> tuple[np.ndarray
     return y_pred, proba
 
 
-def _extract_latents(model: nn.Module, ds: Dataset, device: str) -> np.ndarray:
+def _extract_latents(model: nn.Module, ds: Dataset, device: str,
+                     batch_size: int = BATCH_SIZE) -> np.ndarray:
     """Extrai vetor latente (antes do FC) para todo o dataset."""
-    loader = _make_loader(ds, shuffle=False)
+    loader = _make_loader(ds, shuffle=False, batch_size=batch_size)
     chunks = []
     model.eval()
     with torch.no_grad():
@@ -495,6 +500,7 @@ def run_cv(
                 fold_id=fold_idx, model_name="cnn1d",
                 ckpt_dir=ckpt_dir, verbose=True,
                 seed=seed_fold + 1, resume=resume,
+                batch_size=CNN1D_BATCH_SIZE,
             )
             t_cnn1d = time.perf_counter() - t0
             best_epochs_1d.append(best_ep1d)
@@ -503,13 +509,13 @@ def run_cv(
             if _MLFLOW:
                 mlflow.log_metric(f"cnn1d_fold{fold_num}_best_epoch", best_ep1d)
 
-            y_pred1d, _ = _predict_cnn(model1d, ds_val1d, device)
+            y_pred1d, _ = _predict_cnn(model1d, ds_val1d, device, batch_size=CNN1D_BATCH_SIZE)
             f1_1d_dir   = float(f1_score(y_val, y_pred1d, average="macro", zero_division=0))
             bac_1d_dir  = float(balanced_accuracy_score(y_val, y_pred1d))
             print(f"    cnn1d_direct    F1={f1_1d_dir:.4f}  BalAcc={bac_1d_dir:.4f}")
 
-            Z_tr1d    = _extract_latents(model1d, ds_tr1d,  device)
-            Z_val1d   = _extract_latents(model1d, ds_val1d, device)
+            Z_tr1d    = _extract_latents(model1d, ds_tr1d,  device, batch_size=CNN1D_BATCH_SIZE)
+            Z_val1d   = _extract_latents(model1d, ds_val1d, device, batch_size=CNN1D_BATCH_SIZE)
             lat_res1d = _fit_predict_on_latents(Z_tr1d, y_tr, Z_val1d, y_val)
             for name, r in lat_res1d.items():
                 print(f"    cnn1d_latent_{name.lower():4s}  F1={r['f1_macro']:.4f}  "
@@ -608,13 +614,14 @@ def _train_fixed_epochs(
     ckpt_dir:   Optional[Path] = None,
     seed:       int            = SEED_MODEL,
     resume:     bool           = True,
+    batch_size: int            = BATCH_SIZE,
 ) -> nn.Module:
     """Treina por n_epochs exatos (sem early stopping). Checkpoint por época."""
     torch.manual_seed(seed)
     np.random.seed(seed)
     optim      = torch.optim.Adam(model.parameters(), lr=LR)
     crit       = nn.CrossEntropyLoss()
-    loader     = _make_loader(train_ds, shuffle=True)
+    loader     = _make_loader(train_ds, shuffle=True, batch_size=batch_size)
     start_ep   = 1
     ckpt_path  = (ckpt_dir / f"{model_name}_final.pt") if ckpt_dir else None
 
@@ -693,11 +700,12 @@ def run_final(
         t0 = time.perf_counter()
         model1d = _train_fixed_epochs(model1d, ds_tv1d, mean_ep_1d, device,
                                       model_name="cnn1d", ckpt_dir=ckpt_dir,
-                                      seed=SEED_MODEL + 1, resume=resume)
+                                      seed=SEED_MODEL + 1, resume=resume,
+                                      batch_size=CNN1D_BATCH_SIZE)
         t_1d = time.perf_counter() - t0
         print(f"  CNN1D treinado em {t_1d:.1f}s")
 
-        y_pred, y_proba = _predict_cnn(model1d, ds_tst1d, device)
+        y_pred, y_proba = _predict_cnn(model1d, ds_tst1d, device, batch_size=CNN1D_BATCH_SIZE)
         rep = compute_metrics(y_tst, y_pred, y_proba=y_proba,
                               n_bootstrap=N_BOOTSTRAP, seed=SEED_BOOT)
         results["cnn1d_direct"] = {**rep.as_dict(), "train_time_s": round(t_1d, 2),
@@ -706,8 +714,8 @@ def run_final(
         print(f"  cnn1d_direct    F1={rep.f1_macro:.4f}  IC=[{ci[0]:.3f},{ci[1]:.3f}]  "
               f"BalAcc={rep.balanced_accuracy:.4f}")
 
-        Z_tv1d   = _extract_latents(model1d, ds_tv1d,  device)
-        Z_tst1d  = _extract_latents(model1d, ds_tst1d, device)
+        Z_tv1d   = _extract_latents(model1d, ds_tv1d,  device, batch_size=CNN1D_BATCH_SIZE)
+        Z_tst1d  = _extract_latents(model1d, ds_tst1d, device, batch_size=CNN1D_BATCH_SIZE)
         scaler1d = StandardScaler().fit(Z_tv1d)
         Ztv_sc   = scaler1d.transform(Z_tv1d)
         Ztst_sc  = scaler1d.transform(Z_tst1d)
