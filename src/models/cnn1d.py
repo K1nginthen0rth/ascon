@@ -49,12 +49,28 @@ class CiphertextCNN1D(nn.Module):
 
         self.embedding = nn.Embedding(num_embeddings=256, embedding_dim=embed_dim)
 
+        # CT completo (Caminho D / Caminho B com max_len>=16384): a primeira
+        # conv usa stride=4 (kernel=8) para reduzir a sequência de imediato e
+        # manter o custo computacional viável. Sequências curtas (Caminho B
+        # original, max_len=4096) mantêm stride=1 para não invalidar resultados
+        # já obtidos.
+        first_kernel = 8 if max_len >= 16384 else kernel_size
+        first_stride = 4 if max_len >= 16384 else 1
+
         layers: list[nn.Module] = []
         in_channels = embed_dim
         for i in range(n_conv_blocks):
             out_channels = n_filters * (2 ** i)
+            if i == 0:
+                layers.append(
+                    nn.Conv1d(in_channels, out_channels, first_kernel,
+                               stride=first_stride, padding=2 if first_stride > 1 else first_kernel // 2)
+                )
+            else:
+                layers.append(
+                    nn.Conv1d(in_channels, out_channels, kernel_size, padding=kernel_size // 2)
+                )
             layers += [
-                nn.Conv1d(in_channels, out_channels, kernel_size, padding=kernel_size // 2),
                 nn.BatchNorm1d(out_channels),
                 nn.ReLU(),
                 nn.MaxPool1d(2),
