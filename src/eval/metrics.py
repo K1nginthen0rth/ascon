@@ -21,6 +21,8 @@ from sklearn.metrics import (
     balanced_accuracy_score,
     confusion_matrix,
     f1_score,
+    roc_auc_score,
+    roc_curve,
     top_k_accuracy_score,
 )
 
@@ -37,6 +39,7 @@ class MetricsReport:
     confusion_matrix:      np.ndarray
     n_samples:             int
     n_bootstrap:           int
+    auc_roc:               Optional[dict] = None
 
     def as_dict(self) -> dict:
         return {
@@ -51,6 +54,14 @@ class MetricsReport:
             "confusion_matrix":     self.confusion_matrix.tolist(),
             "n_samples":            self.n_samples,
             "n_bootstrap":          self.n_bootstrap,
+            "auc_roc":              (
+                {
+                    "auc": self.auc_roc["auc"],
+                    "fpr": self.auc_roc["fpr"],
+                    "tpr": self.auc_roc["tpr"],
+                }
+                if self.auc_roc is not None else None
+            ),
         }
 
 
@@ -114,6 +125,8 @@ def compute_metrics(
             )
         ece = expected_calibration_error(y_true, y_proba, n_bins=10)
 
+    auc_roc = compute_auc_roc(y_true, y_proba, labels=labels)
+
     return MetricsReport(
         f1_macro=float(f1),
         f1_macro_ci=(float(f1_lo), float(f1_hi)),
@@ -124,7 +137,61 @@ def compute_metrics(
         confusion_matrix=cm,
         n_samples=n,
         n_bootstrap=n_bootstrap,
+        auc_roc=auc_roc,
     )
+
+
+def compute_auc_roc(
+    y_true: np.ndarray,
+    y_proba: Optional[np.ndarray],
+    labels: Optional[list] = None,
+) -> Optional[dict]:
+    """
+    Calcula AUC-ROC e os pontos da curva ROC (fpr/tpr) para plotagem.
+
+    Para problema binário, usa y_proba[:, 1] (classe positiva) como score,
+    considerando as classes ordenadas conforme `labels` (ou np.unique(y_true)
+    se `labels` for None).
+
+    Args:
+        y_true: rótulos verdadeiros (n_samples,).
+        y_proba: probabilidades por classe (n_samples, n_classes). Se None,
+            retorna None (mesmo padrão de top_k_accuracy em compute_metrics).
+        labels: lista de rótulos ordenados. Default: np.unique(y_true).
+
+    Returns:
+        dict {"auc": float, "fpr": list, "tpr": list, "thresholds": list}
+        ou None se y_proba for None.
+    """
+    if y_proba is None:
+        return None
+
+    y_true  = np.asarray(y_true)
+    y_proba = np.asarray(y_proba)
+    if labels is None:
+        labels = sorted(np.unique(y_true).tolist())
+
+    n_classes = y_proba.shape[1]
+    if n_classes == 2:
+        # pos_label so confiavel quando `labels` cobre as 2 classes; caso
+        # contrario (ex.: batch com 1 unica classe), assume convencao
+        # padrao sklearn de classes 0..n_classes-1 para a coluna 1.
+        pos_label = labels[1] if len(labels) == n_classes else 1
+        scores = y_proba[:, 1]
+        auc = float(roc_auc_score(y_true, scores))
+        fpr, tpr, thresholds = roc_curve(y_true, scores, pos_label=pos_label)
+    else:
+        auc = float(
+            roc_auc_score(y_true, y_proba, labels=labels, multi_class="ovr")
+        )
+        fpr, tpr, thresholds = [], [], []
+
+    return {
+        "auc":        auc,
+        "fpr":        np.asarray(fpr).tolist(),
+        "tpr":        np.asarray(tpr).tolist(),
+        "thresholds": np.asarray(thresholds).tolist(),
+    }
 
 
 def mcnemar_test(
