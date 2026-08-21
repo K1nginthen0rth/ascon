@@ -8,7 +8,9 @@ Gera _ascon_ref.cpXXX-win_amd64.pyd (Windows) ou _ascon_ref.so (Linux/Mac)
 no diretório src/crypto/, ao lado deste arquivo.
 
 Requer:
-    - ascon-c/crypto_aead/ascon128v13/ref/  (fontes C de referência)
+    - ascon-c/crypto_aead/ascon128av13/ref/  (fontes C de referência — variante
+      taxa 128/capacidade 192, a parametrização final do NIST SP 800-232;
+      NÃO usar ascon128v13/, que é "Ascon-128" pré-padrão, taxa 64)
     - ascon-c/tests/crypto_aead.h           (declarações das funções)
     - cffi instalado (pip install cffi)
     - Compilador C compatível com Python (MSVC no Windows, gcc no Linux/Mac)
@@ -23,7 +25,7 @@ import cffi
 # Caminhos
 # ---------------------------------------------------------------------------
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-ASCON_REF_DIR = REPO_ROOT / "ascon-c" / "crypto_aead" / "ascon128v13" / "ref"
+ASCON_REF_DIR = REPO_ROOT / "ascon-c" / "crypto_aead" / "ascon128av13" / "ref"
 ASCON_TESTS_DIR = REPO_ROOT / "ascon-c" / "tests"
 OUT_DIR = Path(__file__).parent  # src/crypto/
 

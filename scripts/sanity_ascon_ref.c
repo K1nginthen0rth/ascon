@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "../ascon-c/crypto_aead/ascon128v13/ref/api.h"
+#include "../ascon-c/crypto_aead/ascon128av13/ref/api.h"
 #include "../ascon-c/tests/crypto_aead.h"
 
 static void print_hex(const unsigned char* buf, size_t len) {

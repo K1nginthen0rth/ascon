@@ -27,7 +27,10 @@ from src.crypto.ascon_wrapper import AsconAEAD128, AuthenticationError
 # ---------------------------------------------------------------------------
 _KEY = bytes(range(16))           # 0x00 … 0x0F
 _NONCE = bytes(range(16, 32))     # 0x10 … 0x1F
-_KAT_PATH = Path(__file__).parent.parent / "ascon-c" / "LWC_AEAD_KAT_128_128.txt"
+_KAT_PATH = (
+    Path(__file__).parent.parent
+    / "ascon-c" / "crypto_aead" / "ascon128av13" / "LWC_AEAD_KAT_128_128.txt"
+)
 
 
 # ---------------------------------------------------------------------------

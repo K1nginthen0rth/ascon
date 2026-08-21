@@ -3,7 +3,7 @@
 #include <string.h>
 #include <stdint.h>
 
-#include "../ascon-c/crypto_aead/ascon128v13/ref/api.h"
+#include "../ascon-c/crypto_aead/ascon128av13/ref/api.h"
 #include "../ascon-c/tests/crypto_aead.h"
 
 static int hex_value(char c) {
