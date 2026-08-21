@@ -32,6 +32,8 @@ src/crypto/Release/
 # o C amalgamado para rebuild fica em src/crypto/. Nao sao necessarios no Kaggle).
 ascon-c/
 gift-cofb/
+grain-128aead/
+sparkle/
 
 # Jupyter
 .ipynb_checkpoints/
