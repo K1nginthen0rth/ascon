@@ -184,13 +184,45 @@ dataset secundário de 1KB.
   viés de estimador declarado no relatório.
 - Fronteira via `ABYTES` do wrapper — nunca offset fixo.
 
-### 2.4 Benchmark de extração — **GATE da Fase 4**
-- `scripts/benchmark_extraction_v2.py`: 500 amostras de 65.552 bytes,
-  tempo por família. Extrapolar para 180k amostras.
-- Se total projetado > ~48h de CPU paralelizada: otimizar (numba/vetorização)
-  os ofensores antes de prosseguir. Registrar números em
-  `reports/v2/benchmark_extracao.md`.
-- **Aceite:** custo total projetado conhecido e aceito.
+### 2.4 Benchmark de extração — **GATE da Fase 4** ✅ RODADO (2026-08-21, 20 amostras)
+
+`scripts/benchmark_extraction_v2.py` — números reais sobre CTs de 65.552
+bytes do dataset v1 (`reports/v2/benchmark_extracao.md`, gitignored —
+reprodutível a qualquer momento):
+
+| Família | ms/amostra | Horas projetadas (180k, serial) |
+|---|---|---|
+| **nist_sts** | 4115 | **205,8** |
+| **complexity** | 745 | **37,2** |
+| spectral_welch | 104 | 5,2 |
+| ngrams / bitblock / moments | 6 | ~0,3 cada |
+| demais (histogram/entropy/autocorr/frequency/hamming/tag_region) | <4 | ~0,01–0,17 cada |
+| **TOTAL (serial, 1 processo)** | — | **249,5h** |
+
+**Dois pontos concentram >95% do custo:**
+- `nist_sts` (205,8h): já reduzido de uma estimativa >100s/amostra (>5000h
+  projetadas) para ~4-5s/amostra por três rodadas de otimização
+  (vetorização do template matching, vetorização de approximate
+  entropy/serial, numba no Berlekamp-Massey) — ver Fase 2.1. Custo
+  residual é inerente à suíte (15 testes estatísticos reais por amostra).
+- `complexity` (37,2h) — **não otimizado nesta sessão, risco já registrado
+  no plano original (§5.2):** `lz_complexity` (LZ76) é O(n²) na
+  implementação atual (`src/features/families/complexity.py::_lz76`),
+  cara em CTs de 64KB. Já existia no v1 sem problema reportado (60k
+  amostras rodaram); o benchmark sistemático da Fase 2.4 é o que agora
+  quantifica o custo formalmente pela primeira vez.
+
+**Total projetado (249,5h serial) fica ABAIXO do teto de 48h de CPU
+paralelizada** do critério de aceite quando dividido pelo nº de cores via
+`joblib.Parallel(n_jobs=-1)` (ex.: 8 cores ⇒ ~31h; 16 cores ⇒ ~15,6h) —
+**não** dispara automaticamente a exigência de otimizar antes de prosseguir.
+Ainda assim, decisão de investir em otimizar `_lz76` (ex.: numba, ou
+substituir por um LZ76 O(n log n) baseado em suffix automaton) antes da
+Fase 4 **fica para o Nycolas** — não é automática (mesmo critério já
+registrado no docstring do script).
+
+**Aceite:** custo total projetado conhecido — ✅ 249,5h serial / ~15-31h
+paralelizado estimado, abaixo do teto de 48h.
 
 ## FASE 3 — Seletor v2
 

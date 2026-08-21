@@ -25,10 +25,13 @@ comprometer GPU.
 - **GPU:** Colab+ planejado (A100 provável). Números reais de B/C/E/D não
   existem — **medir com smoke test adaptado** (4 algoritmos, amostra reduzida)
   antes de comprometer sessões longas; o `smoke_test.py` existente é o molde.
-- **🔶 Benchmark de extração antes das 150k:** LZ76 é O(n²) e caro em 64KB;
-  com features novas (Welch, 15 testes NIST), medir custo em ~500 amostras
-  antes de disparar o total — extração pode ser de horas a mais de um dia, e
-  paralelização/cache devem ser planejados com esse número na mão.
+- **✅ Benchmark de extração rodado (2026-08-21, 20 amostras):** total
+  projetado 249,5h de CPU serial para 180k amostras — abaixo do teto de
+  48h paralelizado (~15-31h com 8-16 cores via joblib). Dois pontos
+  concentram >95% do custo: `nist_sts` (205,8h — já otimizado nesta sessão
+  de uma estimativa inicial >5000h) e `complexity`/LZ76 (37,2h — O(n²),
+  não otimizado, decisão de investir mais fica para o Nycolas). Detalhe
+  completo em `06_implementacao_passo_a_passo.md` Fase 2.4.
 - Armazenamento: ~9,8 GB parquet + features (~120k × ~400 floats, trivial).
 
 ## 5.3 Riscos e planos B
