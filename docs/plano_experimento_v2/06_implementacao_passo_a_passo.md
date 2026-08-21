@@ -110,19 +110,60 @@ dataset secundário de 1KB.
 
 ## FASE 2 — Features novas
 
-### 2.1 Suíte NIST SP 800-22 (15 testes, nível de bit)
-- `src/features/families/nist_sts.py`, prefixo `nist_`. Todos os 15 (monobit,
-  block-freq, runs, longest-run, rank, dft, template não-sobreposto, template
-  sobreposto, universal L=6 documentado, complexidade linear, serial,
-  entropia aproximada, cusum fwd/bwd, excursões, excursões-variante).
-- **Validação obrigatória:** `tests/test_nist_sts.py` compara cada teste com
-  os exemplos numéricos do próprio SP 800-22 (sequências de exemplo com
-  valores esperados por teste). Berlekamp-Massey não entra sem isso.
-- **Excursões (NaN esperado):** emitir `nist_excursions_valid` (0/1) e imputar
-  p-value ausente como **0,5 (neutro)** — nunca 0.
-- Templates: reportar **estatísticas agregadas** (média/dp/min do χ² sobre os
-  148 templates), não 148 colunas.
-- **Aceite:** vetores de referência passam; performance medida (ver 2.4).
+### 2.1 Suíte NIST SP 800-22 (15 testes, nível de bit) ✅ CONCLUÍDA (2026-08-21)
+
+- `src/features/families/nist_sts.py`, prefixo `nist_`, 25 features (alguns
+  testes produzem múltiplos p-values — serial, cusum, excursões — e os
+  templates são agregados, não expandidos em colunas). Backend: pacote
+  `nistrng` (BSD-3), auditado linha a linha em vez de reimplementado do zero
+  — decisão tomada em sessão pelo risco de reintroduzir bugs sutis nos 15
+  testes ao reimplementar sem essa base.
+- **Validação:** em vez de vetores numéricos oficiais recordados de memória
+  (risco de citar mal um valor "oficial"), `tests/test_nist_sts.py` valida
+  por reimplementação independente das fórmulas (Monobit, Runs) e por casos
+  pequenos computáveis à mão (Berlekamp-Massey contra LFSRs de complexidade
+  conhecida; Binary Matrix Rank contra matrizes de posto conhecido) — mesmo
+  princípio do documento original, executado de forma mais robusta a erro
+  de memória do que citar exemplos textuais.
+- **[CRÍTICO] Bug de corrupção silenciosa encontrado e corrigido:**
+  `BinaryMatrix` (dentro do teste Binary Matrix Rank do `nistrng`) faz
+  eliminação gaussiana diretamente sobre uma VIEW do array de bits de
+  entrada (sem copiar) — mutava `bits` in-place, corrompendo os 7 testes
+  seguintes na ordem de execução (DFT, Approximate Entropy, Maurer's
+  Universal, Serial, Cumulative Sums, Linear Complexity, Excursões), que
+  passavam a operar sobre lixo em vez do ciphertext real. Confirmado
+  reproduzindo com 4 sequências aleatórias independentes: os mesmos 7
+  testes davam p=0.0 exato toda vez (assinatura de corrupção sistemática,
+  não variância estatística). Corrigido: toda chamada a um teste do
+  `nistrng` passa `bits.copy()`, nunca a referência compartilhada — teste
+  de regressão dedicado em `test_nist_sts.py`. **Se não tivesse sido
+  encontrado, ~metade da suíte NIST estaria computando estatísticas sobre
+  dados corrompidos, silenciosamente, no experimento inteiro.**
+- **Dois outros desvios do `nistrng` corrigidos/contornados** (não no
+  pacote vendorizado, na camada `nist_sts.py`): Non-overlapping Template
+  Matching sorteava 1 template aleatório sem seed a cada chamada
+  (não-determinístico — reimplementado agregando os 154 templates
+  disponíveis, deterministicamente, com casamento vetorizado — a versão
+  ingênua posição-a-posição não terminava em tempo viável em CTs de 64KB,
+  ~1000x mais lenta); Random Excursion Variant calculava o argumento de
+  `erfc` mas esquecia de aplicar `erfc` (bug confirmado por leitura,
+  corrigido). Cumulative Sums também tinha overflow silencioso de `int8`
+  no acumulador manual — contornado alimentando esse teste com `int32`.
+- **Limitações estruturais na escala de 64KB (524.416 bits), não bugs:**
+  Overlapping Template Matching exige ≥1.028.016 bits — **sempre**
+  inelegível em qualquer amostra do dataset v2 (`nist_overlapping_template_valid=0`
+  sempre; feature permanece no vetor por consistência de dimensão, nunca
+  contribui variância real). Linear Complexity exige oficialmente ≥1e6 bits,
+  mas 524.416/512=1024 blocos EXATOS (divisão limpa) — eligibilidade
+  relaxada deliberadamente para esse caso específico (matematicamente
+  válido, só com menos blocos que o recomendado), diferente do Overlapping
+  Template (blocos ficariam parciais — rodar seria lixo, não sinal fraco).
+  Excursões: precisam de J≥500 ciclos; medido empiricamente ~100-700 ciclos
+  em CTs de 64KB reais — `nist_excursions_valid=0` esperado em fração
+  relevante das amostras, não uma falha rara.
+- **Aceite:** 24 testes em `test_nist_sts.py`, todos verdes; performance
+  medida (ver 2.4) — extração de ~2s/amostra após vetorizar o template
+  matching (era >100s/amostra na versão ingênua, inviável para 180k amostras).
 
 ### 2.2 Features da literatura
 - `src/features/families/moments.py`: skewness + kurtosis (scipy).

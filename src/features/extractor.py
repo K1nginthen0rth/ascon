@@ -11,13 +11,23 @@ from joblib import Parallel, delayed
 from tqdm import tqdm
 
 from src.features.families.autocorrelation import extract_autocorrelation
+from src.features.families.bitblock import extract_bitblock
 from src.features.families.complexity import extract_complexity
 from src.features.families.entropy import extract_entropy_stats
 from src.features.families.frequency import extract_frequency
+from src.features.families.hamming import extract_hamming
 from src.features.families.histogram import extract_histogram
+from src.features.families.moments import extract_moments
 from src.features.families.ngrams import extract_ngrams
+from src.features.families.nist_sts import extract_nist_sts
+from src.features.families.spectral_welch import extract_spectral_welch
+from src.features.families.tag_region import extract_tag_region
 
-_ALL_FAMILIES = ("histogram", "entropy", "ngrams", "autocorrelation", "complexity", "frequency")
+_ALL_FAMILIES = (
+    "histogram", "entropy", "ngrams", "autocorrelation", "complexity",
+    "frequency", "nist_sts", "moments", "hamming", "spectral_welch",
+    "bitblock", "tag_region",
+)
 
 _FAMILY_FUNCS = {
     "histogram": extract_histogram,
@@ -26,6 +36,12 @@ _FAMILY_FUNCS = {
     "autocorrelation": extract_autocorrelation,
     "complexity": extract_complexity,
     "frequency": extract_frequency,
+    "nist_sts": extract_nist_sts,
+    "moments": extract_moments,
+    "hamming": extract_hamming,
+    "spectral_welch": extract_spectral_welch,
+    "bitblock": extract_bitblock,
+    "tag_region": extract_tag_region,
 }
 
 _METADATA_COLS = ("sample_id", "algorithm", "key_id", "len_pt", "len_ct")
@@ -34,13 +50,20 @@ _METADATA_COLS = ("sample_id", "algorithm", "key_id", "len_pt", "len_ct")
 class CiphertextFeatureExtractor:
     """Extrai vetores de features numéricas de ciphertexts para modelos ML.
 
-    Combina 6 famílias de features (~307 dimensões no total):
+    Combina 12 famílias de features (v2 — ~380-420 dimensões no total,
+    número exato depende dos blocos de bits agregados; v1 tinha 6/307D):
       - histogram (256): distribuição empírica de bytes
       - entropy (4): Shannon + chi² contra uniforme
       - ngrams (15): estatísticas de bigramas, trigramas e 4-gramas
       - autocorrelation (18): ACF lags 1–16 + Wald-Wolfowitz runs test
-      - complexity (4): LZ76 + razões de compressão zlib/bz2
-      - frequency (10): energia FFT por banda + entropia espectral
+      - complexity (5): LZ76 + razões de compressão zlib/bz2/lzma
+      - frequency (10): energia FFT (byte) por banda + entropia espectral
+      - nist_sts (25): suíte NIST SP 800-22 completa, nível de bit
+      - moments (2): skewness + kurtosis da distribuição de bytes
+      - hamming (11): distribuição de peso de Hamming por byte
+      - spectral_welch (5): PSD de Welch (bit) + descritores espectrais
+      - bitblock (~300): histograma de blocos de bits (bruto 2/4/8, agregado 12/16)
+      - tag_region (8): estatísticas tag (janela comum 8B) vs. payload
 
     Cenário ciphertext-only: nenhuma família usa plaintext, chave ou nonce.
     len_pt/len_ct NÃO são incluídas nas features — ficam como metadados.

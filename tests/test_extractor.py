@@ -192,6 +192,7 @@ def test_complexity_keys():
         "lz_complexity_normalized",
         "compression_ratio_zlib",
         "compression_ratio_bz2",
+        "compression_ratio_lzma",
     }
 
 
@@ -266,8 +267,10 @@ def test_extract_all_families():
     extractor = CiphertextFeatureExtractor()
     ct = rand_bytes(256)
     feats = extractor.extract(ct)
-    # Esperado: 256 + 4 + 15 + 18 + 4 + 10 = 307
-    assert len(feats) == 307
+    # v2 (12 familias): 256 + 4 + 15 + 18 + 5 + 10 + 25 + 2 + 11 + 5 + 282 + 8 = 641
+    # (v1 tinha 6 familias / 307D — histogram/entropy/ngrams/autocorrelation/
+    # complexity(4)/frequency; ver docs/analise_completa/ para o historico v1)
+    assert len(feats) == 641
     assert all_nan_or_float(feats)
 
 
@@ -323,7 +326,7 @@ def test_extract_dataset_pilot(tmp_path):
     assert "ciphertext" not in out.columns
     assert "sample_id" in out.columns
     feature_cols = [c for c in out.columns if c not in ("sample_id", "algorithm", "key_id", "len_pt", "len_ct")]
-    assert len(feature_cols) == 307
+    assert len(feature_cols) == 641  # v2 — 12 familias, ver test_extract_all_families
     assert not out[feature_cols].isin([float("inf"), float("-inf")]).any().any()
 
 
@@ -343,7 +346,15 @@ def test_no_ciphertext_in_output(tmp_path):
 
 
 def test_benchmark_single_extraction():
-    extractor = CiphertextFeatureExtractor()
+    # Escopo: só as familias "leves" originais do v1 (nivel de byte). As
+    # familias v2 pesadas (nist_sts especialmente — 15 testes estatisticos,
+    # bit-a-bit) tem custo inerente muito maior e ordens de grandeza mais
+    # dependente do tamanho real do CT (65KB) do que deste micro-benchmark
+    # de 1024B — sao caracterizadas por scripts/benchmark_extraction_v2.py
+    # (Fase 2.4 do plano), nao por este teste unitario de regressao rapida.
+    extractor = CiphertextFeatureExtractor(
+        families=["histogram", "entropy", "ngrams", "autocorrelation", "complexity", "frequency"]
+    )
     ct = rand_bytes(1024)
     # Warm-up
     extractor.extract(ct)

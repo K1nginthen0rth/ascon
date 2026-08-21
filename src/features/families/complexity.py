@@ -1,14 +1,15 @@
-"""Família 5: métricas de complexidade — LZ76 + compressão (4 features)."""
+"""Família 5: métricas de complexidade — LZ76 + compressão (5 features)."""
 from __future__ import annotations
 
 import bz2
+import lzma
 import zlib
 
 _NAN = float("nan")
 
 
 def extract_complexity(ct: bytes) -> dict[str, float]:
-    """Complexidade de Lempel-Ziv (LZ76) e razões de compressão zlib/bz2.
+    """Complexidade de Lempel-Ziv (LZ76) e razões de compressão zlib/bz2/lzma.
 
     Args:
         ct: ciphertext como bytes.
@@ -18,6 +19,7 @@ def extract_complexity(ct: bytes) -> dict[str, float]:
         lz_complexity_normalized: lz_complexity / len(ct).
         compression_ratio_zlib: len(zlib.compress(ct)) / len(ct).
         compression_ratio_bz2: len(bz2.compress(ct)) / len(ct).
+        compression_ratio_lzma: len(lzma.compress(ct)) / len(ct) (E13 — Zhou, 2025).
         Todos NaN se ct estiver vazio.
     """
     if len(ct) == 0:
@@ -26,6 +28,7 @@ def extract_complexity(ct: bytes) -> dict[str, float]:
             "lz_complexity_normalized": _NAN,
             "compression_ratio_zlib": _NAN,
             "compression_ratio_bz2": _NAN,
+            "compression_ratio_lzma": _NAN,
         }
 
     lz = _lz76(ct)
@@ -34,6 +37,7 @@ def extract_complexity(ct: bytes) -> dict[str, float]:
         "lz_complexity_normalized": float(lz) / len(ct),
         "compression_ratio_zlib": len(zlib.compress(ct, level=9)) / len(ct),
         "compression_ratio_bz2": len(bz2.compress(ct, compresslevel=9)) / len(ct),
+        "compression_ratio_lzma": len(lzma.compress(ct)) / len(ct),
     }
 
 
