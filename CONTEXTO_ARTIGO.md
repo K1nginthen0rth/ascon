@@ -1,3 +1,17 @@
+> ⚠️ **ATUALIZAÇÃO 2026-08-16:** este documento é um snapshot de 2026-06-04 e
+> ficou parcialmente desatualizado. Em particular: os Caminhos B, C e D **já
+> foram executados** no dataset 60k e confirmam H₀ (§9.2 abaixo está
+> desatualizada); `compute_auc_roc()` **já existe** em `src/eval/metrics.py`
+> (§9.5 abaixo está desatualizada); uma ablação do seletor de features e uma
+> mudança de semântica do Boruta (diagnóstico, não mais filtro) aconteceram
+> depois desta data; a redação da dissertação (`dissertacao/*.tex`) já
+> começou (§16 abaixo está desatualizada). Referência atual:
+> **`docs/analise_completa/`** (ver especialmente `07_resultados.md` e
+> `08_achados_e_pendencias.md`, que também documentam que os artefatos
+> brutos de B/C/D não estão sincronizados neste repositório). O restante
+> deste documento permanece válido como registro histórico do estado do
+> projeto em junho de 2026.
+
 # CONTEXTO_ARTIGO.md — Fonte única de verdade para o artigo
 
 **Projeto:** Atribuição de Algoritmos de Criptografia Leve (LWC) em cenário *ciphertext-only* via Machine Learning
