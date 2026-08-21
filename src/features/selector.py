@@ -3,8 +3,10 @@ Pipeline de seleção de features para classificação LWC ciphertext-only.
 
 Pipeline em 3 estágios (ver docs/contexto_inicial.md §2):
   1. Screening univariado: VarianceThreshold + Mutual Information (top-k)
-  2. Redução de redundância: mRMR [Peng et al. 2005]
-  3. Validação por estabilidade: Boruta [Kursa & Rudnicki 2010]
+  2. Redução de redundância: mRMR [Peng et al. 2005] — define o conjunto final
+  3. Diagnóstico de estabilidade: Boruta [Kursa & Rudnicki 2010] — reporta quantas
+     features do mRMR também se confirmam contra shadow features, mas NÃO
+     filtra o conjunto usado pelo classificador (apenas informativo/relatório)
 
 REGRA CRÍTICA: o `fit` deve ser chamado APENAS no X_train, dentro de cada fold
 de CV. Selecionar no dataset completo é o vazamento documentado em
@@ -51,9 +53,10 @@ class LWCFeatureSelector:
         - mRMR seleciona n_features_mrmr maximizando relevância e minimizando
           redundância entre features [Peng et al. 2005]
 
-    Estágio 3 (estabilidade):
-        - Boruta confirma quais features carregam sinal de fato vs. baseline
-          de "shadow features" embaralhadas [Kursa & Rudnicki 2010]
+    Estágio 3 (estabilidade, diagnóstico apenas):
+        - Boruta reporta quais features do mRMR carregam sinal vs. baseline
+          de "shadow features" embaralhadas [Kursa & Rudnicki 2010], mas o
+          resultado NÃO altera o conjunto final (self._final_mask == mRMR)
 
     Uso correto (dentro do fold):
         sel = LWCFeatureSelector()
@@ -131,7 +134,11 @@ class LWCFeatureSelector:
             [n in set(selected_names_mrmr) for n in names], dtype=bool
         )
 
-        # ---- Estágio 3: Boruta ----
+        # ---- Estágio 3: Boruta (diagnóstico de estabilidade, NÃO filtra o output) ----
+        # Boruta aqui serve apenas para reportar quantas/quais features do mRMR
+        # também se confirmam contra shadow features. O conjunto final usado
+        # pelo classificador é sempre a saída do mRMR (stage2_mask); o Boruta
+        # não remove nem adiciona features ao resultado.
         X_s2            = X[:, stage2_mask]
         names_s2        = names[stage2_mask]
         boruta_support  = self._run_boruta(X_s2, y)
@@ -139,27 +146,25 @@ class LWCFeatureSelector:
         s2_indices      = np.where(stage2_mask)[0]
         stage3_mask[s2_indices[boruta_support]] = True
 
-        # Fallback: se Boruta não selecionar nada, usar mRMR como final
-        if stage3_mask.sum() == 0:
-            stage3_mask = stage2_mask.copy()
-            self._stage_report["boruta_fallback"] = (
-                "Boruta retornou conjunto vazio — usando saída do mRMR como final."
-            )
-
         # Salvar
         self._feature_names_in = names
         self._stage1_mask      = stage1_mask
         self._stage2_mask      = stage2_mask
         self._stage3_mask      = stage3_mask
-        self._final_mask       = stage3_mask
-        self._final_indices    = np.where(stage3_mask)[0]
+        self._final_mask       = stage2_mask
+        self._final_indices    = np.where(stage2_mask)[0]
 
+        n_mrmr_out = int(stage2_mask.sum())
+        n_boruta_confirmed = int(stage3_mask.sum())
         self._stage_report.update({
             "stage1_input":   n_in,
             "stage1_after_variance": n_after_vt,
             "stage1_output":  int(stage1_mask.sum()),
-            "stage2_output":  int(stage2_mask.sum()),
-            "stage3_output":  int(stage3_mask.sum()),
+            "stage2_output":  n_mrmr_out,
+            "stage3_boruta_confirmed": n_boruta_confirmed,
+            "stage3_stability_ratio": (
+                n_boruta_confirmed / n_mrmr_out if n_mrmr_out > 0 else 0.0
+            ),
             "final_output":   int(self._final_mask.sum()),
             "stage1_top_k_mi": k,
             "stage2_n_mrmr":   n_mrmr,
@@ -169,7 +174,7 @@ class LWCFeatureSelector:
         return self
 
     def transform(self, X: np.ndarray | pd.DataFrame) -> np.ndarray:
-        """Aplica a máscara final (Estágio 3 ou fallback) ao X fornecido."""
+        """Aplica a máscara final (saída do mRMR, Estágio 2) ao X fornecido."""
         self._check_fitted()
         Xa = X.values if isinstance(X, pd.DataFrame) else np.asarray(X)
         return Xa[:, self._final_mask]

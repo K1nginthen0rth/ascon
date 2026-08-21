@@ -265,7 +265,7 @@ def run_cv(
               f"(VT->{rep_sel.get('stage1_after_variance','?')}, "
               f"MI->{rep_sel.get('stage1_output','?')}, "
               f"mRMR->{rep_sel.get('stage2_output','?')}, "
-              f"Boruta->{rep_sel.get('stage3_output','?')})  {sel_time:.1f}s")
+              f"Boruta(diag)->{rep_sel.get('stage3_boruta_confirmed','?')})  {sel_time:.1f}s")
 
         scaler   = StandardScaler().fit(X_tr_sel)
         X_tr_sc  = scaler.transform(X_tr_sel)

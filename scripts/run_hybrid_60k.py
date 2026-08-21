@@ -336,7 +336,7 @@ def run_cv(
               f"({sel_time:.1f}s)  "
               f"(MI→{rep_sel.get('stage1_output','?')}  "
               f"mRMR→{rep_sel.get('stage2_output','?')}  "
-              f"Boruta→{rep_sel.get('stage3_output','?')})")
+              f"Boruta(diag)→{rep_sel.get('stage3_boruta_confirmed','?')})")
 
         # ── Classificadores ──────────────────────────────────────────────
         fold_res: dict = {

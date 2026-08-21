@@ -216,7 +216,7 @@ class ClassicalPipeline:
         if verbose:
             print(f"     Selected {len(selected)}/{len(feat_cols)} features  "
                   f"(VT->{report['stage1_after_variance']}, MI->{report['stage1_output']}, "
-                  f"mRMR->{report['stage2_output']}, Boruta->{report['stage3_output']})")
+                  f"mRMR->{report['stage2_output']}, Boruta(diag)->{report['stage3_boruta_confirmed']})")
 
         # ---------- Modelos ----------
         if verbose: print("  [2/2] Treinando modelos...")
