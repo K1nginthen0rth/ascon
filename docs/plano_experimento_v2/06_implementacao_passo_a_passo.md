@@ -276,32 +276,79 @@ idêntico é uma característica do dataset de origem (imagens quase-duplicadas
 no ImageNet, artefato conhecido), não do pipeline de seleção — negligenciável
 (0,02% do total).
 
-### 4.2 Geração
-- `scripts/generate_5class_v2.py`:
-  - 300 chaves (`CtrDrbg`, offset 6000), 100 slots/chave.
-  - Por slot: plaintext (80/20 texto/imagem, sorteio por amostra via DRBG),
-    nonce = contador global 128 bits (Grain: 12 bytes LSB; Sparkle: zero-pad
-    para 32 bytes nos MSB; ECB: ignora).
-  - **6 linhas por slot:** Ascon, GIFT-COFB, Grain, Sparkle, AES-ECB e
-    **PRNG-controle** (65.552 bytes de `CtrDrbg` com seed própria; recebe o
-    `key_id` do slot como grupo sintético; colunas de nonce/pt marcadas n/a).
-    Total: **180.000 amostras** (150k cifras + 30k PRNG), ~11,8 GB.
-  - Colunas: as do v1 + `plaintext_source` (`corpus`/`imagem`/`n/a`) +
-    `plaintext_sha256` (metadado p/ overlap; nunca feature).
-  - CTs crus (Grain 65.544). Manifesto: SHA-256 dos binários, versão DRBG,
-    resultado CAVP/KATs, mapeamentos de nonce.
-- `data/processed/v2_folds.json`: partição única — 240/60 chaves (seed 42) +
-  os 5 folds do GroupKFold (192/48). **Todos os caminhos leem deste arquivo**;
-  assert de consistência em cada runner.
+### 4.2 Geração ✅ CONCLUÍDA (2026-08-21/22 — dataset real gerado)
 
-### 4.3 Validação
-- `scripts/validate_5class_v2.py`: nonces únicos (ciente: Grain 96 bits, ECB
-  e PRNG sem nonce), χ²/compressão (desvio **esperado** no ECB — reportar sem
-  falhar), decrypt spot-check por algoritmo (100 amostras; pula PRNG),
-  proporção 80/20 global e por split, encadeamento (mesma chave+pt nas 5
-  linhas de cifra do slot), overlap de `plaintext_sha256` entre splits
-  (relatório A7).
-- **Aceite:** validação 100%; relatório salvo em `reports/v2/`.
+`scripts/generate_5class_v2.py` — 300 chaves (`CTRDRBG`, offset 6000), 100
+slots/chave, nonce = contador global de 128 bits mapeado por algoritmo
+(Grain: 12 bytes LSB; Schwaemm256-128: zero-pad nos 128 bits MSB de um
+campo de 32 bytes; AES-ECB: ignora). 6 linhas por slot (Ascon, GIFT-COFB,
+Grain, Schwaemm256-128, AES-ECB + PRNG-controle). Colunas do v1 +
+`plaintext_source`, `plaintext_sha256`, `image_id`.
+
+**[CRÍTICO] Reescrito para escrita incremental depois de um near-miss de
+memória:** a primeira versão mantinha as 180k linhas (~11,8GB de
+ciphertext) inteiras num único `pd.DataFrame` antes de escrever — o
+processo chegou a ~1GB de working set em poucos minutos, numa máquina com
+apenas ~6,3GB livres no momento, projetando esgotar a RAM bem antes de
+terminar (~2,3h de execução na taxa observada). Interrompido e reescrito
+para gravar via `pyarrow.parquet.ParquetWriter` em lotes de chaves
+(`--keys-per-batch`, default 20 na primeira versão, rodado com 10 na
+execução real) — pico de memória limitado ao lote, não ao dataset inteiro.
+
+**Execução real:** 180.000 amostras, 11,80 GB, em 2.461,6s (~41min),
+memória estável em ~1,2-1,3GB do início ao fim (30 lotes de 10 chaves).
+Proporção texto/imagem obtida: 80,44%/19,56% (variação binomial normal em
+torno do alvo 80/20); pool de imagens NÃO esgotado (`image_pool_reused=0`
+— as 6.000 imagens preparadas na Fase 4.1 foram suficientes com folga).
+
+`data/processed/v2_folds.json` gerado: partição única 240/60 chaves (seed
+42) + 5-fold GroupKFold (proxy 1-linha-por-chave — matematicamente
+equivalente a rodar direto sobre as amostras, já que todas as chaves têm
+o mesmo número de linhas).
+
+### 4.3 Validação ✅ CONCLUÍDA — VEREDICTO: PASS (2026-08-22)
+
+`scripts/validate_5class_v2.py` — nonces únicos, χ²/compressão (desvio
+esperado no ECB, não falha), decrypt spot-check, proporção 80/20 global e
+por split, encadeamento, overlap de `plaintext_sha256` entre splits.
+
+**[CRÍTICO] Mesmo problema de memória do gerador, encontrado e corrigido
+antes de causar dano:** a primeira versão carregava o parquet inteiro
+(`pd.read_parquet(PQ)`, com a coluna `ciphertext`) de uma vez — confirmado
+que isso derrubou a memória livre do sistema para **0,13GB** (quase
+esgotamento total), exigindo `kill -9` do processo imediatamente.
+Reescrito em duas camadas: (1) leitura de metadados apenas (todas as
+180k linhas, SEM a coluna `ciphertext` — leve, usada pela maioria dos
+checks: totais, nonces, encadeamento, proporção, overlap); (2) amostra
+com ciphertext via `pyarrow.parquet.ParquetFile.read_row_group()` sobre
+4 row groups aleatórios (~24.000 linhas, ~1,6GB) só para os checks que
+precisam de bytes reais (χ², compressão, decrypt). Rodado depois da
+correção sem nenhum problema de memória (pico observado, livre no
+sistema).
+
+**Resultado real (`keyholdout_5class_v2_validation.json`):**
+
+| Check | Resultado |
+|---|---|
+| Totais | 30.000 × 5 reais + 30.000 PRNG = 180.000 — OK |
+| Nonces únicos (chave, algoritmo) | 0 duplicatas nos 4 AEAD reais — OK |
+| Encadeamento | 0/30.000 slots inconsistentes — OK |
+| χ² reject@0,05 (4 reais) | Ascon 5,7% / GIFT-COFB 2,0% / Grain 5,7% / Schwaemm 6,3% — todos <10%, OK |
+| χ² reject@0,05 (AES-ECB) | 28,0% — desvio esperado, controle funcionando |
+| Compressão (4 reais) | ~1,0004 — OK |
+| Compressão (AES-ECB) | 0,9632 — comprimível, assinatura esperada do ECB |
+| Proporção texto/imagem | 80,44%/19,56% global; 80,87/19,13 (test) vs 80,33/19,67 (trainval) |
+| Overlap plaintext trainval/test | 2/6.000 (0,03%) — medido, não bloqueia (item A7) |
+| Decrypt spot-check | 100/100 OK |
+
+**VEREDICTO: PASS.** O AES-ECB se distingue claramente dos 4 algoritmos
+reais em ambas as métricas (χ² e compressão) — confirma que o protocolo
+de validação detecta não-uniformidade quando ela existe, o que dá
+confiança ao mesmo protocolo quando aplicado aos 4 algoritmos reais (que
+não mostram esse desvio).
+
+**Aceite:** ✅ validação PASS; relatório salvo em
+`data/processed/keyholdout_5class_v2_validation.json`.
 
 ## FASE 5 — Infraestrutura de relato e estatística
 

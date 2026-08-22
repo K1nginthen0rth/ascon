@@ -28,6 +28,8 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 from scipy.stats import chisquare
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -121,6 +123,39 @@ def hashlib_sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+_METADATA_COLUMNS = [
+    "sample_id", "algorithm", "mode", "key_id", "nonce_id", "len_pt",
+    "len_ct", "plaintext_source", "plaintext_sha256", "image_id",
+]
+
+
+def _load_metadata_only(pq_path: Path) -> pd.DataFrame:
+    """Lê todas as 180k linhas mas SEM a coluna `ciphertext` (~65KB/linha,
+    ~11,8GB no total) — só os campos leves, usados pela maioria dos
+    checks (totais, nonces, encadeamento, proporção, overlap). Carregar
+    o parquet inteiro (com ciphertext) esgotou a RAM disponível numa
+    tentativa anterior (confirmado: sistema caiu para 0,13GB livres e o
+    processo precisou ser morto) — nenhum desses checks precisa do
+    ciphertext bruto."""
+    return pd.read_parquet(pq_path, columns=_METADATA_COLUMNS)
+
+
+def _sample_with_ciphertext(
+    pq_path: Path, n_row_groups: int = 4, seed: int = 42,
+) -> pd.DataFrame:
+    """Lê só um punhado de ROW GROUPS completos (não o arquivo inteiro)
+    para os checks que precisam do ciphertext de verdade (χ²,
+    compressão, decrypt spot-check). Cada row group tem ~6.000 linhas
+    (10 chaves x 100 slots x 6 linhas) — 4 row groups ≈ 24.000 linhas
+    (~1,6GB), suficiente para amostras de até algumas centenas por
+    algoritmo sem se aproximar do limite de memória."""
+    pf = pq.ParquetFile(pq_path)
+    rng = np.random.default_rng(seed)
+    chosen = rng.choice(pf.num_row_groups, size=min(n_row_groups, pf.num_row_groups), replace=False)
+    tables = [pf.read_row_group(int(i)) for i in chosen]
+    return pa.concat_tables(tables).to_pandas()
+
+
 def _check_encadeamento(df: pd.DataFrame) -> dict:
     real = df[df["algorithm"] != "PRNG"]
     grouped = real.groupby(["key_id", "nonce_id"])["plaintext_sha256"].nunique()
@@ -190,14 +225,23 @@ def _check_plaintext_overlap(df: pd.DataFrame, folds: dict | None) -> dict:
 
 
 def main() -> None:
+    # Windows: stdout redirecionado (arquivo/pipe) usa cp1252 por padrão,
+    # que não cobre χ (usado nos prints abaixo) — força UTF-8.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+
     print(f"\n{'=' * 60}\n  Validação: {DATASET_ID}\n{'=' * 60}")
 
     if not PQ.exists():
         print(f"FAIL: parquet não encontrado em {PQ}")
         sys.exit(1)
 
-    df = pd.read_parquet(PQ)
-    print(f"  Carregado: {len(df):,} linhas, {len(df.columns)} colunas")
+    df = _load_metadata_only(PQ)
+    print(f"  Carregado (metadados, sem ciphertext): {len(df):,} linhas, "
+          f"{len(df.columns)} colunas")
+    df_sample = _sample_with_ciphertext(PQ, n_row_groups=4, seed=42)
+    print(f"  Amostra com ciphertext (χ²/compressão/decrypt): "
+          f"{len(df_sample):,} linhas de {pq.ParquetFile(PQ).num_row_groups} row groups")
 
     # --- Totais ---
     counts = df["algorithm"].value_counts().to_dict()
@@ -225,8 +269,8 @@ def main() -> None:
     chi2_by_algo, comp_by_algo = {}, {}
     chi2_ok = True
     for algo in REAL_ALGORITHMS:
-        chi2_by_algo[algo] = _chi2(df, algo)
-        comp_by_algo[algo] = _comp(df, algo)
+        chi2_by_algo[algo] = _chi2(df_sample, algo)
+        comp_by_algo[algo] = _comp(df_sample, algo)
         reject = chi2_by_algo[algo].get("reject_pct_alpha05", 0)
         print(f"  χ²[{algo}] reject@0.05={reject * 100:.1f}%  "
               f"compressão={comp_by_algo[algo].get('mean_ratio')}"
@@ -258,7 +302,7 @@ def main() -> None:
             "Schwaemm256-128": Schwaemm256_128(),
             "AES-128-ECB": AES128ECB(),
         }
-        spot = _decrypt_spot_check(df, keys_map, ciphers, n_per_algo=20)
+        spot = _decrypt_spot_check(df_sample, keys_map, ciphers, n_per_algo=20)
         print(f"  Decrypt spot-check ({spot['tested']}): {spot['passed']}/{spot['tested']} OK")
         for e in spot["errors"]:
             print(f"     ! {e}")
