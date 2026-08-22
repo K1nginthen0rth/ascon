@@ -257,11 +257,24 @@ paralelizado estimado, abaixo do teto de 48h.
 
 ## FASE 4 — Dataset v2
 
-### 4.1 Corpus de imagens
-- `scripts/prepare_imagenet_subset.py`: baixar split validação de
-  `benjamin-paine/imagenet-1k-256x256` (HF), selecionar 6.000 imagens
-  **via CtrDrbg(seed_imagens)**, converter `PIL .convert("L")` → 65.536
-  bytes, salvar `data/raw/imagens_v2/` + manifesto (ids, sha256, licença).
+### 4.1 Corpus de imagens ✅ CONCLUÍDA (2026-08-21)
+
+`scripts/prepare_imagenet_subset.py` — baixado shard 0 (25.000 imagens) do
+split de validação de `benjamin-paine/imagenet-1k-256x256` (HF); só esse
+shard foi necessário (25.000 > 6.000 requeridas, evita baixar o shard 1 à
+toa). 6.000 imagens selecionadas **via `CTRDRBG(seed=42, label="imagens_v2_selecao")`**
+sem reposição, convertidas `PIL .convert("L")` → 65.536 bytes cada, salvas
+em `data/raw/imagens_v2/img_v2_XXXXX.bin` + `manifest.json` (ids, índice de
+origem no shard, sha256, licença — ImageNet Terms of Access, `license:
+other`/`license_details: imagenet-agreement`, uso não-comercial de
+pesquisa, já confirmado pelo Nycolas). 380MB em disco.
+
+**Achado menor:** 5.999 SHA-256 únicos em 6.000 imagens (1 par de conteúdo
+idêntico após conversão para tons de cinza) — os 6.000 ÍNDICES de origem no
+shard são todos únicos (a seleção em si não tem bug); o par de conteúdo
+idêntico é uma característica do dataset de origem (imagens quase-duplicadas
+no ImageNet, artefato conhecido), não do pipeline de seleção — negligenciável
+(0,02% do total).
 
 ### 4.2 Geração
 - `scripts/generate_5class_v2.py`:
