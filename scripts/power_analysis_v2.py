@@ -55,9 +55,15 @@ SCENARIOS = [
     {"name": "par binário (comparação par-a-par)", "n": 12_000, "n_classes": 2},
 ]
 
-M_NULL_SIMULATIONS = 3000       # repetições para estimar o SE de F1 sob H0
-M_POWER_VERIFICATION = 500      # repetições para a verificação empírica de poder
-BOOTSTRAP_FOR_VERIFICATION = 300  # bootstrap reduzido só na verificação (custo)
+M_NULL_SIMULATIONS = 2000       # repetições para estimar o SE de F1 sob H0
+# Verificação empírica de poder: nº de repetições x bootstrap por repetição
+# é o termo dominante de custo (cada repetição roda compute_metrics, que já
+# faz seu próprio bootstrap). 150x150=22.500 chamadas de F1/bal_acc por
+# cenário é suficiente para confirmar a ordem de grandeza do poder (SE de
+# uma proporção com n=150 e p~0,8 é ~4%) sem o custo de 500x300 (~7-9min/
+# cenário, que estourou o timeout mesmo sem concorrência de CPU).
+M_POWER_VERIFICATION = 150
+BOOTSTRAP_FOR_VERIFICATION = 150
 
 
 def _simulate_classifier(
@@ -176,7 +182,7 @@ def main() -> None:
     results = []
     for i, scenario in enumerate(SCENARIOS):
         print(f"Cenário: {scenario['name']} (n={scenario['n']}, "
-              f"{scenario['n_classes']} classes)...")
+              f"{scenario['n_classes']} classes)...", flush=True)
         r = analyze_scenario(scenario, seed=42 + i)
         results.append(r)
         print(f"  F1-macro sob acaso: {r['chance_f1_macro']:.4f} "
@@ -185,7 +191,7 @@ def main() -> None:
               f"<=> acurácia verdadeira {r['mde_true_accuracy']:.4f} "
               f"(+{r['mde_percentage_points_above_chance']:.2f} p.p. acima do acaso)")
         print(f"  Verificação empírica de poder no MDE: {r['empirical_power_at_mde']*100:.1f}% "
-              f"(alvo: {POWER_TARGET*100:.0f}%)\n")
+              f"(alvo: {POWER_TARGET*100:.0f}%)\n", flush=True)
 
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(OUT_PATH, "w", encoding="utf-8") as f:

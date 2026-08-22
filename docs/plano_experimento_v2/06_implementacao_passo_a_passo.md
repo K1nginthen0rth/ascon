@@ -367,10 +367,33 @@ não mostram esse desvio).
 - Refatorar os runners para usá-la; **proibido** print/save de métrica fora
   dela.
 
-### 5.2 Poder a priori (antes de qualquer treino do v2)
-- `scripts/power_analysis_v2.py`: simulação sob H₀ (bootstrap com n=24.000 do
-  teste 4-classes e n=12.000 dos pares) → menor efeito detectável com 80% de
-  poder a α=0,05. Salvar `reports/v2/power_analysis.md`. Citável no texto.
+### 5.2 Poder a priori ✅ CONCLUÍDA — RODADA (2026-08-22)
+
+`scripts/power_analysis_v2.py`: simulação de Monte Carlo (não fórmula
+fechada — F1-macro não tem variância analítica simples como uma proporção
+binomial) — SE de F1 sob H₀ estimado por 2.000 simulações independentes
+por cenário; MDE = (z_α/2 + z_β)·SE; verificação empírica do poder no MDE
+via o mesmo procedimento de produção (bootstrap real, `compute_metrics`).
+
+**Resultado real (`reports/v2/power_analysis.md`):**
+
+| Cenário | n (teste) | F1 sob acaso | MDE (F1) | Efeito (p.p. acima do acaso) | Poder empírico no MDE |
+|---|---|---|---|---|---|
+| 4 classes (teste principal) | 24.000 | 0,2500 | +0,0077 | **+1,02 p.p.** | 96,0% |
+| par binário (par-a-par) | 12.000 | 0,5000 | +0,0126 | **+1,27 p.p.** | 78,0% |
+
+Confirma empiricamente a estimativa de bolso já citada durante o
+planejamento (~1 p.p. — `04_protocolo_metricas_validacao.md` §4.6 item 3).
+Citável no texto: um resultado nulo no v2 significa "efeito verdadeiro,
+se existir, é menor que ~1-1,3 p.p. acima do acaso" — não "ausência de
+evidência" sem qualificação.
+
+Achado colateral corrigido durante a implementação: a calibração
+F1→acurácia usava `np.searchsorted` sobre uma grade estimada com 1
+simulação por ponto — ruidosa o bastante para não ser monótona,
+quebrando a busca silenciosamente (MDE saía ~3x menor que o correto, sem
+nenhum erro). Corrigido com múltiplas repetições por ponto de grade +
+`np.maximum.accumulate` antes da busca — ver commit `6bf26f2`.
 
 ### 5.3 Arcabouço de decisão
 - Família primária: **6 pares par-a-par, Caminho A, F1 com IC 95%, braço
