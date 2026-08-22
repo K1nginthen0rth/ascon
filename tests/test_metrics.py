@@ -124,3 +124,59 @@ def test_compute_metrics_returns_dict() -> None:
     assert "f1_macro" in d
     assert "confusion_matrix" in d
     assert isinstance(d["confusion_matrix"], list)
+
+
+def test_accuracy_matches_manual_computation() -> None:
+    """`accuracy` (simples, não balanceada) deve bater com a fração de acertos."""
+    y_true = np.array([0, 0, 1, 1, 2, 2, 2, 2])
+    y_pred = np.array([0, 1, 1, 1, 2, 2, 2, 0])
+    rep = compute_metrics(y_true, y_pred, n_bootstrap=50)
+    expected_acc = np.mean(y_true == y_pred)
+    assert rep.accuracy == pytest.approx(expected_acc)
+
+
+def test_per_class_precision_recall_present_and_correct() -> None:
+    """Precisão/recall por classe (Golden Rule 7 / ponto 8 do orientador)."""
+    y_true = np.array([0, 0, 0, 1, 1, 1])
+    y_pred = np.array([0, 0, 1, 1, 1, 0])  # classe 0: recall 2/3; classe 1: recall 2/3
+    rep = compute_metrics(y_true, y_pred, n_bootstrap=50, labels=[0, 1])
+    assert rep.per_class is not None
+    assert set(rep.per_class.keys()) == {"0", "1"}
+    assert rep.per_class["0"]["recall"] == pytest.approx(2 / 3)
+    assert rep.per_class["1"]["recall"] == pytest.approx(2 / 3)
+    assert rep.per_class["0"]["support"] == 3
+    assert rep.per_class["1"]["support"] == 3
+
+
+def test_auc_per_class_multiclass_exposes_outlier_class() -> None:
+    """AUC por classe deve expor uma classe que descola das demais — o
+    agregado OVR sozinho poderia mascarar isso (ponto do plano v2 §4.3)."""
+    rng = np.random.default_rng(5)
+    n_per_class = 200
+    y_true = np.repeat([0, 1, 2], n_per_class)
+    n = len(y_true)
+    proba = rng.dirichlet(alpha=[1, 1, 1], size=n)
+    # Classe 0 "vaza" no y_proba (quase perfeitamente separável); 1 e 2 ficam ruidosas.
+    proba[y_true == 0] = [0.9, 0.05, 0.05]
+    y_pred = proba.argmax(axis=1)
+
+    rep = compute_metrics(y_true, y_pred, y_proba=proba, n_bootstrap=50, labels=[0, 1, 2])
+    assert rep.auc_roc is not None
+    auc_per_class = rep.auc_roc["auc_per_class"]
+    assert auc_per_class is not None
+    assert set(auc_per_class.keys()) == {"0", "1", "2"}
+    # Classe 0 deve ter AUC bem mais alto que 1/2 (separabilidade injetada).
+    assert auc_per_class["0"] > auc_per_class["1"]
+    assert auc_per_class["0"] > auc_per_class["2"]
+
+
+def test_as_dict_includes_new_fields() -> None:
+    rng = np.random.default_rng(2)
+    y_true = rng.integers(0, 3, 150)
+    y_pred = rng.integers(0, 3, 150)
+    proba = rng.dirichlet(alpha=[1, 1, 1], size=150)
+    rep = compute_metrics(y_true, y_pred, y_proba=proba, n_bootstrap=50, labels=[0, 1, 2])
+    d = rep.as_dict()
+    assert "accuracy" in d
+    assert "per_class" in d
+    assert d["auc_roc"]["auc_per_class"] is not None

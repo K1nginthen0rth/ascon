@@ -21,6 +21,7 @@ from sklearn.metrics import (
     balanced_accuracy_score,
     confusion_matrix,
     f1_score,
+    precision_recall_fscore_support,
     roc_auc_score,
     roc_curve,
     top_k_accuracy_score,
@@ -34,12 +35,14 @@ class MetricsReport:
     f1_macro_ci:           tuple[float, float]
     balanced_accuracy:     float
     balanced_accuracy_ci:  tuple[float, float]
+    accuracy:              float
     top_k_accuracy:        Optional[float]
     ece:                   Optional[float]
     confusion_matrix:      np.ndarray
     n_samples:             int
     n_bootstrap:           int
     auc_roc:               Optional[dict] = None
+    per_class:             Optional[dict] = None  # {label: {precision, recall, f1, support}}
 
     def as_dict(self) -> dict:
         return {
@@ -49,6 +52,7 @@ class MetricsReport:
             "balanced_accuracy":    self.balanced_accuracy,
             "bal_acc_ci_lower":     self.balanced_accuracy_ci[0],
             "bal_acc_ci_upper":     self.balanced_accuracy_ci[1],
+            "accuracy":             self.accuracy,
             "top_k_accuracy":       self.top_k_accuracy,
             "ece":                  self.ece,
             "confusion_matrix":     self.confusion_matrix.tolist(),
@@ -59,9 +63,11 @@ class MetricsReport:
                     "auc": self.auc_roc["auc"],
                     "fpr": self.auc_roc["fpr"],
                     "tpr": self.auc_roc["tpr"],
+                    "auc_per_class": self.auc_roc.get("auc_per_class"),
                 }
                 if self.auc_roc is not None else None
             ),
+            "per_class":            self.per_class,
         }
 
 
@@ -98,7 +104,24 @@ def compute_metrics(
     # Pontuais
     f1   = f1_score(y_true, y_pred, average="macro", labels=labels, zero_division=0)
     bal  = balanced_accuracy_score(y_true, y_pred)
+    acc  = float(np.mean(y_true == y_pred))
     cm   = confusion_matrix(y_true, y_pred, labels=labels)
+
+    # Precisão/recall/F1/suporte por classe — Golden Rule 7 / ponto 8 do
+    # orientador e Review 1 do SBSeg (corrige inconsistência apontada:
+    # métricas agregadas mascaravam desempenho desigual por classe).
+    prec_arr, rec_arr, f1_arr, sup_arr = precision_recall_fscore_support(
+        y_true, y_pred, labels=labels, zero_division=0
+    )
+    per_class = {
+        str(label): {
+            "precision": float(prec_arr[i]),
+            "recall": float(rec_arr[i]),
+            "f1": float(f1_arr[i]),
+            "support": int(sup_arr[i]),
+        }
+        for i, label in enumerate(labels)
+    }
 
     # Bootstrap percentil
     rng = np.random.default_rng(seed)
@@ -132,9 +155,11 @@ def compute_metrics(
         f1_macro_ci=(float(f1_lo), float(f1_hi)),
         balanced_accuracy=float(bal),
         balanced_accuracy_ci=(float(bal_lo), float(bal_hi)),
+        accuracy=acc,
         top_k_accuracy=top_k_acc,
         ece=ece,
         confusion_matrix=cm,
+        per_class=per_class,
         n_samples=n,
         n_bootstrap=n_bootstrap,
         auc_roc=auc_roc,
@@ -160,8 +185,11 @@ def compute_auc_roc(
         labels: lista de rótulos ordenados. Default: np.unique(y_true).
 
     Returns:
-        dict {"auc": float, "fpr": list, "tpr": list, "thresholds": list}
-        ou None se y_proba for None.
+        dict {"auc": float, "fpr": list, "tpr": list, "thresholds": list,
+        "auc_per_class": dict|None} ou None se y_proba for None.
+        `auc_per_class` só é preenchido no caso multiclasse (n_classes > 2)
+        — expõe se um algoritmo específico descola dos demais (mascarado
+        pelo agregado OVR sozinho).
     """
     if y_proba is None:
         return None
@@ -172,6 +200,7 @@ def compute_auc_roc(
         labels = sorted(np.unique(y_true).tolist())
 
     n_classes = y_proba.shape[1]
+    auc_per_class = None
     if n_classes == 2:
         # pos_label so confiavel quando `labels` cobre as 2 classes; caso
         # contrario (ex.: batch com 1 unica classe), assume convencao
@@ -185,12 +214,20 @@ def compute_auc_roc(
             roc_auc_score(y_true, y_proba, labels=labels, multi_class="ovr")
         )
         fpr, tpr, thresholds = [], [], []
+        auc_per_class = {}
+        for i, label in enumerate(labels):
+            y_true_bin = (y_true == label).astype(int)
+            if y_true_bin.sum() == 0 or y_true_bin.sum() == len(y_true_bin):
+                auc_per_class[str(label)] = None  # classe ausente/única no batch
+                continue
+            auc_per_class[str(label)] = float(roc_auc_score(y_true_bin, y_proba[:, i]))
 
     return {
-        "auc":        auc,
-        "fpr":        np.asarray(fpr).tolist(),
-        "tpr":        np.asarray(tpr).tolist(),
-        "thresholds": np.asarray(thresholds).tolist(),
+        "auc":           auc,
+        "fpr":           np.asarray(fpr).tolist(),
+        "tpr":           np.asarray(tpr).tolist(),
+        "thresholds":    np.asarray(thresholds).tolist(),
+        "auc_per_class": auc_per_class,
     }
 
 
