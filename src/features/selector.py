@@ -1,12 +1,45 @@
 """
 Pipeline de seleção de features para classificação LWC ciphertext-only.
 
-Pipeline em 3 estágios (ver docs/contexto_inicial.md §2):
-  1. Screening univariado: VarianceThreshold + Mutual Information (top-k)
-  2. Redução de redundância: mRMR [Peng et al. 2005] — define o conjunto final
-  3. Diagnóstico de estabilidade: Boruta [Kursa & Rudnicki 2010] — reporta quantas
+Pipeline v2, em 5 estágios (ver docs/plano_experimento_v2/02_features_e_selecao.md
+§2.2; substitui o pipeline v1 de 3 estágios documentado em docs/contexto_inicial.md §2):
+  0. Padronização z-score (fit no treino) — só para alimentar o VT do estágio 1;
+     as demais etapas e a saída final continuam em escala original.
+  1. VarianceThreshold sobre features PADRONIZADAS — na prática, descarta só
+     constantes verdadeiras (ver correção abaixo).
+  2. Mutual Information — corte de CONVENIÊNCIA (top-k), explicitamente SEM
+     alegação estatística (ver nota abaixo).
+  3. mRMR [Peng et al. 2005] — define o conjunto final (relevância − redundância).
+  4. Boruta [Kursa & Rudnicki 2010] — diagnóstico de estabilidade; reporta quantas
      features do mRMR também se confirmam contra shadow features, mas NÃO
-     filtra o conjunto usado pelo classificador (apenas informativo/relatório)
+     filtra o conjunto usado pelo classificador (apenas informativo/relatório).
+
+**Correção do VT (motivada pela ablação v1, `scripts/run_ablation_fs_60k.py`):**
+o corte bruto de VarianceThreshold(1e-5) em escala ABSOLUTA descartava 278/307
+features do v1 (todo o histograma de bytes) por ESCALA, não por falta de
+informação — frequências relativas têm variância ~5,9e-8 simplesmente por
+serem números pequenos (média 1/256), não por serem constantes. Padronizando
+antes, "baixa variância" volta a significar "genuinamente constante": uma
+feature padronizada não-constante sempre tem variância ≈1; só as verdadeiras
+constantes ficam com variância ≈0. O mesmo threshold (1e-5) agora filtra a
+coisa certa.
+
+**MI como corte de conveniência (não estatístico):** um limiar de MI com
+pretensão de significância seria tão arbitrário quanto o antigo top-k cego —
+o estimador de MI dá valores positivos pequenos até para ruído puro (viés
+conhecido do estimador k-NN), então qualquer limiar "acima da média dos ≠0"
+deixaria uma fração substancial de ruído passar. Por isso o MI aqui SÓ reduz
+volume para o mRMR processar; a validação real de sinal-vs-ruído acontece no
+RESULTADO FINAL do pipeline completo, por teste de permutação (mesma
+metodologia já validada na ablação v1) — não em nenhum estágio intermediário.
+
+**Sem RFE** neste seletor (decisão deliberada): RFE amarraria a seleção à
+importância de um classificador específico e quebraria a comparação justa do
+Caminho A, onde todos os modelos recebem o mesmo conjunto de features. A
+réplica fiel do E20 (Yuan et al. 2026, Caminho A) usa RFE internamente como
+parte do desenho original do estudo replicado — exceção deliberada e isolada
+dentro do braço da réplica, que não usa este `LWCFeatureSelector` e não
+contamina o pipeline padrão do projeto.
 
 REGRA CRÍTICA: o `fit` deve ser chamado APENAS no X_train, dentro de cada fold
 de CV. Selecionar no dataset completo é o vazamento documentado em
@@ -30,11 +63,16 @@ from sklearn.feature_selection import VarianceThreshold, mutual_info_classif
 
 @dataclass
 class SelectorConfig:
-    """Hiperparâmetros do pipeline LWCFeatureSelector."""
+    """Hiperparâmetros do pipeline LWCFeatureSelector.
 
-    variance_threshold: float = 1e-5
-    top_k_mi:           int   = 200
-    n_features_mrmr:    int   = 100
+    Defaults recalibrados para o total de features do v2 (~641, 12 famílias
+    — era ~307/6 famílias no v1): `top_k_mi` e `n_features_mrmr` maiores
+    para manter proporção semelhante de corte em cada estágio.
+    """
+
+    variance_threshold: float = 1e-5  # aplicado sobre features PADRONIZADAS (estágio 0+1)
+    top_k_mi:           int   = 350   # corte de CONVENIÊNCIA, não estatístico — ver docstring do módulo
+    n_features_mrmr:    int   = 150
     boruta_max_iter:    int   = 100
     boruta_n_estimators: int | str = "auto"
     random_state:       int   = 13
@@ -43,11 +81,15 @@ class SelectorConfig:
 
 class LWCFeatureSelector:
     """
-    Seletor de features em 3 estágios para datasets de criptogramas LWC.
+    Seletor de features em 5 estágios (numeração do plano; internamente as
+    chaves de `_stage_report` mantêm os nomes `stage1/2/3` do pipeline v1
+    por compatibilidade com os consumidores existentes — ver nota no fit()).
 
-    Estágio 1 (univariado, O(p)):
-        - VarianceThreshold remove features quase-constantes
-        - Mutual Information classif → top-k
+    Estágio 0+1 (univariado, O(p)):
+        - Padronização z-score (fit no treino) alimenta SÓ o VarianceThreshold
+          — corrige o viés de escala absoluta do v1 (ver docstring do módulo)
+        - Mutual Information classif → top-k (corte de conveniência, não
+          estatístico — ver docstring do módulo)
 
     Estágio 2 (redundância):
         - mRMR seleciona n_features_mrmr maximizando relevância e minimizando
@@ -58,6 +100,10 @@ class LWCFeatureSelector:
           de "shadow features" embaralhadas [Kursa & Rudnicki 2010], mas o
           resultado NÃO altera o conjunto final (self._final_mask == mRMR)
 
+    Sem RFE (ver docstring do módulo). Saída final sempre em escala
+    ORIGINAL das features (a padronização do estágio 0 é interna ao VT,
+    não se propaga ao `transform()`).
+
     Uso correto (dentro do fold):
         sel = LWCFeatureSelector()
         sel.fit(X_train, y_train, feature_names=cols)
@@ -66,8 +112,8 @@ class LWCFeatureSelector:
         X_test_sel  = sel.transform(X_test)
 
     Args:
-        config: SelectorConfig com hiperparâmetros (defaults razoáveis para
-                ~300 features e milhares de amostras).
+        config: SelectorConfig com hiperparâmetros (defaults recalibrados
+                para ~641 features/12 famílias do v2).
     """
 
     def __init__(self, config: Optional[SelectorConfig] = None) -> None:
@@ -94,7 +140,8 @@ class LWCFeatureSelector:
         feature_names: Optional[list[str]] = None,
     ) -> "LWCFeatureSelector":
         """
-        Ajusta o pipeline em 3 estágios usando APENAS dados de treino.
+        Ajusta o pipeline (5 estágios, ver docstring da classe/módulo) usando
+        APENAS dados de treino.
 
         Args:
             X_train: matriz (n_samples, n_features). Aceita DataFrame ou ndarray.
@@ -106,13 +153,34 @@ class LWCFeatureSelector:
         cfg         = self.config
         n_in        = X.shape[1]
 
-        # ---- Estágio 1a: Variance Threshold ----
+        # ---- Estágio 0: padronização z-score (só para alimentar o VT) ----
+        # dp=0 (feature constante no treino) -> descarte direto, sem dividir
+        # por zero: usamos um dp "seguro" de 1.0 só para a divisão não gerar
+        # NaN/inf; como (x-mean)=0 para toda a coluna, o z-score fica
+        # identicamente 0 (variância 0), então o VT abaixo já descarta essa
+        # feature de qualquer forma — o valor do dp seguro nunca influencia
+        # QUAIS features sobrevivem.
+        train_mean   = X.mean(axis=0)
+        train_std    = X.std(axis=0)
+        zero_std_mask = train_std == 0.0
+        n_zero_variance = int(zero_std_mask.sum())
+        std_safe     = np.where(zero_std_mask, 1.0, train_std)
+        X_standardized = (X - train_mean) / std_safe
+
+        # ---- Estágio 1a: Variance Threshold sobre features PADRONIZADAS ----
+        # Corrige o viés de escala absoluta do v1 (ver docstring do módulo):
+        # numa feature padronizada não-constante, variância ≈ 1 sempre; só
+        # constantes verdadeiras ficam ≈0. O mesmo threshold (1e-5) agora
+        # filtra "genuinamente constante", não "pequena em escala absoluta".
         vt        = VarianceThreshold(threshold=cfg.variance_threshold)
-        vt.fit(X)
+        vt.fit(X_standardized)
         vt_mask   = vt.get_support()  # shape (n_in,)
         n_after_vt = int(vt_mask.sum())
 
         # ---- Estágio 1b: Mutual Information top-k (sobre os sobreviventes do VT) ----
+        # Sobre a escala ORIGINAL (não padronizada) — a padronização do
+        # estágio 0 existe só para corrigir o VT; MI/mRMR/Boruta e a saída
+        # final operam nos valores originais das features.
         X_vt      = X[:, vt_mask]
         k         = min(cfg.top_k_mi, X_vt.shape[1])
         mi_scores = mutual_info_classif(
@@ -158,6 +226,7 @@ class LWCFeatureSelector:
         n_boruta_confirmed = int(stage3_mask.sum())
         self._stage_report.update({
             "stage1_input":   n_in,
+            "stage0_zero_variance": n_zero_variance,
             "stage1_after_variance": n_after_vt,
             "stage1_output":  int(stage1_mask.sum()),
             "stage2_output":  n_mrmr_out,

@@ -104,7 +104,11 @@ wrapper para a versão exploratória; janela fixa de 8 para a principal.
 **Total estimado: ~380–420 features** (o número exato depende de decisões de
 agregação nos templates e blocos de bits — fixar na implementação).
 
-## 2.2 Redesenho do seletor ✅
+## 2.2 Redesenho do seletor ✅ IMPLEMENTADO (2026-08-21)
+
+`src/features/selector.py` — 14 testes em `tests/test_selector.py`
+(incluindo validação multiclasse, nunca exercitada além de binário antes
+desta sessão). Detalhe completo em `06_implementacao_passo_a_passo.md` Fase 3.
 
 Pipeline final, na ordem, **fitado só no treino de cada fold** (regra
 inalterada):

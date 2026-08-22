@@ -224,21 +224,36 @@ registrado no docstring do script).
 **Aceite:** custo total projetado conhecido — ✅ 249,5h serial / ~15-31h
 paralelizado estimado, abaixo do teto de 48h.
 
-## FASE 3 — Seletor v2
+## FASE 3 — Seletor v2 ✅ CONCLUÍDA (2026-08-21)
 
-- Editar `src/features/selector.py`:
-  1. z-score fitado no treino (guardar média/dp; dp=0 ⇒ feature vai direto
-     pro descarte, sem divisão por zero);
-  2. VT sobre padronizadas (na prática: drop de constantes — documentar);
-  3. MI = corte de conveniência top-`mi_pool` (default 350), sem alegação
-     estatística (docstring explícito);
-  4. mRMR define o conjunto (`n_features_mrmr` default 150; aceitar menos);
-  5. Boruta diagnóstico (inalterado).
-- **Sem RFE** no seletor do projeto (a réplica E20 usa RFE *dentro do braço da
-  réplica* — exceção deliberada, não contamina o pipeline padrão).
-- `tests/test_selector.py`: adicionar teste sintético **4 classes**
-  (sinal/redundante/ruído) validando MI/mRMR/Boruta multiclasse.
-- **Aceite:** testes verdes, incluindo o multiclasse.
+`src/features/selector.py` editado:
+1. ✅ z-score fitado no treino (`train_mean`/`train_std` locais ao `fit()`);
+   dp=0 (feature constante) usa dp seguro de 1.0 só para a divisão não gerar
+   NaN/inf — como (x-mean)=0 para essa coluna inteira, o z-score fica
+   identicamente 0, então o VT descarta de qualquer forma (testado sem
+   warning de divisão por zero, `np.errstate` estrito).
+2. ✅ VT aplicado sobre as features PADRONIZADAS (estágio 0), na prática
+   dropando só constantes verdadeiras — corrige o viés de escala absoluta
+   do v1 que descartava o histograma de bytes inteiro (ver docstring do
+   módulo e `scripts/run_ablation_fs_60k.py`). Regressão testada
+   explicitamente: feature de escala ~1/256 com sinal real sobrevive ao VT
+   depois de padronizada, onde antes seria descartada por escala.
+3. ✅ MI = corte de conveniência top-`top_k_mi` (default recalibrado para
+   350, era 200 no v1), docstring do módulo explícito sobre não ter
+   pretensão estatística.
+4. ✅ mRMR define o conjunto final (`n_features_mrmr` default recalibrado
+   para 150, era 100 no v1; aceita menos se sobreviverem menos ao corte).
+5. ✅ Boruta diagnóstico (inalterado da Fase 0 — não filtra o resultado).
+- ✅ **Sem RFE** no seletor do projeto — documentado explicitamente no
+  docstring do módulo (a réplica E20 usa RFE *dentro do braço da réplica*,
+  fora deste `LWCFeatureSelector`, exceção isolada e deliberada).
+- `tests/test_selector.py`: 14 testes (eram 8) — 4 novos testes 4-classes
+  (sinal/redundante/ruído) validando MI/mRMR/Boruta multiclasse (nunca
+  exercitado além de binário neste projeto até agora) + 2 novos testes de
+  regressão para a padronização (mantém sinal de escala pequena; não gera
+  NaN/warning em feature constante).
+- **Aceite:** ✅ testes verdes (14/14 no módulo, 215/215 no projeto
+  inteiro), incluindo o multiclasse.
 
 ## FASE 4 — Dataset v2
 
