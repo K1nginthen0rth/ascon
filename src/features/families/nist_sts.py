@@ -154,6 +154,24 @@ _NOTM_TEMPLATES: list[np.ndarray] = [
 ]
 
 
+def _template_to_int(template: np.ndarray) -> int:
+    """Valor inteiro do padrão de bits (MSB primeiro), para comparação
+    direta contra janelas pré-computadas — ver `_rolling_window_values`."""
+    value = 0
+    for bit in template:
+        value = (value << 1) | int(bit)
+    return value
+
+
+# Templates agrupados por comprimento: {m: [valor_inteiro, ...]}. Permite
+# calcular o valor de cada janela deslizante UMA VEZ por comprimento m
+# (7 comprimentos) em vez de uma varredura de comparação por template
+# (154 templates) — ver `_non_overlapping_template_matching`.
+_NOTM_TEMPLATES_BY_LEN: dict[int, list[int]] = {}
+for _t in _NOTM_TEMPLATES:
+    _NOTM_TEMPLATES_BY_LEN.setdefault(int(_t.size), []).append(_template_to_int(_t))
+
+
 def _bits_from_ct(ct: bytes) -> np.ndarray:
     """Converte bytes em array 0/1 (MSB primeiro por byte), formato do nistrng.
 
@@ -202,6 +220,117 @@ def _multi_score(name: str, bits: np.ndarray) -> tuple[np.ndarray, bool]:
     # (Result.score) e o passed geral. Acessamos o atributo interno
     # documentado em test.py (_score_list) deliberadamente.
     return np.asarray(result._score_list, dtype=float).ravel(), True  # noqa: SLF001
+
+
+@numba.njit
+def _gf2_rank_numba(mat: np.ndarray) -> int:
+    """Posto de uma matriz binária sobre GF(2) por eliminação gaussiana.
+    Compilado com numba — substitui a versão pura-Python do `nistrng`
+    (`BinaryMatrix.compute_rank`), que custava ~0,77s por amostra de 64KB
+    (64 matrizes 32x32 por amostra). Validado idêntico ao `nistrng` em 300
+    matrizes 32x32 aleatórias antes da troca. Muta `mat` in-place — passe
+    sempre uma cópia."""
+    rows, cols = mat.shape
+    rank = 0
+    row = 0
+    for col in range(cols):
+        pivot = -1
+        for r in range(row, rows):
+            if mat[r, col] == 1:
+                pivot = r
+                break
+        if pivot == -1:
+            continue
+        if pivot != row:
+            for c in range(cols):
+                tmp = mat[row, c]
+                mat[row, c] = mat[pivot, c]
+                mat[pivot, c] = tmp
+        for r in range(rows):
+            if r != row and mat[r, col] == 1:
+                for c in range(cols):
+                    mat[r, c] ^= mat[row, c]
+        row += 1
+        rank += 1
+        if row == rows:
+            break
+    return rank
+
+
+def _binary_matrix_rank_fast(bits: np.ndarray) -> tuple[float, bool]:
+    """
+    Binary Matrix Rank acelerado (ver `_gf2_rank_numba`). Reaproveita as
+    CONSTANTES de probabilidade já calculadas pela instância do `nistrng`
+    (`_full_rank_probability` etc.), então a estatística χ² e o p-value
+    saem da mesma fórmula do pacote — só a eliminação gaussiana foi
+    substituída. Também elimina o bug de mutação in-place na origem
+    (opera sempre sobre cópias por bloco).
+
+    Returns:
+        (p_value, elegivel)
+    """
+    test = _battery["binary_matrix_rank"]
+    n_rows = test._rows_number  # noqa: SLF001
+    n_cols = test._cols_number  # noqa: SLF001
+    block_size = n_rows * n_cols
+    n_blocks = bits.size // block_size
+    if n_blocks < test._block_size_min:  # noqa: SLF001
+        return _NAN, False
+
+    full_rank = 0
+    minus_rank = 0
+    remainder = 0
+    for b in range(n_blocks):
+        block = bits[b * block_size:(b + 1) * block_size]
+        mat = block.reshape(n_rows, n_cols).astype(np.int64)  # astype já copia
+        rank = _gf2_rank_numba(mat)
+        if rank == n_rows:
+            full_rank += 1
+        elif rank == n_rows - 1:
+            minus_rank += 1
+        else:
+            remainder += 1
+
+    p_full = test._full_rank_probability      # noqa: SLF001
+    p_minus = test._minus_rank_probability    # noqa: SLF001
+    p_rem = test._remained_rank_probability   # noqa: SLF001
+    chi_square = (
+        ((full_rank - (p_full * n_blocks)) ** 2) / (p_full * n_blocks)
+        + ((minus_rank - (p_minus * n_blocks)) ** 2) / (p_minus * n_blocks)
+        + ((remainder - (p_rem * n_blocks)) ** 2) / (p_rem * n_blocks)
+    )
+    return float(math.e ** (-chi_square / 2.0)), True
+
+
+def _rolling_window_values(block: np.ndarray, m: int) -> np.ndarray:
+    """
+    Valor inteiro (MSB primeiro) de cada janela deslizante de `m` bits em
+    `block`. Calculado por `m` operações vetoriais de shift/or — sem
+    materializar a matriz `n x m` de janelas. Permite comparar TODOS os
+    templates de comprimento `m` contra uma única varredura, em vez de uma
+    varredura por template (ver `_non_overlapping_template_matching`).
+    """
+    n_windows = block.size - m + 1
+    if n_windows <= 0:
+        return np.empty(0, dtype=np.int64)
+    values = np.zeros(n_windows, dtype=np.int64)
+    for j in range(m):
+        values = (values << 1) | block[j:j + n_windows].astype(np.int64)
+    return values
+
+
+@numba.njit
+def _greedy_nonoverlapping_count(candidates: np.ndarray, m: int) -> int:
+    """Percorre as posições candidatas (onde a janela casa com o template)
+    aplicando a regra greedy do teste oficial: ao casar, pula `m` posições."""
+    count = 0
+    next_allowed = 0
+    for idx in range(candidates.size):
+        pos = candidates[idx]
+        if pos >= next_allowed:
+            count += 1
+            next_allowed = pos + m
+    return count
 
 
 def _overlapping_pattern_counts(
@@ -386,16 +515,9 @@ def _count_nonoverlapping_matches(block: np.ndarray, template: np.ndarray) -> in
     m = template.size
     if block.size < m:
         return 0
-    windows = np.lib.stride_tricks.sliding_window_view(block, m)
-    match_bool = np.all(windows == template, axis=1)
-    candidates = np.flatnonzero(match_bool)
-    count = 0
-    next_allowed = 0
-    for pos in candidates:
-        if pos >= next_allowed:
-            count += 1
-            next_allowed = pos + m
-    return count
+    values = _rolling_window_values(block, m)
+    candidates = np.flatnonzero(values == _template_to_int(template))
+    return _greedy_nonoverlapping_count(candidates, m)
 
 
 def _non_overlapping_template_matching(bits: np.ndarray) -> tuple[float, float, float]:
@@ -403,11 +525,16 @@ def _non_overlapping_template_matching(bits: np.ndarray) -> tuple[float, float, 
     Reimplementação determinística e vetorizada: agrega TODOS os templates
     de comprimento 2-8 do nistrng (154 no total), em vez de sortear 1 (ver
     ponto 1 do docstring do módulo). Mesma lógica de blocos/chi² do teste
-    original — só o casamento posição-a-posição foi vetorizado (ver
-    `_count_nonoverlapping_matches`); resultado numericamente idêntico ao
-    loop original, ~1000x mais rápido em CTs de 64KB (a versão original
-    não terminava em tempo viável para 180k amostras — ver Fase 2.4/
-    benchmark de extração).
+    original.
+
+    **Otimização (2026-08-22):** o valor inteiro de cada janela deslizante
+    é calculado UMA VEZ por (comprimento m, bloco) — 7 comprimentos x 8
+    blocos = 56 varreduras — e reaproveitado por todos os templates
+    daquele comprimento, em vez de uma varredura de comparação por
+    template (154 varreduras, cada uma materializando uma matriz booleana
+    `n x m`). Reduziu esta função de ~2,13s para uma fração disso por
+    amostra de 64KB, sem mudar o resultado (validado contra a versão
+    anterior). Era o maior custo isolado da suíte NIST.
 
     Returns:
         (p_mean, p_std, p_min) sobre os 154 templates.
@@ -417,21 +544,28 @@ def _non_overlapping_template_matching(bits: np.ndarray) -> tuple[float, float, 
     if substring_len < 2:
         return _NAN, _NAN, _NAN
 
+    blocks = [
+        bits[i * substring_len:(i + 1) * substring_len] for i in range(blocks_number)
+    ]
+
     p_values: list[float] = []
-    for b_template in _NOTM_TEMPLATES:
-        m = b_template.size
+    for m in sorted(_NOTM_TEMPLATES_BY_LEN):
         if substring_len <= m:
             continue
-        matches = np.zeros(blocks_number, dtype=int)
-        for i in range(blocks_number):
-            block = bits[i * substring_len:(i + 1) * substring_len]
-            matches[i] = _count_nonoverlapping_matches(block, b_template)
         mu = (substring_len - m + 1) / (2.0 ** m)
         sigma = substring_len * ((1.0 / (2.0 ** m)) - ((2.0 * m - 1) / (2.0 ** (2 * m))))
         if sigma <= 0:
             continue
-        chi_square = float(np.sum(((matches - mu) ** 2) / sigma))
-        p_values.append(float(scipy.special.gammaincc(blocks_number / 2.0, chi_square / 2.0)))
+        values_per_block = [_rolling_window_values(block, m) for block in blocks]
+        for template_int in _NOTM_TEMPLATES_BY_LEN[m]:
+            matches = np.zeros(blocks_number, dtype=np.int64)
+            for i, values in enumerate(values_per_block):
+                candidates = np.flatnonzero(values == template_int)
+                matches[i] = _greedy_nonoverlapping_count(candidates, m)
+            chi_square = float(np.sum(((matches - mu) ** 2) / sigma))
+            p_values.append(
+                float(scipy.special.gammaincc(blocks_number / 2.0, chi_square / 2.0))
+            )
 
     if not p_values:
         return _NAN, _NAN, _NAN
@@ -487,12 +621,15 @@ def extract_nist_sts(ct: bytes) -> dict[str, float]:
         ("nist_frequency_within_block", "frequency_within_block"),
         ("nist_runs", "runs"),
         ("nist_longest_run_ones", "longest_run_ones_in_a_block"),
-        ("nist_binary_matrix_rank", "binary_matrix_rank"),
         ("nist_dft", "dft"),
         ("nist_maurers_universal", "maurers_universal"),
     ):
         p, _ = _single_score(battery_name, bits)
         out[feat_name] = p
+
+    # --- binary matrix rank (numba — ver `_binary_matrix_rank_fast`) -------
+    rank_p, _ = _binary_matrix_rank_fast(bits)
+    out["nist_binary_matrix_rank"] = rank_p
 
     # --- approximate entropy (reimplementado, vetorizado — ver ponto 3a) ---
     out["nist_approximate_entropy"] = _approximate_entropy_vectorized(bits)

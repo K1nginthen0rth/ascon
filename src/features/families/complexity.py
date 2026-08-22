@@ -46,6 +46,17 @@ def _lz76(seq: bytes) -> int:
 
     Cada frase é a substring mais curta a partir da posição atual que não
     ocorre como substring do prefixo já processado.
+
+    **Nota de performance (medida em 2026-08-22, não especular):** esta é
+    a função mais cara da família (~0,56s por amostra de 64KB). Foi
+    testada uma reimplementação com `@numba.njit` pelo algoritmo clássico
+    de Kaspar & Schuster — validada EQUIVALENTE (0 divergências em 200
+    sequências aleatórias) mas **mais LENTA** (0,64s vs 0,56s), porque o
+    operador `in` sobre `bytes` usa `memmem` em C (vetorizado) enquanto o
+    numba faz comparação byte-a-byte. Mantida a versão original. Uma
+    aceleração real exigiria o algoritmo O(n) com autômato de sufixos
+    (LPF), cuja complexidade de implementação não se justifica no
+    orçamento atual — ver `reports/v2/benchmark_extracao.md`.
     """
     n = len(seq)
     if n == 0:
