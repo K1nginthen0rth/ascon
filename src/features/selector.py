@@ -9,7 +9,10 @@ Pipeline v2, em 5 estágios (ver docs/plano_experimento_v2/02_features_e_selecao
      constantes verdadeiras (ver correção abaixo).
   2. Mutual Information — corte de CONVENIÊNCIA (top-k), explicitamente SEM
      alegação estatística (ver nota abaixo).
-  3. mRMR [Peng et al. 2005] — define o conjunto final (relevância − redundância).
+  3. mRMR — define o conjunto final (relevância − redundância). Implementação:
+     pacote `mrmr-selection` 0.2.8 (variante FCQ: relevância por estatística F,
+     redundância por correlação de Pearson média), NÃO uma reimplementação
+     local — ver a nota "qual mRMR" abaixo.
   4. Boruta [Kursa & Rudnicki 2010] — diagnóstico de estabilidade; reporta quantas
      features do mRMR também se confirmam contra shadow features, mas NÃO
      filtra o conjunto usado pelo classificador (apenas informativo/relatório).
@@ -45,8 +48,32 @@ REGRA CRÍTICA: o `fit` deve ser chamado APENAS no X_train, dentro de cada fold
 de CV. Selecionar no dataset completo é o vazamento documentado em
 [Ambroise & McLachlan, PNAS 2002].
 
+**Qual mRMR (correção de 2026-08-23):** até esta data existia um `mrmr.py`
+na RAIZ do repositório com uma reimplementação caseira (relevância por
+informação mútua com `random_state=0` fixo, redundância por correlação de
+Pearson média, esquema de diferença). Como todo script de produção e o
+`conftest.py` fazem `sys.path.insert(0, REPO_ROOT)`, a raiz vinha antes do
+site-packages e esse arquivo **sombreava o pacote instalado em toda
+execução dentro do projeto** — rodando de outro diretório, o pacote real
+era usado. Quatro problemas: (a) o docstring e o plano citavam Peng et al.
+2005 para um algoritmo que não era o deles, e isso viraria afirmação de
+método na dissertação; (b) o `random_state=0` fixo violava a seed canônica
+FS=13 (Regra de Ouro 1) e diferia da seed do estágio 1 do mesmo seletor;
+(c) o resultado dependia do diretório de onde se rodava; (d) o laço fazia
+~2,8 milhões de chamadas a `np.corrcoef` para p=350/K=150, ~0,4h por fold
+(~10h no total) que nenhum documento de orçamento contabilizava.
+
+O arquivo foi removido. Medido antes de remover, num cenário de sinal
+fraco com ruído correlacionado: as duas implementações recuperam os 5
+sinais plantados no top-20, mas as seleções COMPLETAS de 20 features
+coincidem em apenas 5/20 — ou seja, o conjunto que alimenta o
+classificador era substancialmente diferente. Usar o pacote é o que
+sustenta a citação.
+
 Referências:
-  - Peng, H., Long, F., & Ding, C. (2005). IEEE TPAMI 27(8).
+  - Peng, H., Long, F., & Ding, C. (2005). IEEE TPAMI 27(8) — base
+    conceitual do mRMR; a implementação usada é a do pacote
+    `mrmr-selection`, cuja variante default (FCQ) difere do MID original.
   - Kursa, M. B., & Rudnicki, W. R. (2010). JSS 36(11).
   - Saeys, Y., Inza, I., & Larrañaga, P. (2007). Bioinformatics 23(19).
 """
@@ -93,7 +120,7 @@ class LWCFeatureSelector:
 
     Estágio 2 (redundância):
         - mRMR seleciona n_features_mrmr maximizando relevância e minimizando
-          redundância entre features [Peng et al. 2005]
+          redundância entre features (pacote `mrmr-selection`, variante FCQ)
 
     Estágio 3 (estabilidade, diagnóstico apenas):
         - Boruta reporta quais features do mRMR carregam sinal vs. baseline

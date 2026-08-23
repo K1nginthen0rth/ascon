@@ -115,7 +115,7 @@ nós mesmos e, se J < 500, marcamos `nist_excursions_valid`/
 `nist_excursions_variant_valid = 0` e imputamos p-value 0,5 (neutro) —
 nunca 0 (zero seria estatisticamente "falha", não "não aplicável").
 
-**Templates: estatísticas agregadas, não 148/154 colunas** — média, desvio
+**Templates: estatísticas agregadas, não 158 colunas** — média, desvio
 padrão e mínimo do p-value entre templates, como decidido em
 `02_features_e_selecao.md`.
 
@@ -166,7 +166,7 @@ def _template_to_int(template: np.ndarray) -> int:
 # Templates agrupados por comprimento: {m: [valor_inteiro, ...]}. Permite
 # calcular o valor de cada janela deslizante UMA VEZ por comprimento m
 # (7 comprimentos) em vez de uma varredura de comparação por template
-# (154 templates) — ver `_non_overlapping_template_matching`.
+# (158 templates) — ver `_non_overlapping_template_matching`.
 _NOTM_TEMPLATES_BY_LEN: dict[int, list[int]] = {}
 for _t in _NOTM_TEMPLATES:
     _NOTM_TEMPLATES_BY_LEN.setdefault(int(_t.size), []).append(_template_to_int(_t))
@@ -523,7 +523,9 @@ def _count_nonoverlapping_matches(block: np.ndarray, template: np.ndarray) -> in
 def _non_overlapping_template_matching(bits: np.ndarray) -> tuple[float, float, float]:
     """
     Reimplementação determinística e vetorizada: agrega TODOS os templates
-    de comprimento 2-8 do nistrng (154 no total), em vez de sortear 1 (ver
+    de comprimento 2-8 do nistrng (158 no total: 2+4+6+12+20+40+74 por
+    comprimento — contado do inventário real, não do número redondo que
+    a literatura costuma citar), em vez de sortear 1 (ver
     ponto 1 do docstring do módulo). Mesma lógica de blocos/chi² do teste
     original.
 
@@ -531,13 +533,13 @@ def _non_overlapping_template_matching(bits: np.ndarray) -> tuple[float, float, 
     é calculado UMA VEZ por (comprimento m, bloco) — 7 comprimentos x 8
     blocos = 56 varreduras — e reaproveitado por todos os templates
     daquele comprimento, em vez de uma varredura de comparação por
-    template (154 varreduras, cada uma materializando uma matriz booleana
+    template (158 varreduras, cada uma materializando uma matriz booleana
     `n x m`). Reduziu esta função de ~2,13s para uma fração disso por
     amostra de 64KB, sem mudar o resultado (validado contra a versão
     anterior). Era o maior custo isolado da suíte NIST.
 
     Returns:
-        (p_mean, p_std, p_min) sobre os 154 templates.
+        (p_mean, p_std, p_min) sobre os 158 templates.
     """
     blocks_number = 8
     substring_len = bits.size // blocks_number
@@ -577,6 +579,26 @@ def _random_excursion_variant_fixed(bits: np.ndarray) -> np.ndarray:
     """
     Reimplementação com o `erfc` que falta no nistrng (ver ponto 2 do
     docstring do módulo). Mesma lógica de ciclos/estados do original.
+
+    **Fórmula (SP 800-22 Rev 1a §2.15.4, passo 6):**
+
+        P-value = erfc( |ξ − J| / sqrt(2·J·(4·|x| − 2)) )
+
+    **Correção de 2026-08-23:** esta função aplicava `erfc(z / sqrt(2))`
+    com `z` JÁ dividido pelo denominador da especificação — ou seja,
+    inseria o fator √2 uma segunda vez. Confirmado em CT real do v2:
+    recuperando o argumento do erfc por inversão, a razão entre a versão
+    antiga e a especificação era exatamente 0,707107 = 1/√2 nos 18
+    estados. Efeito prático era contido (transformação monótona aplicada
+    igualmente a todas as amostras — RF/XGBoost são invariantes), mas
+    quebrava a AFIRMAÇÃO: duas das 641 features seriam reportadas como
+    p-values do Random Excursions Variant da SP 800-22 sem o serem, e
+    modelos sensíveis a escala (LinearSVC/SVM/LR) sofriam efeito real.
+
+    Ironia registrada: a função existe para corrigir um `erfc` faltante
+    no `nistrng`, e a correção passou do ponto. É exatamente o tipo de
+    erro que o teste antigo (`0 < p <= 1`) não podia pegar — daí o teste
+    de recomputação independente em `test_nist_sts.py`.
     """
     signed = np.where(bits == 0, -1, 1)
     sum_prime = np.concatenate(([0], np.cumsum(signed), [0])).astype(int)
@@ -589,9 +611,11 @@ def _random_excursion_variant_fixed(bits: np.ndarray) -> np.ndarray:
     for key, value in zip(unique, counts):
         if key == 0:
             continue
+        # `denom` JÁ é o sqrt(2·J·(4|x|−2)) da especificação — o erfc recebe
+        # o quociente direto, sem nenhuma divisão adicional por sqrt(2).
         denom = math.sqrt(2.0 * cycles_size * ((4.0 * abs(int(key))) - 2.0))
         z = abs(int(value) - cycles_size) / denom
-        scores.append(math.erfc(z / math.sqrt(2.0)))
+        scores.append(math.erfc(z))
     return np.array(scores)
 
 

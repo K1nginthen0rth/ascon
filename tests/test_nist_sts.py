@@ -371,6 +371,74 @@ def test_excursion_variant_scores_are_valid_pvalues():
     assert np.all(scores <= 1.0)
 
 
+def test_excursion_variant_matches_spec_formula():
+    """
+    Recomputação INDEPENDENTE da fórmula da SP 800-22 Rev 1a §2.15.4
+    passo 6:
+
+        P-value = erfc( |ξ − J| / sqrt(2·J·(4·|x| − 2)) )
+
+    Este teste existe porque o anterior (`0 < p <= 1`) não podia pegar o
+    bug real que estava aqui: a função aplicava `erfc(z/sqrt(2))` com `z`
+    já dividido pelo denominador da especificação, inserindo o fator √2
+    duas vezes. O resultado continuava sendo um número em (0,1] — passava
+    nas duas asserções de intervalo sem tocar na fórmula. É o mesmo
+    padrão de validação usado em Monobit/Runs/Berlekamp-Massey (que
+    estavam corretos justamente por terem esse tipo de teste).
+    """
+    rng = np.random.default_rng(17)
+    bits = rng.integers(0, 2, size=200_000).astype(np.int8)
+
+    # --- referência escrita direto da especificação ---
+    signed = np.where(bits == 0, -1, 1)
+    s = np.cumsum(signed)
+    s_linha = np.concatenate(([0], s, [0]))
+    j = int(np.count_nonzero(s_linha[1:] == 0))
+    if j == 0:
+        pytest.skip("nenhum ciclo nesta amostra")
+
+    esperado = {}
+    for x in list(range(-9, 0)) + list(range(1, 10)):
+        xi = int(np.count_nonzero(s_linha == x))
+        esperado[x] = math.erfc(abs(xi - j) / math.sqrt(2.0 * j * (4.0 * abs(x) - 2.0)))
+
+    obtido = _random_excursion_variant_fixed(bits)
+    assert len(obtido) == len(esperado), (
+        f"nº de estados divergente: {len(obtido)} vs {len(esperado)}")
+    np.testing.assert_allclose(np.sort(obtido), np.sort(list(esperado.values())),
+                               rtol=1e-12, atol=1e-12)
+
+
+def test_excursion_variant_nao_aplica_sqrt2_duas_vezes():
+    """
+    Regressão dedicada ao bug do √2 (2026-08-23): trava a diferença
+    ESPECÍFICA, não só a fórmula geral. Se alguém reintroduzir o
+    `/sqrt(2)`, os p-values ficam sistematicamente maiores e este teste
+    quebra com uma mensagem que diz exatamente o quê.
+    """
+    rng = np.random.default_rng(17)
+    bits = rng.integers(0, 2, size=200_000).astype(np.int8)
+    obtido = _random_excursion_variant_fixed(bits)
+    if len(obtido) == 0:
+        pytest.skip("nenhum ciclo nesta amostra")
+
+    # A versão com o bug seria erfc(z/√2); reconstruímos o argumento por
+    # inversão e conferimos que a razão para o argumento correto é 1.
+    from scipy.special import erfcinv
+    signed = np.where(bits == 0, -1, 1)
+    s_linha = np.concatenate(([0], np.cumsum(signed), [0]))
+    j = int(np.count_nonzero(s_linha[1:] == 0))
+    args_corretos = sorted(
+        abs(int(np.count_nonzero(s_linha == x)) - j) / math.sqrt(2.0 * j * (4.0 * abs(x) - 2.0))
+        for x in list(range(-9, 0)) + list(range(1, 10))
+    )
+    args_obtidos = sorted(erfcinv(obtido).tolist())
+    razao = np.array(args_obtidos) / np.array(args_corretos)
+    assert np.allclose(razao, 1.0, rtol=1e-9), (
+        f"argumento do erfc fora de escala (razão média {razao.mean():.6f}; "
+        f"0.707107 = 1/sqrt(2) indica o bug do √2 reintroduzido)")
+
+
 # ---------------------------------------------------------------------------
 # Elegibilidade / imputação neutra
 # ---------------------------------------------------------------------------

@@ -142,7 +142,7 @@ dataset secundário de 1KB.
 - **Dois outros desvios do `nistrng` corrigidos/contornados** (não no
   pacote vendorizado, na camada `nist_sts.py`): Non-overlapping Template
   Matching sorteava 1 template aleatório sem seed a cada chamada
-  (não-determinístico — reimplementado agregando os 154 templates
+  (não-determinístico — reimplementado agregando os 158 templates
   disponíveis, deterministicamente, com casamento vetorizado — a versão
   ingênua posição-a-posição não terminava em tempo viável em CTs de 64KB,
   ~1000x mais lenta); Random Excursion Variant calculava o argumento de
@@ -211,9 +211,9 @@ pela tabela acima:** um novo perfilamento por teste individual (não só por
 família) revelou que o custo de `nist_sts` estava concentrado em dois
 pontos específicos que a tabela por família escondia:
 - **Non-overlapping Template Matching** (2,13s de 4,1s do `nist_sts`):
-  fazia uma varredura de comparação por template (154 templates). Reescrito
+  fazia uma varredura de comparação por template (158 templates). Reescrito
   para calcular o valor inteiro de cada janela deslizante uma vez por
-  comprimento de template (7 comprimentos), reaproveitado entre os 154 —
+  comprimento de template (7 comprimentos), reaproveitado entre os 158 —
   **2,13s → 0,067s (32x)**.
 - **Binary Matrix Rank** (0,77s): eliminação gaussiana pura-Python do
   `nistrng`. Reimplementada com `numba.njit`, validada idêntica —

@@ -246,3 +246,27 @@ def test_max_train_samples_preserva_todas_as_chaves():
     # E o balanceamento de classes sobrevive (cota é múltipla do nº de classes).
     counts = np.bincount(y, minlength=len(caminhos_bce.REAL_ALGORITHMS))
     assert counts.min() == counts.max(), f"classes desbalanceadas: {counts.tolist()}"
+
+
+# ---------------------------------------------------------------------------
+# mRMR — o pacote real, não uma reimplementação local que o sombreie
+# ---------------------------------------------------------------------------
+
+def test_mrmr_resolve_para_o_pacote_instalado():
+    """
+    Até 2026-08-23 havia um `mrmr.py` na RAIZ do repositório com uma
+    reimplementação caseira. Como todo script de produção e o `conftest.py`
+    fazem `sys.path.insert(0, REPO_ROOT)`, a raiz vinha antes do
+    site-packages e o arquivo local sombreava o pacote **em toda execução
+    dentro do projeto** — rodando de outro diretório, o pacote real era
+    usado. Além de tornar o resultado dependente do diretório, a versão
+    local usava `random_state=0` fixo (viola a seed canônica FS=13) e não
+    era o algoritmo citado no docstring.
+    """
+    import mrmr
+    origem = Path(mrmr.__file__).resolve()
+    assert "site-packages" in origem.parts or "site-packages" in str(origem), (
+        f"`mrmr` resolveu para {origem} — há um módulo local sombreando o "
+        f"pacote instalado (era exatamente o bug de 2026-08-23)")
+    assert not (REPO_ROOT / "mrmr.py").exists(), (
+        "mrmr.py voltou para a raiz do repositório — vai sombrear o pacote")

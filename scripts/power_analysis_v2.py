@@ -63,6 +63,9 @@ M_NULL_SIMULATIONS = 2000       # repetições para estimar o SE de F1 sob H0
 # uma proporção com n=150 e p~0,8 é ~4%) sem o custo de 500x300 (~7-9min/
 # cenário, que estourou o timeout mesmo sem concorrência de CPU).
 M_POWER_VERIFICATION = 150
+# Pontos da grade de conversão F1->acurácia. Discreta, e `searchsorted`
+# arredonda para cima — ver a nota de premissas no relatório gerado.
+_GRID_POINTS = 60
 BOOTSTRAP_FOR_VERIFICATION = 150
 
 
@@ -135,7 +138,7 @@ def analyze_scenario(scenario: dict, seed: int) -> dict:
     # antes da busca — sem isso, um mde_true_accuracy visivelmente errado
     # (bem abaixo do esperado) passava sem nenhum erro ou aviso.
     target_f1 = chance_f1_mean + mde_f1
-    acc_grid = np.linspace(chance_acc, min(chance_acc + 0.15, 0.99), 60)
+    acc_grid = np.linspace(chance_acc, min(chance_acc + 0.15, 0.99), _GRID_POINTS)
     n_reps_per_point = 20
     f1_at_acc = np.array([
         np.mean([
@@ -214,12 +217,42 @@ def main() -> None:
         f.write(
             "\n**Interpretação:** com os tamanhos de teste do experimento v2, um "
             "resultado nulo (F1-macro dentro do IC do acaso) não significa "
-            "\"ausência de evidência\" — significa que um efeito verdadeiro maior "
-            "que o MDE reportado acima teria sido detectado com "
-            f"{POWER_TARGET*100:.0f}% de probabilidade. Efeitos menores que o MDE "
-            "podem existir sem serem detectáveis nesta escala de amostra; essa é "
-            "uma limitação declarada do desenho, não uma alegação de \"prova de "
-            "ausência de diferença\".\n"
+            "\"ausência de evidência\" — significa que um efeito verdadeiro do "
+            "tamanho do MDE reportado acima teria sido detectado com a "
+            "probabilidade da coluna **Poder empírico no MDE** "
+            + " e ".join(f"({r['name']}: {r['empirical_power_at_mde']*100:.0f}%)"
+                         for r in results)
+            + ". Efeitos menores que o MDE podem existir sem serem detectáveis "
+            "nesta escala de amostra; essa é uma limitação declarada do desenho, "
+            "não uma alegação de \"prova de ausência de diferença\".\n"
+        )
+        f.write(
+            f"\n> **Por que o poder empírico não é exatamente {POWER_TARGET*100:.0f}%.** "
+            f"{POWER_TARGET*100:.0f}% é o ALVO usado para derivar o MDE pela "
+            "fórmula `(z_α/2 + z_β)·SE`, não um valor medido. A verificação "
+            "empírica roda o procedimento e mede o que de fato acontece; as duas "
+            "coisas divergem por três motivos, todos declarados aqui:\n"
+            "> \n"
+            "> 1. **O SE é estimado só sob H₀.** A fórmula supõe que o erro "
+            "padrão de F1 é o mesmo sob H₀ e sob a alternativa, o que não é "
+            "exato.\n"
+            "> 2. **A conversão F1→acurácia usa uma grade discreta** "
+            f"({_GRID_POINTS} pontos) com `searchsorted`, que arredonda para "
+            "cima — o MDE efetivo fica ligeiramente acima do alvo, e o poder "
+            "medido, acima de 80% (é o caso do cenário de 4 classes).\n"
+            f"> 3. **A verificação usa `n_bootstrap={BOOTSTRAP_FOR_VERIFICATION}` "
+            f"e {M_POWER_VERIFICATION} repetições**, contra 1000 na produção. "
+            f"Com {M_POWER_VERIFICATION} repetições, um poder medido de ~80% tem "
+            f"incerteza de ±{1.96 * (0.8 * 0.2 / M_POWER_VERIFICATION) ** 0.5 * 100:.1f} "
+            "p.p. (IC 95%) — ou seja, o valor do par binário não é distinguível "
+            "de 80%.\n"
+            "> \n"
+            "> **Premissa adicional, também declarada:** o classificador simulado "
+            "erra UNIFORMEMENTE entre as classes restantes, o que maximiza o "
+            "F1-macro para uma dada acurácia. Um classificador fraco real erra de "
+            "forma estruturada (confunde pares específicos), então o MDE em "
+            "pontos percentuais aqui é **otimista** — o efeito real necessário "
+            "para detecção tende a ser um pouco maior.\n"
         )
     print(f"Relatório salvo em {OUT_PATH}")
 
