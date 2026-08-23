@@ -1,49 +1,64 @@
 # 5. Execução, riscos e pendências
 
-## 5.1 Fases de execução (proposta — ordem por dependência)
+## 5.1 Fases de execução — estado real (2026-08-22)
 
-| Fase | Conteúdo | Depende de | Hardware |
+**Todo o código dos 6 caminhos está implementado.** O que resta é
+executar. Sequência exata de comandos: `07_runbook_execucao.md`.
+
+| Fase | Conteúdo | Hardware | Estado |
 |---|---|---|---|
-| 1 | Correção Ascon (`ascon128av13`) + wrappers Grain e Sparkle (KAT cada) + CTR_DRBG (validação CAVP) + features novas (validação contra vetores SP 800-22) | — | CPU |
-| 2 | Geração do dataset v2 (150k encadeado, 80/20 texto/imagem) + validação v2 | fase 1 | CPU |
-| 3 | Caminho A completo + ablações baratas (key-holdout on/off, truncamento Grain, famílias) + controles no A | fase 2 | CPU |
-| 4 | Caminhos B e C | fase 2 (3 valida o encanamento antes) | GPU |
-| 5 | Caminho E (Transformer) | infra de 4 estabilizada | GPU |
-| 6 | Caminho D (híbrido) | latentes de B, C, E | GPU |
-| 7 | Caminho F (meta) | saídas de A–E | CPU/GPU leve |
+| 0-1 | Ascon corrigido + Grain/Sparkle + CTR_DRBG (KAT/CAVP) | CPU | ✅ concluída |
+| 2 | Features novas (NIST SP 800-22 + literatura) + benchmark | CPU | ✅ concluída |
+| 3 | Seletor v2 (z-score → VT → MI → mRMR → Boruta diag.) | CPU | ✅ concluída |
+| 4 | Dataset v2 (180k, 11,8GB) + validação | CPU | ✅ concluída — **PASS** |
+| 5 | Relato único (`report_eval`) + poder a priori | CPU | ✅ concluída |
+| — | **Extração das features das 180k amostras** | CPU | ⏳ código pronto, **~20h por braço** |
+| 6 | Caminho A (clássicos + réplicas + ablações) | CPU | ⏳ código pronto e validado |
+| 7 | Caminhos B e C (CNN1D/CNN2D) | GPU | ⏳ código pronto |
+| 8 | Caminho E (Transformer hierárquico) | GPU | ⏳ código pronto |
+| 9 | Caminho D (híbrido, 4 representações) | CPU/GPU | ⏳ código pronto |
+| 10 | Caminho F (meta out-of-fold) | CPU | ⏳ código pronto e validado |
+| 11 | Consolidação (BH-FDR) | CPU | ⏳ código pronto e validado |
 
 O Caminho A primeiro **não é gate de desistência** (nulo é esperado e não
 interrompe nada) — é validação barata de wrappers/dataset/pipeline antes de
 comprometer GPU.
 
-## 5.2 Orçamento computacional — o que se sabe de fato
+## 5.2 Orçamento computacional — números medidos
 
+- **Geração do dataset:** 2.461,6s (~41 min) para 180.000 amostras,
+  11,80 GB. Memória estável em ~1,2 GB (escrita incremental).
+- **Extração de features: 2,43 s/amostra medidos em dados reais** (1,69 s
+  no benchmark isolado; a diferença é o custo de leitura/streaming).
+  180k amostras = **~121h de CPU serial por braço**, ou **~20h com 6
+  shards** paralelos. Bem abaixo do teto de 48h paralelizado.
+  - Custo residual concentrado em: `complexity`/LZ76 (0,56 s — maior
+    item isolado, O(n²), numba testado e REJEITADO por ser mais lento
+    que o `memmem` em C) e `nist_sts` (0,80 s, já otimizado 5,2x).
+  - Histórico: a estimativa inicial era 249,5h serial; caiu para ~121h
+    após otimizar os dois gargalos reais medidos (ver 5.6).
 - **SVM (dado real do v1):** busca em grade nos 5 folds = 8.365s (~139 min) a
-  38.400 amostras/fold, variação 245–2.965s entre folds. Sem correção, no v2
-  (76.800/fold) extrapolaria para 15–30h+; **com a correção por subamostra
-  (aceita), estimado em dezenas de minutos.**
-- **GPU:** Colab+ planejado (A100 provável). Números reais de B/C/E/D não
-  existem — **medir com smoke test adaptado** (4 algoritmos, amostra reduzida)
-  antes de comprometer sessões longas; o `smoke_test.py` existente é o molde.
-- **✅ Benchmark de extração rodado (2026-08-21, 20 amostras):** total
-  projetado 249,5h de CPU serial para 180k amostras — abaixo do teto de
-  48h paralelizado (~15-31h com 8-16 cores via joblib). Dois pontos
-  concentram >95% do custo: `nist_sts` (205,8h — já otimizado nesta sessão
-  de uma estimativa inicial >5000h) e `complexity`/LZ76 (37,2h — O(n²),
-  não otimizado, decisão de investir mais fica para o Nycolas). Detalhe
-  completo em `06_implementacao_passo_a_passo.md` Fase 2.4.
-- Armazenamento: ~9,8 GB parquet + features (~120k × ~400 floats, trivial).
+  38.400 amostras/fold. Com a correção por subamostra + CV interna
+  group-aware (implementada), estimado em dezenas de minutos.
+- **GPU:** números reais de B/C/E/D **ainda não existem** — o modo
+  `--mode smoke` de `run_v2_caminhos_bce.py` mede tempo/época, VRAM e
+  parâmetros e **extrapola o custo da CV completa**. É gate: rodar antes
+  de comprometer qualquer sessão longa.
+- **Armazenamento real:** 11,8 GB (parquet de CTs) + 380 MB (imagens) +
+  ~460 MB por braço de features (180k × 650 float32) + latentes.
 
 ## 5.3 Riscos e planos B
 
-| Risco | Mitigação |
+| Risco | Estado |
 |---|---|
-| ✅ Código de referência Grain/Sparkle não compilar limpo no MSVC (precedente: GIFT-COFB exigiu headers customizados) | **Não se concretizou (2026-08-21):** ambos ANSI C/C99 portável, compilaram de primeira sem patch. |
-| ✅ Variante/parâmetros exatos do Schwaemm | **Confirmado (2026-08-21):** Schwaemm256-128 (128/256/128), `schwaemm_cfg.h` já fixa a variante. |
-| Berlekamp-Massey (e demais NIST) com bug plausível-mas-errado | validação obrigatória contra vetores do SP 800-22 antes de entrar no pipeline (ver 02) |
-| Colapso de CNN mal diagnosticado no 4-classes | valores de referência pré-calculados (colapso 0,10 vs acaso 0,25) + 🔶 diagnóstico de posto do latente |
-| Caminho F "achar sinal" com individuais no acaso | tratado como bandeira de investigação de artefato, não como descoberta (registrado em 03) |
-| Perda de resultados por queda de sessão | função de relato única com gravação incremental (regra obrigatória, ver 04) |
+| ✅ Grain/Sparkle não compilarem no MSVC | **Não se concretizou:** ambos ANSI C/C99 portável, compilaram de primeira sem patch. |
+| ✅ Variante/parâmetros exatos do Schwaemm | **Confirmado:** Schwaemm256-128 (128/256/128), fixado em `schwaemm_cfg.h`. |
+| ✅ Berlekamp-Massey (e demais NIST) com bug plausível-mas-errado | **MATERIALIZOU-SE — na biblioteca, não no nosso código.** A validação obrigatória encontrou 3 bugs críticos no `nistrng` (ver 5.6). Sem ela, ~metade da suíte NIST teria rodado sobre dados corrompidos, silenciosamente. |
+| ✅ Memória em datasets multi-GB | **MATERIALIZOU-SE 2x** (geração e validação; ver 5.6). Corrigido com leitura/escrita incremental via `pyarrow`. Risco permanece vivo para B/C/E — mitigado com `--max-train-samples`. |
+| 🔶 Colapso de CNN mal diagnosticado no 4-classes | valores de referência pré-calculados (colapso 0,10 vs acaso 0,25) + diagnóstico de **posto efetivo do latente** (SVD, 95% da variância) implementado em `run_v2_caminhos_bce.py`. Só verificável na execução real. |
+| 🔶 Caminho F "achar sinal" com individuais no acaso | Implementado: o script **imprime automaticamente a bandeira de investigação de vazamento** quando o caso ocorre. Tratado como bandeira, não descoberta. |
+| ✅ Perda de resultados por queda de sessão | `report_eval` com JSONL append-only + parquet por chamada; extração retomável por chunk com gravação atômica. Reforçado depois que uma exceção de AUC quase derrubou um fold inteiro (ver 5.6). |
+| 🔶 Orçamento de GPU insuficiente para B/C/E | Sem número real até o smoke test. Estratégia Kaggle-first já definida; ordem de corte segue **pendente de decisão** (§P5 do 06). |
 
 ## 5.4 Placar de decisões (rodada final 2026-08-21 — detalhes no 06)
 
@@ -131,3 +146,81 @@ técnicos — permanecem como perguntas em aberto para Nycolas/orientador: a
 promoção de itens 🔶 para ✅ (hipótese primária + TOST, pré-registro, poder a
 priori, controles negativos), o teto de horas de GPU, e o corte de escopo se
 o orçamento apertar. Ver `docs/analise_critica_plano_v2.md` §3–§6.
+
+## 5.6 Achados da implementação (2026-08-21/22)
+
+Problemas que **só apareceram ao escrever e rodar o código** — nenhum
+deles era previsível na fase de planejamento. Registrados aqui porque
+vários têm consequência metodológica direta e precisam constar na
+dissertação como parte da validação do instrumento.
+
+### Bugs em biblioteca de terceiros (`nistrng`) — 3 críticos de 7
+
+A suíte NIST SP 800-22 foi construída sobre o pacote `nistrng` (BSD-3)
+em vez de reimplementada do zero. A auditoria linha a linha exigida pelo
+plano encontrou **sete desvios, três deles produzindo resultado
+sistematicamente errado** (não apenas ausência de sinal):
+
+1. **Binary Matrix Rank corrompia o array de bits compartilhado** —
+   fazia eliminação gaussiana sobre uma *view* do array de entrada,
+   mutando-o in-place e corrompendo os 7 testes seguintes na ordem de
+   execução. Confirmado com 4 sequências aleatórias independentes: os
+   mesmos 7 testes davam p=0,0 exato toda vez (assinatura de corrupção,
+   não de variância). **Sem essa correção, ~metade da suíte NIST teria
+   rodado sobre lixo, silenciosamente, no experimento inteiro.**
+2. **Berlekamp-Massey com aliasing** — `t = c[:]` seguido de `b = t`: em
+   NumPy isso é *view*, não cópia (ao contrário de lista Python).
+   Resultado errado em ~65% das sequências testadas.
+3. **Linear Complexity com bucketing errado** — classificava ~60% dos
+   "tickets" na classe errada, inflando χ² e colapsando o p-value para
+   0,0 em *qualquer* ciphertext.
+
+Os outros quatro: template matching não-determinístico (sorteava 1
+template sem seed), `erfc` faltando no Random Excursion Variant,
+overflow de `int8` no Cumulative Sums, e dois testes com loops
+Python inviáveis em escala.
+
+**Consequência metodológica:** a exigência de validar cada implementação
+NIST antes de usá-la (§5.3) não foi burocracia — foi o que separou um
+experimento válido de um com metade das features corrompidas.
+
+### Vazamentos e desvios de protocolo no nosso código
+
+4. **Rótulo `y` entrando como feature** (Caminho A) — o seletor
+   reportava 642 features em vez de 641 e todo modelo dava F1=1,000
+   trivialmente. Pego por conferir a contagem na validação. Blindado com
+   asserts que quebram se rótulo, metadado ou `len_ct` escaparem.
+5. **Busca de HP do SVM não era group-aware** — usava
+   `StratifiedKFold`, mas o plano exige CV interna por chave. Não
+   contaminaria a métrica reportada, mas escolheria C/gamma calibrados
+   para um cenário que não existe no teste. Trocado por `GroupKFold`.
+
+### Limites físicos que forçaram redesenho
+
+6. **Memória — dois quase-acidentes reais** (máquina de 16GB): o gerador
+   mantinha as 180k linhas em RAM antes de gravar; o validador carregava
+   o parquet de 11,8GB inteiro e derrubou a memória livre para **0,13
+   GB**, exigindo `kill -9`. Ambos reescritos com `pyarrow` incremental.
+7. **Atenção byte-a-byte é inviável** — o Caminho E, como descrito no
+   plano ("janelas de ~1024 bytes"), alocava **2,1 GB só na matriz de
+   atenção** com batch 2 em CPU, e passaria de 8 GB em GPU. Redesenhado
+   com *patch embedding* (16 bytes/token, padrão ViT): reduz a atenção
+   por um fator de 256 e mantém intacta a hierarquia local/global, que é
+   a contribuição de fato. **Precisa constar na descrição da arquitetura
+   na dissertação** — é desvio do texto do plano, ainda que não do seu
+   espírito.
+8. **`joblib` inutilizável neste ambiente** — `TerminatedWorkerError`
+   reprodutível (Windows + spawn + numba JIT por worker), mesmo com
+   lotes pequenos e memória de sobra, enquanto a mesma função rodava sem
+   problema em processo único. Paralelismo movido para *sharding de
+   processos independentes*, sem IPC.
+
+### Otimização guiada por medição, não por suposição
+
+9. O plano apontava o **LZ76** como o gargalo da extração. O
+   perfilamento mostrou que os custos reais eram **template matching**
+   (2,13 s) e **binary matrix rank** (0,77 s) — otimizados para 0,067 s
+   e 0,004 s. O LZ76 (0,56 s) resistiu: a reimplementação em numba foi
+   validada equivalente mas é **mais lenta** que o `memmem` em C do
+   operador `in` do Python. Extração total: **5,9 s → 1,69 s por
+   amostra**.
