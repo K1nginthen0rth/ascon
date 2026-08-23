@@ -145,42 +145,14 @@ def main() -> None:
     out_dir = OUT_ROOT / args.branch
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    t0 = time.perf_counter()
-    for fold_spec in folds["folds"]:
-        fi = fold_spec["fold"]
-        tr_keys, va_keys = set(fold_spec["train_keys"]), set(fold_spec["val_keys"])
-        tr_raw = feat_df[feat_df["key_id"].isin(tr_keys)]
-        va_ids = feat_df.loc[feat_df["key_id"].isin(va_keys), "sample_id"].tolist()
-
-        # Os latentes existem só para as amostras de VALIDAÇÃO de cada fold
-        # (é o que as redes produzem sem vazamento). Para treinar o híbrido
-        # usamos os latentes dos OUTROS folds — mesma lógica out-of-fold do
-        # Caminho F.
-        va_df, used = build_matrix(feat_df, va_ids, args.branch, f"fold{fi}", paths)
-        tr_parts = []
-        for other in folds["folds"]:
-            if other["fold"] == fi:
-                continue
-            other_ids = feat_df.loc[
-                feat_df["key_id"].isin(set(other["val_keys"])), "sample_id"].tolist()
-            part, _ = build_matrix(feat_df, other_ids, args.branch,
-                                   f"fold{other['fold']}", paths)
-            tr_parts.append(part)
-        if not tr_parts:
-            print(f"[fold {fi}] sem latentes de outros folds — pulando")
-            continue
-        tr_df = pd.concat(tr_parts, ignore_index=True)
-        del tr_raw
-
-        cols = feature_cols(tr_df)
-        cols = [c for c in cols if c in va_df.columns]
+    def _fit_eval(tr_df, va_df, cols, used, braco, fold_tag, n_bootstrap):
         X_tr, y_tr = tr_df[cols].to_numpy(np.float64), tr_df["y"].to_numpy()
         X_va, y_va = va_df[cols].to_numpy(np.float64), va_df["y"].to_numpy()
 
         sel = LWCFeatureSelector(SelectorConfig(random_state=SEED_SELECTOR))
         sel.fit(X_tr, y_tr, feature_names=cols)
         X_tr_s, X_va_s = sel.transform(X_tr), sel.transform(X_va)
-        print(f"[fold {fi}] representações={['A'] + used}  "
+        print(f"[{fold_tag}] representações={['A'] + used}  "
               f"dim={len(cols)} -> {X_tr_s.shape[1]}  "
               f"treino={len(tr_df)} val={len(va_df)}")
 
@@ -191,18 +163,66 @@ def main() -> None:
                      if hasattr(model, "predict_proba") else None)
             report_eval(
                 run_id=f"{DATASET_ID}_4class", caminho="D", modelo=name,
-                braco=args.branch, fold=fi,
+                braco=braco, fold=fold_tag,
                 y_true=y_va, y_pred=model.predict(X_va_s), y_proba=proba,
                 sample_ids=va_df["sample_id"].tolist(),
                 key_ids=va_df["key_id"].tolist() if "key_id" in va_df else None,
                 class_names=REAL_ALGORITHMS, labels=list(range(len(REAL_ALGORITHMS))),
-                out_dir=out_dir, n_bootstrap=args.n_bootstrap,
+                out_dir=out_dir, n_bootstrap=n_bootstrap,
                 extra={"representations": ["A"] + used,
                        "input_dim": len(cols),
                        "selected_dim": int(X_tr_s.shape[1]),
                        "train_time_s": round(time.perf_counter() - t_fit, 1),
                        "selector": sel.get_stage_report()},
             )
+
+    t0 = time.perf_counter()
+    for fold_spec in folds["folds"]:
+        fi = fold_spec["fold"]
+        tr_keys, va_keys = set(fold_spec["train_keys"]), set(fold_spec["val_keys"])
+        tr_ids = feat_df.loc[feat_df["key_id"].isin(tr_keys), "sample_id"].tolist()
+        va_ids = feat_df.loc[feat_df["key_id"].isin(va_keys), "sample_id"].tolist()
+
+        # Correção de alinhamento (achada na verificação de aderência): a
+        # versão anterior montava o treino do híbrido concatenando latentes
+        # de VALIDAÇÃO de OUTROS folds — cada fold treina uma rede B/C/E
+        # independente (init e dados diferentes), então esses espaços
+        # latentes não são o mesmo espaço vetorial. `latB_000` não
+        # significava a mesma coisa nas linhas de treino e nas de validação.
+        # Agora treino e validação usam SEMPRE a rede DESTE MESMO fold:
+        # `fold{fi}_train` para o treino do híbrido, `fold{fi}` (validação)
+        # para a avaliação — como o `HybridExtractor` do v1 já fazia.
+        tr_df, used_tr = build_matrix(feat_df, tr_ids, args.branch, f"fold{fi}_train", paths)
+        va_df, used_va = build_matrix(feat_df, va_ids, args.branch, f"fold{fi}", paths)
+        used = [pth for pth in used_tr if pth in used_va]
+        if len(used) < len(paths):
+            missing = set(paths) - set(used)
+            print(f"[fold {fi}] representações incompletas em algum lado "
+                  f"(treino={used_tr}, val={used_va}) — usando só {['A'] + used}. "
+                  f"Faltando: {sorted(missing)}")
+
+        cols = feature_cols(tr_df)
+        cols = [c for c in cols if c in va_df.columns]
+        _fit_eval(tr_df, va_df, cols, used, args.branch, fi, args.n_bootstrap)
+
+    # ---------------- Modelo final: trainval completo -> teste ----------------
+    # Usa a rede final (seed 7, mesma seed principal das demais). Os latentes
+    # do trainval final vêm de `run_v2_caminhos_bce.py --mode final`, que
+    # agora salva ambos os lados (ver correção do bug de teste-como-validação
+    # naquele script).
+    tv_keys, te_keys = set(folds["trainval_keys"]), set(folds["test_keys"])
+    tv_ids = feat_df.loc[feat_df["key_id"].isin(tv_keys), "sample_id"].tolist()
+    te_ids = feat_df.loc[feat_df["key_id"].isin(te_keys), "sample_id"].tolist()
+    tv_df, used_tv = build_matrix(feat_df, tv_ids, args.branch, "final_s7_trainval", paths)
+    te_df, used_te = build_matrix(feat_df, te_ids, args.branch, "final_s7", paths)
+    used_final = [pth for pth in used_tv if pth in used_te]
+    if not used_final:
+        print("\n[final] nenhum latente final encontrado (rode "
+              "`run_v2_caminhos_bce.py --mode final` antes) — pulando modelo final do D.")
+    else:
+        cols = feature_cols(tv_df)
+        cols = [c for c in cols if c in te_df.columns]
+        _fit_eval(tv_df, te_df, cols, used_final, args.branch, "final", args.n_bootstrap)
 
     print(f"\nCaminho D concluído em {(time.perf_counter() - t0) / 60:.1f}min — {out_dir}")
 

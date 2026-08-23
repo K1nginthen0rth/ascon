@@ -412,7 +412,7 @@ def run_analysis(
     y_tv = trainval_df["y"].to_numpy()
     y_te = test_df["y"].to_numpy()
 
-    sel = LWCFeatureSelector(SelectorConfig(random_state=SEED_SELECTOR))
+    sel = LWCFeatureSelector(_selector_config())
     sel.fit(X_tv_raw, y_tv, feature_names=feat_cols)
     X_tv, X_te = sel.transform(X_tv_raw), sel.transform(X_te_raw)
     sel_report = sel.get_stage_report()

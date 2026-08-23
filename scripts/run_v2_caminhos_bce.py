@@ -45,6 +45,7 @@ from src.models.cnn1d import CiphertextCNN1D  # noqa: E402
 from src.models.cnn2d import CiphertextCNN2D  # noqa: E402
 from src.models.hybrid import (  # noqa: E402
     CiphertextCoocDataset, CiphertextSeqDataset, extract_latents, train_cnn,
+    train_cnn_fixed,
 )
 from src.models.transformer1d import HierarchicalByteTransformer  # noqa: E402
 
@@ -195,6 +196,45 @@ def _save_latents(out_dir: Path, path: str, branch: str, tag: str,
     }).to_parquet(out_dir / f"latents_{path}_{branch}_{tag}_index.parquet", index=False)
 
 
+def _epochs_from_cv(path: str, branch: str, out_dir: Path, default: int) -> int:
+    """
+    Nº de épocas do modelo final = média do `best_epoch` (early stopping)
+    observado na CV completa, arredondada. Ler isso da CV em vez de
+    reusar `--epochs` cegamente é o que torna `train_cnn_fixed` (sem
+    early stopping) equivalente em espírito ao protocolo: o "quando parar"
+    ainda vem de dados de validação genuínos (os folds), só que nunca do
+    conjunto de teste. Se a CV completa ainda não rodou, cai no default
+    passado (`--epochs`) e avisa.
+    """
+    jsonl = out_dir / f"{DATASET_ID}_4class_metrics.jsonl"
+    if not jsonl.exists():
+        print(f"  [aviso] CV de {path}/{branch} não encontrada em {jsonl.name} — "
+              f"usando --epochs={default} fixo. Rode `--mode cv` antes do `final` "
+              f"para que o nº de épocas venha de early stopping real.")
+        return default
+    best_epochs = []
+    for line in jsonl.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        rec = json.loads(line)
+        if rec.get("caminho") != path or rec.get("braco") != branch:
+            continue
+        if str(rec.get("fold")).startswith("final"):
+            continue
+        be = (rec.get("extra") or {}).get("best_epoch")
+        if be:
+            best_epochs.append(int(be))
+    if not best_epochs:
+        print(f"  [aviso] nenhum best_epoch de CV encontrado para {path}/{branch} — "
+              f"usando --epochs={default} fixo.")
+        return default
+    n = max(1, round(sum(best_epochs) / len(best_epochs)))
+    print(f"  épocas do modelo final = {n} (média de {len(best_epochs)} "
+          f"best_epoch da CV: {best_epochs})")
+    return n
+
+
 def predict_logits(model: torch.nn.Module, ds, device: str, batch_size: int) -> np.ndarray:
     from torch.utils.data import DataLoader
     loader = DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=0)
@@ -274,7 +314,7 @@ def run_cv(path: str, branch: str, device: str, out_dir: Path,
         tr_keys, va_keys = set(fold_spec["train_keys"]), set(fold_spec["val_keys"])
         print(f"\n[{path} fold {fi}] carregando {len(tr_keys)} chaves treino / "
               f"{len(va_keys)} val...")
-        cts_tr, y_tr, _, _ = load_cts(tr_keys, REAL_ALGORITHMS, branch,
+        cts_tr, y_tr, sid_tr, kid_tr = load_cts(tr_keys, REAL_ALGORITHMS, branch,
                                       max_samples=max_train)
         cts_va, y_va, sid_va, kid_va = load_cts(va_keys, REAL_ALGORITHMS, branch)
         print(f"  treino={len(cts_tr)} val={len(cts_va)} "
@@ -311,33 +351,64 @@ def run_cv(path: str, branch: str, device: str, out_dir: Path,
         )
         _save_latents(out_dir, path, branch, f"fold{fi}", lat, sid_va, kid_va, y_va)
 
+        # Latentes do TREINO deste MESMO fold, pela MESMA rede — correção do
+        # bug de alinhamento do Caminho D (achado na verificação de
+        # aderência): a versão anterior montava o treino do híbrido
+        # concatenando latentes de validação de OUTROS folds, cada um vindo
+        # de uma rede com inicialização e dados de treino diferentes — os
+        # espaços latentes não são o mesmo espaço vetorial entre folds, então
+        # `latB_000` não significava a mesma coisa nas linhas de treino e nas
+        # de validação. Usar sempre a rede DESTE fold para ambos os
+        # subconjuntos (como o `HybridExtractor` do v1 já fazia) elimina o
+        # problema: dentro de um fold, treino e validação passam pela MESMA
+        # rede, então o espaço latente é consistente.
+        lat_tr = extract_latents(model, cts_tr, CONTROLLED_LEN if branch == "controlado"
+                                 else MAX_LEN_FULL, latent_mode(path), device, batch_size)
+        _save_latents(out_dir, path, branch, f"fold{fi}_train", lat_tr, sid_tr, kid_tr, y_tr)
+
 
 def run_final(path: str, branch: str, device: str, out_dir: Path,
               epochs: int, batch_size: int, hp: dict | None = None,
               max_train: int | None = None) -> None:
-    """Modelo final: trainval completo -> teste. 3 seeds só no braço
-    controlado (primário); no cru, seed 7 apenas."""
+    """
+    Modelo final: trainval completo -> teste. 3 seeds só no braço
+    controlado (primário); no cru, seed 7 apenas.
+
+    **Correção de vazamento (achada na verificação de aderência):** a
+    versão anterior chamava `train_cnn(model, tr_ds, te_ds, ...)` — o
+    conjunto de TESTE entrava como conjunto de VALIDAÇÃO do early
+    stopping, e o peso salvo era literalmente escolhido por quem tem
+    menor loss no teste. A métrica final ficava otimista por construção,
+    não por acaso. Trocado por `train_cnn_fixed` (nº de épocas fixo, sem
+    olhar validação nenhuma durante o treino do modelo final) — o teste
+    só é tocado DEPOIS de o modelo já estar congelado.
+
+    O nº de épocas vem da média do `best_epoch` observado na CV completa
+    (`_epochs_from_cv`) — assim "quando parar" continua vindo de dados de
+    validação genuínos (os folds), só nunca do teste.
+    """
     folds = load_folds()
     tv_keys, te_keys = set(folds["trainval_keys"]), set(folds["test_keys"])
-    cts_tv, y_tv, _, _ = load_cts(tv_keys, REAL_ALGORITHMS, branch,
-                                  max_samples=max_train)
+    cts_tv, y_tv, sid_tv, kid_tv = load_cts(tv_keys, REAL_ALGORITHMS, branch,
+                                            max_samples=max_train)
     cts_te, y_te, sid_te, kid_te = load_cts(te_keys, REAL_ALGORITHMS, branch)
     tr_ds = make_dataset(path, cts_tv, y_tv, branch)
     te_ds = make_dataset(path, cts_te, y_te, branch)
+    n_epochs = _epochs_from_cv(path, branch, out_dir, default=epochs)
 
     seeds = FINAL_SEEDS if branch == "controlado" else [SEED_MODEL]
     for seed in seeds:
         model = build_model(path, len(REAL_ALGORITHMS), branch, hp).to(device)
         n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
         t0 = time.perf_counter()
-        model, best_ep = train_cnn(
-            model, tr_ds, te_ds, device=device, n_epochs=epochs, patience=5,
-            seed=seed, fold_id=99, cnn_id=f"{path}_{branch}_final_s{seed}",
-            ckpt_dir=out_dir / "ckpts", batch_size=batch_size, verbose=True,
+        model = train_cnn_fixed(
+            model, tr_ds, n_epochs=n_epochs, device=device, seed=seed,
+            fold_id=99, cnn_id=f"{path}_{branch}_final_s{seed}",
+            ckpt_dir=out_dir / "ckpts", batch_size=batch_size,
         )
         logits = predict_logits(model, te_ds, device, batch_size)
-        lat = extract_latents(model, cts_te, CONTROLLED_LEN if branch == "controlado"
-                              else MAX_LEN_FULL, latent_mode(path), device, batch_size)
+        lat_te = extract_latents(model, cts_te, CONTROLLED_LEN if branch == "controlado"
+                                 else MAX_LEN_FULL, latent_mode(path), device, batch_size)
         report_eval(
             run_id=f"{DATASET_ID}_4class", caminho=path,
             modelo=f"CNN{path}" if path != "E" else "Transformer",
@@ -346,14 +417,23 @@ def run_final(path: str, branch: str, device: str, out_dir: Path,
             sample_ids=sid_te, key_ids=kid_te,
             class_names=REAL_ALGORITHMS, labels=list(range(len(REAL_ALGORITHMS))),
             out_dir=out_dir, extra={
-                "n_params": n_params, "seed": seed, "best_epoch": best_ep,
+                "n_params": n_params, "seed": seed, "n_epochs_fixed": n_epochs,
                 "train_time_s": round(time.perf_counter() - t0, 1),
-                "latent_effective_rank_95": effective_rank(lat),
-                "latent_dim": int(lat.shape[1]), "hp": hp or {},
+                "latent_effective_rank_95": effective_rank(lat_te),
+                "latent_dim": int(lat_te.shape[1]), "hp": hp or {},
                 "n_train_samples": len(cts_tv), "max_train_cap": max_train,
             },
         )
-        _save_latents(out_dir, path, branch, f"final_s{seed}", lat, sid_te, kid_te, y_te)
+        _save_latents(out_dir, path, branch, f"final_s{seed}", lat_te, sid_te, kid_te, y_te)
+
+        # Latentes do TRAINVAL também são salvos (mesmo modelo, mesma seed):
+        # o Caminho D precisa deles para treinar o híbrido final na mesma
+        # partição trainval->teste usada por A, em vez de misturar com
+        # latentes de uma rede diferente (ver correção do Caminho D).
+        lat_tv = extract_latents(model, cts_tv, CONTROLLED_LEN if branch == "controlado"
+                                 else MAX_LEN_FULL, latent_mode(path), device, batch_size)
+        _save_latents(out_dir, path, branch, f"final_s{seed}_trainval",
+                      lat_tv, sid_tv, kid_tv, y_tv)
 
 
 def run_hpsearch(path: str, branch: str, device: str, out_dir: Path,
