@@ -13,11 +13,13 @@ Infraestrutura:
   - Checkpoint por epoch (resiliente a preempção em instâncias spot)
   - Resume automático a partir do último checkpoint
   - MLflow logging (train_loss, val_loss, val_f1_macro por epoch)
-  - num_workers=4, persistent_workers=True, worker_init_fn para seed
+  - num_workers=4 (Linux/GPU) ou 0 (Windows — ver nota em `_NUM_WORKERS`),
+    persistent_workers=True, worker_init_fn para seed
 """
 from __future__ import annotations
 
 import math
+import platform
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,7 +31,7 @@ import torch.nn as nn
 from sklearn.metrics import f1_score
 from torch.utils.data import DataLoader, Dataset
 
-from src.models.ciphertext_to_image import bytes_to_cooccurrence
+from src.models.ciphertext_to_image import bytes_to_cooccurrence_conditioned
 from src.models.cnn1d import CiphertextCNN1D
 from src.models.cnn2d import CiphertextCNN2D
 
@@ -59,7 +61,20 @@ def _mlflow_log(key: str, value: float, step: Optional[int] = None) -> None:
 # DataLoader helpers
 # ---------------------------------------------------------------------------
 
-_NUM_WORKERS       = 4
+# Workers de multiprocessing (spawn) + persistent_workers=True são
+# confiáveis no Linux (onde os treinos de GPU do v1 rodaram — Colab/
+# Kaggle), mas travam ou derrubam o worker de forma REPRODUTÍVEL no
+# Windows quando vários DataLoaders são criados em sequência no mesmo
+# processo — exatamente o padrão de `run_v2_caminhos_bce.py` (treino,
+# predict_logits, extract_latents de validação, extract_latents de
+# treino: 4 DataLoaders por fold). Confirmado por reprodução direta
+# durante a implementação do v2: `RuntimeError: DataLoader worker
+# exited unexpectedly` sempre no 3º/4º DataLoader da sequência, nunca
+# num `_loader()` isolado. `num_workers=0` no Windows custa throughput
+# de carregamento (não custa nada aqui: converter bytes para
+# co-ocorrência é rápido comparado ao forward/backward da rede), mas é
+# o que torna o smoke test local possível antes de subir para GPU.
+_NUM_WORKERS       = 0 if platform.system() == "Windows" else 4
 _PERSISTENT        = True
 _BATCH_SIZE        = 64
 
@@ -104,17 +119,31 @@ class CiphertextSeqDataset(Dataset):
 
 
 class CiphertextCoocDataset(Dataset):
-    """CT bytes → mapa de co-ocorrência float32 (1, 256, 256). CT completo."""
+    """
+    CT bytes → mapa de co-ocorrência float32 (1, 256, 256). CT completo.
 
-    def __init__(self, cts: list, labels: np.ndarray) -> None:
+    `variant`/`mean`/`std` selecionam o condicionamento (06 Fase 7 — ver
+    `ciphertext_to_image.COND_VARIANTS`). Default `"sum1"` preserva o
+    comportamento histórico (soma=1) para não invalidar resultados já
+    obtidos; `mean`/`std` só têm efeito com `variant="standardized"` e
+    devem vir de `fit_standardization_stats` calculado no TREINO do fold.
+    """
+
+    def __init__(self, cts: list, labels: np.ndarray, variant: str = "sum1",
+                mean: float = 0.0, std: float = 1.0) -> None:
         self.cts    = cts
         self.labels = torch.from_numpy(np.asarray(labels, dtype=np.int64))
+        self.variant = variant
+        self.mean = mean
+        self.std = std
 
     def __len__(self) -> int:
         return len(self.cts)
 
     def __getitem__(self, idx: int):
-        img = bytes_to_cooccurrence(bytes(self.cts[idx]))     # (256, 256) float32
+        img = bytes_to_cooccurrence_conditioned(
+            bytes(self.cts[idx]), variant=self.variant, mean=self.mean, std=self.std,
+        )
         return torch.from_numpy(img[np.newaxis, :, :]), self.labels[idx]
 
 
@@ -342,6 +371,8 @@ def extract_latents(
     mode:   str,
     device: str,
     batch_size: int = _BATCH_SIZE,
+    cond: str = "sum1",
+    cond_stats: tuple[float, float] = (0.0, 1.0),
 ) -> np.ndarray:
     """
     Extrai vetores latentes (antes do FC) para uma lista de ciphertexts.
@@ -350,12 +381,19 @@ def extract_latents(
         mode: '1d' → CiphertextSeqDataset com max_len
               '2d' → CiphertextCoocDataset (co-occurrence, CT completo)
               O parâmetro max_len_or_size é usado apenas no modo '1d'.
+        cond, cond_stats: condicionamento do Caminho C (ver
+            `ciphertext_to_image.COND_VARIANTS`) — DEVE ser o mesmo usado
+            para treinar `model`. Passar o default (`"sum1"`) quando o
+            modelo foi treinado com outra variante extrai latentes numa
+            escala diferente da que a rede aprendeu, silenciosamente
+            (a rede não erra, mas o latente vira ruído para o Caminho D).
     Returns:
         (n, latent_dim) float32.
     """
     dummy = np.zeros(len(cts), dtype=np.int64)
-    ds = (CiphertextSeqDataset(cts, dummy, max_len_or_size)
-          if mode == "1d" else CiphertextCoocDataset(cts, dummy))
+    ds = (CiphertextSeqDataset(cts, dummy, max_len_or_size) if mode == "1d" else
+          CiphertextCoocDataset(cts, dummy, variant=cond,
+                                mean=cond_stats[0], std=cond_stats[1]))
 
     chunks: list[np.ndarray] = []
     model.eval()

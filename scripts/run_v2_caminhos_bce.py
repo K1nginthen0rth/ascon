@@ -41,6 +41,9 @@ import pyarrow.parquet as pq  # noqa: E402
 import torch  # noqa: E402
 
 from src.eval.reporting import report_eval  # noqa: E402
+from src.models.ciphertext_to_image import (  # noqa: E402
+    COND_VARIANTS, fit_standardization_stats,
+)
 from src.models.cnn1d import CiphertextCNN1D  # noqa: E402
 from src.models.cnn2d import CiphertextCNN2D  # noqa: E402
 from src.models.hybrid import (  # noqa: E402
@@ -147,11 +150,23 @@ def build_model(path: str, n_classes: int, branch: str, hp: dict | None = None) 
     raise ValueError(f"caminho desconhecido: {path}")
 
 
-def make_dataset(path: str, cts: list[bytes], y: np.ndarray, branch: str):
-    """Caminho C usa co-ocorrência 256x256 (representação canônica);
-    B e E consomem a sequência de bytes."""
+def make_dataset(path: str, cts: list[bytes], y: np.ndarray, branch: str,
+                 cond: str = "sum1", cond_stats: tuple[float, float] | None = None):
+    """
+    Caminho C usa co-ocorrência 256x256 (representação canônica); B e E
+    consomem a sequência de bytes.
+
+    `cond`: variante de condicionamento do Caminho C (06 Fase 7 — ver
+    `ciphertext_to_image.COND_VARIANTS`). `cond_stats=(mean, std)` só é
+    usado por `cond="standardized"`; se None e `cond="standardized"`, é
+    fitado NESTA chamada a partir de `cts` (uso esperado: treino). Para
+    val/teste, passe o `cond_stats` retornado pela chamada de treino —
+    nunca refitar em dados que o modelo não deveria ver no ajuste da
+    normalização.
+    """
     if path == "C":
-        return CiphertextCoocDataset(cts, y)
+        mean, std = cond_stats if cond_stats is not None else (0.0, 1.0)
+        return CiphertextCoocDataset(cts, y, variant=cond, mean=mean, std=std)
     max_len = CONTROLLED_LEN if branch == "controlado" else MAX_LEN_FULL
     return CiphertextSeqDataset(cts, y, max_len)
 
@@ -255,8 +270,65 @@ def softmax(z: np.ndarray) -> np.ndarray:
 # Modos
 # ---------------------------------------------------------------------------
 
+def _eval_loss(model: torch.nn.Module, ds, device: str, batch_size: int) -> float:
+    """Cross-entropy médio num dataset — usado só para comparar variantes
+    de condicionamento do Caminho C (não substitui `report_eval`)."""
+    from torch.utils.data import DataLoader
+    loader = DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=0)
+    model.eval()
+    crit = torch.nn.CrossEntropyLoss(reduction="sum")
+    total, n = 0.0, 0
+    with torch.no_grad():
+        for xb, yb in loader:
+            xb, yb = xb.to(device), yb.to(device)
+            total += crit(model(xb), yb).item()
+            n += xb.size(0)
+    return total / max(n, 1)
+
+
+def run_smoke_cnn2d_conditioning(
+    branch: str, device: str, out_dir: Path, n_samples: int, epochs: int, batch_size: int,
+) -> str:
+    """
+    06 Fase 7: roda as `COND_VARIANTS` do Caminho C no smoke/1-fold e
+    reporta o val_loss de cada uma. A vencedora (menor val_loss) é
+    retornada para congelar nas rodadas seguintes (`--cond`) — decisão
+    impressa aqui, não automatizada silenciosamente: o operador vê os 4
+    números antes de decidir.
+    """
+    folds = load_folds()
+    keys = set(folds["folds"][0]["train_keys"][:6]) | set(folds["folds"][0]["val_keys"][:3])
+    cts, y, _, _ = load_cts(keys, REAL_ALGORITHMS, branch, max_samples=n_samples)
+    n_val = max(1, len(cts) // 5)
+    cts_tr, y_tr = cts[n_val:], y[n_val:]
+    cts_va, y_va = cts[:n_val], y[:n_val]
+
+    print(f"\n[smoke C] condicionamento — {len(cts_tr)} treino / {len(cts_va)} val, "
+          f"{epochs} épocas por variante")
+    results: dict[str, float] = {}
+    for variant in COND_VARIANTS:
+        stats = (fit_standardization_stats(cts_tr) if variant == "standardized" else None)
+        tr_ds = make_dataset("C", cts_tr, y_tr, branch, cond=variant, cond_stats=stats)
+        va_ds = make_dataset("C", cts_va, y_va, branch, cond=variant, cond_stats=stats)
+        model = build_model("C", len(REAL_ALGORITHMS), branch).to(device)
+        model, _ = train_cnn(model, tr_ds, va_ds, device=device, n_epochs=epochs,
+                             patience=epochs, seed=SEED_MODEL, cnn_id=f"cond_{variant}",
+                             batch_size=batch_size, resume=False)
+        val_loss = _eval_loss(model, va_ds, device, batch_size)
+        results[variant] = val_loss
+        print(f"  [cond={variant:14s}] val_loss={val_loss:.4f}")
+
+    winner = min(results, key=results.get)
+    print(f"[smoke C] vencedora: '{winner}' (val_loss={results[winner]:.4f}) — "
+          f"use --cond {winner} nas rodadas hpsearch/cv/final")
+    (out_dir / "cnn2d_conditioning_smoke.json").parent.mkdir(parents=True, exist_ok=True)
+    (out_dir / "cnn2d_conditioning_smoke.json").write_text(
+        json.dumps({"results_val_loss": results, "winner": winner}, indent=2), encoding="utf-8")
+    return winner
+
+
 def run_smoke(path: str, branch: str, device: str, out_dir: Path,
-              n_samples: int, epochs: int, batch_size: int) -> None:
+              n_samples: int, epochs: int, batch_size: int, cond: str = "sum1") -> None:
     """Gate: mede tempo/VRAM/param antes de comprometer GPU em CV longa."""
     folds = load_folds()
     keys = set(folds["folds"][0]["train_keys"][:6]) | set(folds["folds"][0]["val_keys"][:3])
@@ -265,8 +337,9 @@ def run_smoke(path: str, branch: str, device: str, out_dir: Path,
     print(f"[smoke {path}] {len(cts)} amostras, classes={np.bincount(y).tolist()}")
 
     n_val = max(1, len(cts) // 5)
-    tr_ds = make_dataset(path, cts[n_val:], y[n_val:], branch)
-    va_ds = make_dataset(path, cts[:n_val], y[:n_val], branch)
+    cond_stats = fit_standardization_stats(cts[n_val:]) if (path == "C" and cond == "standardized") else None
+    tr_ds = make_dataset(path, cts[n_val:], y[n_val:], branch, cond=cond, cond_stats=cond_stats)
+    va_ds = make_dataset(path, cts[:n_val], y[:n_val], branch, cond=cond, cond_stats=cond_stats)
 
     model = build_model(path, len(REAL_ALGORITHMS), branch).to(device)
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -307,7 +380,7 @@ def run_smoke(path: str, branch: str, device: str, out_dir: Path,
 
 def run_cv(path: str, branch: str, device: str, out_dir: Path,
            epochs: int, batch_size: int, hp: dict | None = None,
-           max_train: int | None = None) -> None:
+           max_train: int | None = None, cond: str = "sum1") -> None:
     folds = load_folds()
     for fold_spec in folds["folds"]:
         fi = fold_spec["fold"]
@@ -320,8 +393,10 @@ def run_cv(path: str, branch: str, device: str, out_dir: Path,
         print(f"  treino={len(cts_tr)} val={len(cts_va)} "
               f"(~{len(cts_tr) * 65552 / 1e9:.1f} GB de CT em RAM no treino)")
 
-        tr_ds = make_dataset(path, cts_tr, y_tr, branch)
-        va_ds = make_dataset(path, cts_va, y_va, branch)
+        cond_stats = (fit_standardization_stats(cts_tr)
+                     if (path == "C" and cond == "standardized") else (0.0, 1.0))
+        tr_ds = make_dataset(path, cts_tr, y_tr, branch, cond=cond, cond_stats=cond_stats)
+        va_ds = make_dataset(path, cts_va, y_va, branch, cond=cond, cond_stats=cond_stats)
         model = build_model(path, len(REAL_ALGORITHMS), branch, hp).to(device)
         n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
@@ -333,7 +408,8 @@ def run_cv(path: str, branch: str, device: str, out_dir: Path,
         )
         logits = predict_logits(model, va_ds, device, batch_size)
         lat = extract_latents(model, cts_va, CONTROLLED_LEN if branch == "controlado"
-                              else MAX_LEN_FULL, latent_mode(path), device, batch_size)
+                              else MAX_LEN_FULL, latent_mode(path), device, batch_size,
+                              cond=cond, cond_stats=cond_stats)
 
         report_eval(
             run_id=f"{DATASET_ID}_4class", caminho=path, modelo=f"CNN{path}" if path != "E" else "Transformer",
@@ -347,6 +423,7 @@ def run_cv(path: str, branch: str, device: str, out_dir: Path,
                 "latent_effective_rank_95": effective_rank(lat),
                 "latent_dim": int(lat.shape[1]), "hp": hp or {},
                 "n_train_samples": len(cts_tr), "max_train_cap": max_train,
+                "cond": cond,
             },
         )
         _save_latents(out_dir, path, branch, f"fold{fi}", lat, sid_va, kid_va, y_va)
@@ -363,13 +440,14 @@ def run_cv(path: str, branch: str, device: str, out_dir: Path,
         # problema: dentro de um fold, treino e validação passam pela MESMA
         # rede, então o espaço latente é consistente.
         lat_tr = extract_latents(model, cts_tr, CONTROLLED_LEN if branch == "controlado"
-                                 else MAX_LEN_FULL, latent_mode(path), device, batch_size)
+                                 else MAX_LEN_FULL, latent_mode(path), device, batch_size,
+                                 cond=cond, cond_stats=cond_stats)
         _save_latents(out_dir, path, branch, f"fold{fi}_train", lat_tr, sid_tr, kid_tr, y_tr)
 
 
 def run_final(path: str, branch: str, device: str, out_dir: Path,
               epochs: int, batch_size: int, hp: dict | None = None,
-              max_train: int | None = None) -> None:
+              max_train: int | None = None, cond: str = "sum1") -> None:
     """
     Modelo final: trainval completo -> teste. 3 seeds só no braço
     controlado (primário); no cru, seed 7 apenas.
@@ -392,8 +470,10 @@ def run_final(path: str, branch: str, device: str, out_dir: Path,
     cts_tv, y_tv, sid_tv, kid_tv = load_cts(tv_keys, REAL_ALGORITHMS, branch,
                                             max_samples=max_train)
     cts_te, y_te, sid_te, kid_te = load_cts(te_keys, REAL_ALGORITHMS, branch)
-    tr_ds = make_dataset(path, cts_tv, y_tv, branch)
-    te_ds = make_dataset(path, cts_te, y_te, branch)
+    cond_stats = (fit_standardization_stats(cts_tv)
+                 if (path == "C" and cond == "standardized") else (0.0, 1.0))
+    tr_ds = make_dataset(path, cts_tv, y_tv, branch, cond=cond, cond_stats=cond_stats)
+    te_ds = make_dataset(path, cts_te, y_te, branch, cond=cond, cond_stats=cond_stats)
     n_epochs = _epochs_from_cv(path, branch, out_dir, default=epochs)
 
     seeds = FINAL_SEEDS if branch == "controlado" else [SEED_MODEL]
@@ -408,7 +488,8 @@ def run_final(path: str, branch: str, device: str, out_dir: Path,
         )
         logits = predict_logits(model, te_ds, device, batch_size)
         lat_te = extract_latents(model, cts_te, CONTROLLED_LEN if branch == "controlado"
-                                 else MAX_LEN_FULL, latent_mode(path), device, batch_size)
+                                 else MAX_LEN_FULL, latent_mode(path), device, batch_size,
+                                 cond=cond, cond_stats=cond_stats)
         report_eval(
             run_id=f"{DATASET_ID}_4class", caminho=path,
             modelo=f"CNN{path}" if path != "E" else "Transformer",
@@ -422,6 +503,7 @@ def run_final(path: str, branch: str, device: str, out_dir: Path,
                 "latent_effective_rank_95": effective_rank(lat_te),
                 "latent_dim": int(lat_te.shape[1]), "hp": hp or {},
                 "n_train_samples": len(cts_tv), "max_train_cap": max_train,
+                "cond": cond,
             },
         )
         _save_latents(out_dir, path, branch, f"final_s{seed}", lat_te, sid_te, kid_te, y_te)
@@ -431,7 +513,8 @@ def run_final(path: str, branch: str, device: str, out_dir: Path,
         # partição trainval->teste usada por A, em vez de misturar com
         # latentes de uma rede diferente (ver correção do Caminho D).
         lat_tv = extract_latents(model, cts_tv, CONTROLLED_LEN if branch == "controlado"
-                                 else MAX_LEN_FULL, latent_mode(path), device, batch_size)
+                                 else MAX_LEN_FULL, latent_mode(path), device, batch_size,
+                                 cond=cond, cond_stats=cond_stats)
         _save_latents(out_dir, path, branch, f"final_s{seed}_trainval",
                       lat_tv, sid_tv, kid_tv, y_tv)
 
@@ -505,6 +588,12 @@ def main() -> None:
                         "de 13-16GB. O valor usado é registrado no relatório.")
     p.add_argument("--hp-json", default=None,
                    help="JSON com a config vencedora do hpsearch (modo cv/final).")
+    p.add_argument("--cond", default="sum1", choices=list(COND_VARIANTS),
+                   help="Variante de condicionamento do Caminho C (06 Fase 7). "
+                        "Ignorado para B/E. Com --mode smoke e --path C, "
+                        "IGNORADO: as 4 variantes rodam todas e a vencedora é "
+                        "impressa (rode de novo com --cond=<vencedora> para "
+                        "hpsearch/cv/final).")
     args = p.parse_args()
 
     epochs = args.epochs if args.epochs is not None else (3 if args.mode == "smoke" else 30)
@@ -520,18 +609,21 @@ def main() -> None:
               "para GPU (Kaggle T4 / Colab). Use só para smoke.")
 
     t0 = time.perf_counter()
-    if args.mode == "smoke":
+    if args.mode == "smoke" and args.path == "C":
+        run_smoke_cnn2d_conditioning(args.branch, args.device, out_dir,
+                                     args.smoke_samples, epochs, args.batch_size)
+    elif args.mode == "smoke":
         run_smoke(args.path, args.branch, args.device, out_dir,
-                  args.smoke_samples, epochs, args.batch_size)
+                  args.smoke_samples, epochs, args.batch_size, cond=args.cond)
     elif args.mode == "hpsearch":
         run_hpsearch(args.path, args.branch, args.device, out_dir,
                      epochs, args.batch_size, args.n_configs)
     elif args.mode == "cv":
         run_cv(args.path, args.branch, args.device, out_dir, epochs,
-               args.batch_size, hp, max_train=args.max_train_samples)
+               args.batch_size, hp, max_train=args.max_train_samples, cond=args.cond)
     else:
         run_final(args.path, args.branch, args.device, out_dir, epochs,
-                  args.batch_size, hp, max_train=args.max_train_samples)
+                  args.batch_size, hp, max_train=args.max_train_samples, cond=args.cond)
     print(f"\nConcluído em {(time.perf_counter() - t0) / 60:.1f}min — {out_dir}")
 
 
