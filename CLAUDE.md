@@ -22,16 +22,24 @@ resultados, catálogo de scripts/testes e pendências conhecidas:
 **`docs/analise_completa/`** (gerado 2026-08-16; ver `README.md` daquela pasta
 antes de assumir que este arquivo ou `CONTEXTO_ARTIGO.md` estão 100% atuais).
 
-**Experimento v2 (planejado 2026-08-21, implementação em andamento):** 4
-algoritmos (Ascon-AEAD128 corrigido p/ `ascon128av13`, GIFT-COFB,
-Grain-128AEAD, Schwaemm256-128) + AES-ECB como controle, dataset encadeado de
-150k (80% texto/20% imagem), 6 caminhos (A–F: +Transformer hierárquico, +meta-
-classificador), features ampliadas (NIST SP 800-22 completo), seletor
-redesenhado, RNG de geração CTR_DRBG (SP 800-90A). Plano completo:
-**`docs/plano_experimento_v2/`** (ver `06_implementacao_passo_a_passo.md` para
-o estado fase-a-fase). **Fase 1 (fundações criptográficas) concluída
-2026-08-21:** os 4 algoritmos LWC + CTR_DRBG estão implementados e validados
-por KAT/CAVP oficial (182/182 testes passando).
+**Experimento v2 (planejado 2026-08-21, código completo em 2026-08-22 —
+falta EXECUTAR, não implementar):** 4 algoritmos (Ascon-AEAD128 corrigido
+p/ `ascon128av13`, GIFT-COFB, Grain-128AEAD, Schwaemm256-128) + AES-ECB +
+PRNG como controles, dataset encadeado real de **180.000 amostras**
+(300 chaves × 100 slots × 6 "algoritmos", 80% texto/20% imagem, **gerado e
+validado — veredicto PASS**), 6 caminhos (A–F: +Transformer hierárquico,
++meta-classificador), features ampliadas (NIST SP 800-22 completo, 641
+dimensões medidas), seletor redesenhado, RNG de geração CTR_DRBG
+(SP 800-90A). Plano completo: **`docs/plano_experimento_v2/`** — ver
+`README.md` daquela pasta para o estado atual e
+`07_runbook_execucao.md` para a sequência exata de comandos.
+**Todo o código dos 6 caminhos + extração de features + consolidação
+estatística (BH-FDR, McNemar+Bonferroni, estratificação de erro) está
+implementado e testado (232/232 testes).** Pendente: rodar a extração de
+features nas 180k amostras reais (~20h por braço) e os Caminhos B/C/E em
+GPU (Kaggle/Colab) — ver `06_implementacao_passo_a_passo.md` para o
+estado fase-a-fase e `05_execucao_riscos_pendencias.md` §5.6–5.7 para os
+bugs encontrados e corrigidos numa auditoria de aderência.
 
 ---
 
@@ -66,6 +74,19 @@ python scripts/generate_2class_dataset.py   # gerar dataset Ascon vs GIFT-COFB
 python scripts/run_experiment_2class.py     # treinar os 4 caminhos ML
 python scripts/run_experiment_60k_cv.py     # cross-validation no dataset 60K
 python scripts/validate_all_datasets.py     # checa apenas existência+manifest de 2 datasets legados hardcoded
+```
+
+### Experimento v2 (180k, 6 caminhos) — ver `docs/plano_experimento_v2/07_runbook_execucao.md`
+
+```bash
+python scripts/generate_5class_v2.py            # dataset (já rodado — 180k amostras, PASS)
+python scripts/validate_5class_v2.py            # validação (já rodado — PASS)
+python scripts/extract_features_v2.py --branch controlado --shard 0 --n-shards 6  # 1 de N shards
+python scripts/run_v2_caminho_a.py --analysis pairs --branch controlado  # Caminho A (clássicos)
+python scripts/run_v2_caminhos_bce.py --path C --mode smoke --branch controlado  # B/C/E (GPU)
+python scripts/run_v2_caminho_d.py --branch controlado         # híbrido
+python scripts/run_v2_caminho_f.py --branch controlado         # meta-classificador
+python scripts/consolidate_v2.py                                # BH-FDR + McNemar + estratificação
 ```
 
 ⚠️ Os checks reais de χ², nonces, compressão e decrypt spot-check (protocolo descrito
@@ -135,9 +156,9 @@ Plaintexts e chaves NÃO ficam no parquet final — ficam em `data/interim/` só
 - Fontes C de referência (Ascon/GIFT-COFB/Grain/Sparkle) vivem em pastas irmãs na raiz (`ascon-c/`, `gift-cofb/`, `grain-128aead/`, `sparkle/`), todas gitignored — vendorizadas localmente, não fazem parte do histórico do repo.
 
 ### `src/features/`
-- **extractor.py** — `CiphertextFeatureExtractor`: orquestra 6 famílias → vetor 307D.
-- **families/** — Uma classe por família (histogram, entropy, ngrams, autocorrelation, complexity, frequency).
-- **selector.py** — `LWCFeatureSelector`: pipeline MI → mRMR (define o conjunto final) → Boruta (diagnóstico de estabilidade, não filtra mais o resultado — mudança de 2026-08, motivada pelo Boruta colapsando o experimento principal para 1 feature; ver `docs/analise_completa/02_features_e_selecao.md`). Deve ser fitado **somente no treino de cada fold**.
+- **extractor.py** — `CiphertextFeatureExtractor`: orquestra as famílias registradas em `_FAMILY_FUNCS` → vetor de features. **v1: 6 famílias, 307D. v2: 12 famílias (+ nist_sts, moments, hamming, spectral_welch, bitblock, tag_region), 641D medido** — usado pelo `scripts/extract_features_v2.py`, não pelo `extract_dataset()` legado (que ainda carrega o parquet inteiro em memória — seguro só para os datasets pequenos do v1).
+- **families/** — Uma classe por família. v1: histogram, entropy, ngrams, autocorrelation, complexity, frequency. v2 acrescenta: nist_sts (suíte NIST SP 800-22 completa, 25 features), moments, hamming (peso de Hamming — representação da réplica XGB-LGBM), spectral_welch, bitblock, tag_region.
+- **selector.py** — `LWCFeatureSelector`: pipeline z-score → VT → MI → mRMR (define o conjunto final) → Boruta (diagnóstico de estabilidade, não filtra mais o resultado — mudança de 2026-08, motivada pelo Boruta colapsando o experimento principal para 1 feature; ver `docs/analise_completa/02_features_e_selecao.md`). O estágio z-score (Stage 0) foi adicionado no v2 para corrigir o VT descartando o histograma por viés de escala absoluta. Deve ser fitado **somente no treino de cada fold**.
 
 **Famílias de features (307D total):**
 
@@ -155,8 +176,10 @@ Plaintexts e chaves NÃO ficam no parquet final — ficam em `data/interim/` só
 - **cnn1d.py** — `CiphertextCNN1D`: Embedding(256, embed_dim) → 3×[Conv1D+BN+ReLU+MaxPool] → GlobalAvgPool → `[LATENT]` → Dropout → FC. Método `extract_latent(x)` obrigatório. Para `max_len≥16384` (CT completo, 65552 bytes), o 1º bloco usa kernel=8/stride=4 em vez de kernel=3/stride=1.
 - **cnn2d.py** — `CiphertextCNN2D`: 3×[Conv2D+BN+ReLU+MaxPool] → GlobalAvgPool → `[LATENT]` → FC. Não usar pesos pré-treinados. Representação de entrada canônica (`ciphertext_to_image.py::bytes_to_cooccurrence`): mapa de co-ocorrência de bigramas 256×256, CT completo; o reshape linear 32×32 (`ciphertext_to_image`) é legado, mantido só para experimentos antigos.
 - **cnn_trainer.py** / **cnn2d_trainer.py** — Trainers do protocolo legado (key-holdout simples, sem CV). O treino de produção no dataset 60k usa a infraestrutura em `hybrid.py` (`train_cnn`/`train_cnn_fixed`, com checkpoint por época e resume).
-- **ciphertext_to_image.py** — `bytes_to_cooccurrence` (canônica, 256×256) + `ciphertext_to_image` (legado, reshape linear 32×32).
-- **hybrid.py** — Implementado: `HybridExtractor`/`HybridConfig` concatenam [307D] + [latent CNN1D 512D] + [latent CNN2D 128D] = 947D → RF/XGB. Runner: `scripts/run_hybrid_60k.py`.
+- **ciphertext_to_image.py** — `bytes_to_cooccurrence` (canônica, 256×256) + `ciphertext_to_image` (reshape linear; legado no v1 com 32×32, mas reaproveitado no v2 com `image_size=256` como representação da réplica E05 — payload completo, não mais só experimentos antigos). v2: `COND_VARIANTS` (sum1/raw/log1p/standardized) + `bytes_to_cooccurrence_conditioned`/`fit_standardization_stats` — as 3 variantes de condicionamento do Caminho C v2.
+- **hybrid.py** — Implementado: `HybridExtractor`/`HybridConfig` concatenam [307D] + [latent CNN1D 512D] + [latent CNN2D 128D] = 947D → RF/XGB (v1). Runner: `scripts/run_hybrid_60k.py`. `train_cnn`/`train_cnn_fixed`/`extract_latents`/`CiphertextCoocDataset` são reaproveitados pelo v2 (`run_v2_caminhos_bce.py`). `_NUM_WORKERS` do DataLoader é 0 no Windows (4 no Linux/GPU) — `num_workers>0` com múltiplos DataLoaders em sequência no mesmo processo trava/derruba de forma reprodutível no Windows.
+- **transformer1d.py** (v2) — `HierarchicalByteTransformer`: Caminho E, atenção hierárquica (janela local + global) sobre bytes crus, com patch embedding (não 1 token/byte — inviável em memória). Contribuição própria, não réplica do E20.
+- **transformer_e20.py** / **e20_classifier.py** (v2) — `E20FeatureFilter` (filtro F + RFE) + `TransformerE20`/`E20Classifier`: réplica FIEL do E20 (Yuan et al.) — Transformer sobre ~8 features NIST+entropia pré-filtradas, não sobre bytes crus. Roda dentro do Caminho A.
 
 ### `src/eval/`
 - **metrics.py** — `compute_metrics()`: F1-macro, balanced accuracy, bootstrap CI (seed=42), ECE, McNemar test.

@@ -108,7 +108,7 @@ dataset secundário de 1KB.
 
 **Aceite da fase:** `pytest tests/ -v` inteiro verde — **182/182 passando**. ✅
 
-## FASE 2 — Features novas
+## FASE 2 — Features novas ✅ CONCLUÍDA (todas as sub-fases)
 
 ### 2.1 Suíte NIST SP 800-22 (15 testes, nível de bit) ✅ CONCLUÍDA (2026-08-21)
 
@@ -184,11 +184,16 @@ dataset secundário de 1KB.
   viés de estimador declarado no relatório.
 - Fronteira via `ABYTES` do wrapper — nunca offset fixo.
 
-### 2.4 Benchmark de extração — **GATE da Fase 4** ✅ RODADO (2026-08-21, 20 amostras)
+### 2.4 Benchmark de extração — **GATE da Fase 4** ✅ CONCLUÍDA E OTIMIZADA (2026-08-22)
 
-`scripts/benchmark_extraction_v2.py` — números reais sobre CTs de 65.552
-bytes do dataset v1 (`reports/v2/benchmark_extracao.md`, gitignored —
-reprodutível a qualquer momento):
+**Estado final, pós-otimização (medido em dados reais, não estimado):**
+extração completa = **1,69 s/amostra** (era 5,9 s/amostra na primeira
+rodada, tabela abaixo) — **~121h de CPU serial** para as 180k amostras,
+ou **~20h com 6 processos paralelos** (ver `scripts/extract_features_v2.py`
+e `07_runbook_execucao.md` Etapa 3). Bem abaixo do teto de 48h
+paralelizado do critério de aceite original.
+
+**Tabela original (2026-08-21, 20 amostras, antes da otimização):**
 
 | Família | ms/amostra | Horas projetadas (180k, serial) |
 |---|---|---|
@@ -199,30 +204,31 @@ reprodutível a qualquer momento):
 | demais (histogram/entropy/autocorr/frequency/hamming/tag_region) | <4 | ~0,01–0,17 cada |
 | **TOTAL (serial, 1 processo)** | — | **249,5h** |
 
-**Dois pontos concentram >95% do custo:**
-- `nist_sts` (205,8h): já reduzido de uma estimativa >100s/amostra (>5000h
-  projetadas) para ~4-5s/amostra por três rodadas de otimização
-  (vetorização do template matching, vetorização de approximate
-  entropy/serial, numba no Berlekamp-Massey) — ver Fase 2.1. Custo
-  residual é inerente à suíte (15 testes estatísticos reais por amostra).
-- `complexity` (37,2h) — **não otimizado nesta sessão, risco já registrado
-  no plano original (§5.2):** `lz_complexity` (LZ76) é O(n²) na
-  implementação atual (`src/features/families/complexity.py::_lz76`),
-  cara em CTs de 64KB. Já existia no v1 sem problema reportado (60k
-  amostras rodaram); o benchmark sistemático da Fase 2.4 é o que agora
-  quantifica o custo formalmente pela primeira vez.
+**Otimização aplicada (2026-08-22), guiada por perfilamento repetido, não
+pela tabela acima:** um novo perfilamento por teste individual (não só por
+família) revelou que o custo de `nist_sts` estava concentrado em dois
+pontos específicos que a tabela por família escondia:
+- **Non-overlapping Template Matching** (2,13s de 4,1s do `nist_sts`):
+  fazia uma varredura de comparação por template (154 templates). Reescrito
+  para calcular o valor inteiro de cada janela deslizante uma vez por
+  comprimento de template (7 comprimentos), reaproveitado entre os 154 —
+  **2,13s → 0,067s (32x)**.
+- **Binary Matrix Rank** (0,77s): eliminação gaussiana pura-Python do
+  `nistrng`. Reimplementada com `numba.njit`, validada idêntica —
+  **0,77s → 0,004s (190x)**.
+- `nist_sts` total: **4,1s → 0,80s (5,2x)**.
+- `complexity`/LZ76 (0,56s): **testado e rejeitado** um `numba.njit` pelo
+  algoritmo de Kaspar-Schuster — validado equivalente mas **mais lento**
+  (0,64s vs 0,56s) que o operador `in` do Python sobre `bytes` (que usa
+  `memmem` em C vetorizado). Mantida a versão original; continua sendo o
+  maior custo isolado restante. Acelerar de verdade exigiria um algoritmo
+  O(n log n) com autômato de sufixos — não se justificou no orçamento,
+  decisão registrada, não pendente.
 
-**Total projetado (249,5h serial) fica ABAIXO do teto de 48h de CPU
-paralelizada** do critério de aceite quando dividido pelo nº de cores via
-`joblib.Parallel(n_jobs=-1)` (ex.: 8 cores ⇒ ~31h; 16 cores ⇒ ~15,6h) —
-**não** dispara automaticamente a exigência de otimizar antes de prosseguir.
-Ainda assim, decisão de investir em otimizar `_lz76` (ex.: numba, ou
-substituir por um LZ76 O(n log n) baseado em suffix automaton) antes da
-Fase 4 **fica para o Nycolas** — não é automática (mesmo critério já
-registrado no docstring do script).
+Detalhe completo: commit `603233a`.
 
-**Aceite:** custo total projetado conhecido — ✅ 249,5h serial / ~15-31h
-paralelizado estimado, abaixo do teto de 48h.
+**Aceite:** ✅ custo real medido — 1,69s/amostra, ~121h serial / ~20h com
+6 processos paralelos, abaixo do teto de 48h.
 
 ## FASE 3 — Seletor v2 ✅ CONCLUÍDA (2026-08-21)
 
@@ -255,7 +261,7 @@ paralelizado estimado, abaixo do teto de 48h.
 - **Aceite:** ✅ testes verdes (14/14 no módulo, 215/215 no projeto
   inteiro), incluindo o multiclasse.
 
-## FASE 4 — Dataset v2
+## FASE 4 — Dataset v2 ✅ CONCLUÍDA (2026-08-21) — 180k amostras, veredicto PASS
 
 ### 4.1 Corpus de imagens ✅ CONCLUÍDA (2026-08-21)
 
@@ -350,7 +356,7 @@ não mostram esse desvio).
 **Aceite:** ✅ validação PASS; relatório salvo em
 `data/processed/keyholdout_5class_v2_validation.json`.
 
-## FASE 5 — Infraestrutura de relato e estatística
+## FASE 5 — Infraestrutura de relato e estatística ✅ CONCLUÍDA
 
 ### 5.1 Função única de relato (obrigatória — regra de ouro 7)
 - `src/eval/reporting.py::report_eval(run_id, caminho, modelo, braço, fold,
@@ -404,49 +410,65 @@ nenhum erro). Corrigido com múltiplas repetições por ponto de grade +
 - Positivo sobrevivente ⇒ **replicação**: dataset novo só do par (chaves
   novas, offset 7000), teste único pré-especificado. Só então "achado".
 
-## FASE 6 — Caminho A (CPU) — `scripts/run_v2_caminho_a.py`
+## FASE 6 — Caminho A (CPU) — `scripts/run_v2_caminho_a.py` ✅ CÓDIGO COMPLETO (2026-08-22) — execução pendente
 
-1. **Modelos:** RF(500), SVM-RBF (busca 4×4 numa **subamostra de 24k
-   estratificada por chave**, CV interna **group-aware** com folds de
+1. ✅ **Modelos:** RF(500), SVM-RBF (busca **group-aware** com folds de
    `v2_folds.json`; fit final com o par vencedor no fold completo),
-   LinearSVC, XGBoost(500), LR. Sem Dummy.
-2. **Stacking próprio:** `StackingClassifier` com `cv=` splits pré-computados
-   por chave (nunca a CV interna default, que vaza entre chaves).
-3. **Réplicas:** HKNNRF (KNN+RF); XGB-LGBM sobre **peso de Hamming**
-   (dependência LightGBM); Transformer-E20 (filtro F + RFE → ~8 features
-   NIST+entropia → encoder raso; RFE só aqui).
+   LinearSVC, XGBoost(500), LR. Sem Dummy. **Desvio de parâmetro registrado:**
+   a busca do SVM usa subamostra de **6.000** (não 24k) e grade **2×2=4**
+   combos (não 4×4=16) — `run_v2_caminho_a.py::SVM_SEARCH_SUBSAMPLE`/
+   `SVM_GRID`, decisão de custo documentada no próprio código; não é
+   esquecimento, é redução deliberada além do que o plano original previa.
+2. ✅ **Stacking próprio:** `StackingClassifier` com `cv=` splits
+   pré-computados por `GroupKFold(key_id)` (nunca a CV interna default, que
+   vaza entre chaves). SVM interno do stacking usa hiperparâmetros fixos
+   (não repete a busca por split interno — custo multiplicaria).
+3. ✅ **Réplicas:** HKNNRF (`StackingClassifier(KNN, RF)`); XGB-LGBM sobre
+   **peso de Hamming** (`VotingClassifier(XGBoost, LightGBM)`, dependência
+   LightGBM instalada); Transformer-E20 (filtro F + RFE → 8 features
+   NIST+entropia → `src/models/transformer_e20.py`). Operacionalização de
+   cada réplica documentada no código-fonte (os artigos originais não
+   expõem arquitetura interna suficiente para reprodução literal).
 4. **Análises:** 4-classes (sem ECB/PRNG) + 6 pares binários + controle
    AES-ECB vs Ascon + **PRNG binário contra cada um dos 4** (grupos = key_id
    sintético) + braço `shuffled` (bytes de cada CT permutados via DRBG, seed
    por amostra; repete o 4-classes e os 6 pares; expectativa: features
    sequenciais colapsam, histograma sobrevive).
-5. **Ablações:** key-holdout on/off — o braço "off" é split **aleatório por
-   amostra** (ignora `key_id`), estratificado por classe, com os mesmos
+5. ✅ **Ablações:** key-holdout on/off — o braço "off" é split **aleatório
+   por amostra** (ignora `key_id`), estratificado por classe, com os mesmos
    tamanhos de treino/teste do split por chave e seed 42; roda em dois
    recortes (4-classes e controle ECB — ECB é o controle positivo do método;
    expectativa nos íntegros = sem diferença); truncamento (cru × controlado;
-   tag features sempre do cru); famílias (all / clássicas-307 / NIST /
-   por-família / top-1).
+   tag features sempre do cru); famílias (`--analysis family_ablation`:
+   all / clássicas / NIST / por-família / top-1 — nome "clássicas-307" é
+   histórico, a contagem real hoje é ligeiramente diferente).
 6. **Curvas de aprendizado:** RF e LR com 30/60/120/240 chaves de treino,
    teste fixo — 4 pontos, por chave (nunca por amostra).
 7. **Sanity `len_ct`:** uma rodada com `len_ct` incluído de propósito, braço
    cru ⇒ pares com Grain devem dar F1 > 0,95; senão, bug no encanamento.
    Rodada claramente rotulada `sanity`, fora das tabelas de resultado.
-8. **Permutação:** nulo empírico (20×, esquemas by_key e within_key) como no
-   v1, sobre o braço primário.
+8. ✅ **Permutação:** nulo empírico (20×, esquemas by_key e within_key,
+   generalizado para N classes) como no v1, sobre o braço primário
+   (`--analysis permutation`).
 - **Aceite:** tudo via `report_eval`; predições por amostra persistidas;
   tabelas gerada com precisão/recall por classe; `reports/v2/caminho_a/`.
 
-## FASE 7 — Caminhos B e C (GPU) — gate: smoke test
+## FASE 7 — Caminhos B e C (GPU) — gate: smoke test ✅ CÓDIGO COMPLETO (2026-08-22) — execução pendente (GPU)
 
-- `scripts/smoke_test_v2.py` (adaptar o existente): 500 amostras, 2 folds,
-  3 épocas, 4 classes — mede tempo/VRAM por arquitetura antes das rodadas.
+- ✅ `scripts/run_v2_caminhos_bce.py --mode smoke` (não um `smoke_test_v2.py`
+  separado — implementado como modo do runner unificado B/C/E): amostra
+  reduzida, mede tempo/época/VRAM/parâmetros e EXTRAPOLA o custo da CV
+  completa antes das rodadas.
 - **B (CNN1D):** CT completo, primeiro bloco kernel 8/stride 4, batch 8;
   braços cru E controlado (o truncamento importa aqui).
-- **C (CNN2D):** co-ocorrência; **condicionamento — rodar as 3 variantes
-  (×65536, log1p, padronização por canal) no smoke/1 fold, congelar a
-  vencedora por `val_loss` e só ela vai à CV completa.** Réplica E05: reshape
-  do **payload (65.536 bytes → 256×256)**, só subconjunto imagem, secundária.
+- ✅ **C (CNN2D):** co-ocorrência; **condicionamento — as 4 variantes
+  (sum1 histórico + raw/"×65536" + log1p + padronização por canal) rodam
+  automaticamente no smoke (`--path C --mode smoke`), que imprime a
+  vencedora por `val_loss` para o operador escolher via `--cond` nas
+  rodadas seguintes** (`src/models/ciphertext_to_image.py::COND_VARIANTS`).
+  ✅ Réplica E05: reshape do **payload (65.536 bytes → 256×256)**, só
+  subconjunto imagem, secundária (`--path E05`, ignora `--mode`, não
+  alimenta o Caminho D).
 - **HP search (C3):** 8–12 configs random (lr, filtros, blocos, dropout) ×
   **1 fold** por arquitetura; registrar tudo; se alguma config sair do acaso
   na validação, ela entra na CV completa.
@@ -459,7 +481,7 @@ nenhum erro). Corrigido com múltiplas repetições por ponto de grade +
   caminho (vale também para a Fase 8).
 - **Aceite:** smoke verde antes de CV; braços e variantes documentados.
 
-## FASE 8 — Caminho E (Transformer hierárquico)
+## FASE 8 — Caminho E (Transformer hierárquico) ✅ CÓDIGO COMPLETO (2026-08-22) — execução pendente (GPU)
 
 - `src/models/transformer1d.py`: embedding de byte (+posicional) → janelas de
   1024 (64 janelas) → encoder local (2 camadas) → pooling por janela →
@@ -470,32 +492,50 @@ nenhum erro). Corrigido com múltiplas repetições por ponto de grade +
 - Mesmo protocolo de B/C: smoke → HP search 1 fold → CV → final 3 seeds.
 - **Aceite:** treina no orçamento medido pelo smoke; latente persistido.
 
-## FASE 9 — Caminho D (híbrido, 4 representações)
+## FASE 9 — Caminho D (híbrido, 4 representações) ✅ CÓDIGO COMPLETO (2026-08-22) — execução pendente (depende de 7/8)
 
-- Estender `HybridExtractor`: [~400D clássicas | 512 CNN1D | 128 CNN2D |
-  ~256 Transformer]. Latentes das redes com seed principal (7). Seletor
-  (mi_pool/mrmr ampliados) dentro do fold → RF/XGBoost.
+- ✅ `scripts/run_v2_caminho_d.py`: [641D clássicas | latente CNN1D | latente
+  CNN2D | latente Transformer]. Seletor dentro do fold → RF/XGBoost.
+  **Correção de alinhamento (achada em auditoria de aderência, 2026-08-22):**
+  a primeira versão treinava o híbrido concatenando latentes de VALIDAÇÃO de
+  folds diferentes — cada fold treina uma rede B/C/E independente (init e
+  dados diferentes), então esses espaços latentes não são o mesmo espaço
+  vetorial. Corrigido: treino e validação de cada fold do D usam sempre a
+  rede DAQUELE MESMO fold (`run_v2_caminhos_bce.py` agora salva também os
+  latentes do TREINO de cada fold, não só da validação).
 - **Aceite:** dimensões conferidas por assert; mesmo protocolo de relato.
 
-## FASE 10 — Caminho F (meta-classificador)
+## FASE 10 — Caminho F (meta-classificador) ✅ CÓDIGO COMPLETO (2026-08-22) — execução pendente (depende de 6/9)
 
-- Insumo: parquet de predições **out-of-fold** da Fase 5 (nunca refits).
-  Assert: partição de folds idêntica entre A–E.
-- Calibração (B6): Platt/isotônica fitada na validação de cada fold —
-  **dependência dura** para LinearSVC/SVM (sem `predict_proba` nativo).
-  ECE antes/depois reportado.
-- Meta-modelo: LR sobre o vetor de probabilidades concatenado; CV por chave;
-  teste final com modelos-base treinados no trainval.
-- Regra registrada: F "significativo" com todos os bases no acaso ⇒
-  investigar vazamento antes de reportar como achado.
+- ✅ `scripts/run_v2_caminho_f.py`. Insumo: parquet de predições
+  **out-of-fold** da Fase 5 (nunca refits). Assert: nenhuma chave de teste
+  aparece na matriz de treino do meta-modelo.
+- ✅ Calibração isotônica fitada inteiramente na matriz OOF (nunca no
+  teste) — **dependência dura** para LinearSVC/SVM (sem `predict_proba`
+  nativo). ECE antes/depois reportado.
+- ✅ Meta-modelo: LR sobre 100% do OOF; **teste final com modelos-base
+  treinados no trainval, avaliado UMA VEZ no teste canônico.**
+  **Correção (achada em auditoria de aderência, 2026-08-22):** a primeira
+  versão dividia as chaves de trainval 80/20 e chamava isso de "teste",
+  nunca tocando o holdout real, e descartava as predições `final` de A-E —
+  o F não era comparável a A-E na consolidação. Corrigido.
+- ✅ Regra registrada: F "significativo" com todos os bases no acaso ⇒
+  investigar vazamento antes de reportar como achado — script imprime a
+  bandeira automaticamente quando o caso ocorre.
 - **Aceite:** matriz OOF reconstruída só do parquet (prova de auditabilidade).
 
-## FASE 11 — Consolidação
+## FASE 11 — Consolidação ✅ CÓDIGO COMPLETO (2026-08-22) — execução pendente (depende de 6-10)
 
-1. Aplicar BH-FDR à tabela exploratória completa; tabela final com p brutos e
-   q-values.
-2. Estratificação de erro (por chave, por `plaintext_source`) para qualquer
-   resultado acima do acaso.
+1. ✅ `scripts/consolidate_v2.py`: BH-FDR aplicado à tabela exploratória
+   completa (nunca à família primária); tabela final com p brutos e
+   q-values. Deduplica os `.jsonl` append-only mantendo o registro mais
+   recente por célula.
+2. ✅ Estratificação de erro (por chave, por `plaintext_source`) para
+   qualquer resultado acima do acaso — reconstrói as predições por amostra
+   e reporta bandeira automática se o erro correlacionar com o estrato.
+   Também ✅ McNemar pareado + Bonferroni entre todos os pares de modelos
+   de cada comparação primária (existia em `metrics.py`, nenhum script
+   chamava até esta rodada).
 3. Consolidado geral (estilo `AUC_ROC_consolidado.md` do v1) + parecer:
    família primária respondida, exploratórios sobreviventes, replicações
    necessárias.

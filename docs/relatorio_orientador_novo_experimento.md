@@ -1,8 +1,16 @@
 # Relatório — Planejamento do novo experimento (v2)
 
-**Atualizado em 2026-08-21.** Resumo das decisões para a próxima rodada
+**Atualizado em 2026-08-22.** Resumo das decisões para a próxima rodada
 experimental — a ação e o motivo de cada uma. O plano técnico completo está em
 `docs/plano_experimento_v2/`.
+
+**Status de implementação (2026-08-22):** todo o código dos 6 caminhos, da
+extração de features e da consolidação estatística está pronto e testado
+(232/232 testes). O dataset real (180.000 amostras) já foi gerado e
+validado. O que falta agora é EXECUTAR — extração de features nas 180k
+amostras (~20h por braço, em CPU local) e os Caminhos B/C/E em GPU
+(Kaggle/Colab). Sequência de comandos:
+`docs/plano_experimento_v2/07_runbook_execucao.md`.
 
 ---
 
@@ -129,17 +137,24 @@ demonstrações empíricas; o relato imediato e uniforme atende ao pedido de
 explicitação de métricas e evita a perda de resultados ocorrida na rodada
 anterior.
 
-## 7. Recomendações em avaliação (ainda não confirmadas)
+## 7. Itens que estavam "em avaliação" — resolvidos desde então
 
-Da revisão técnica do plano, os itens mais relevantes pendentes de decisão:
-controles negativos (classe de bytes aleatórios + embaralhamento de bytes de
-criptogramas reais — conecta com o ponto 3 da reunião de 27/07); análise par a
-par das 6 combinações de algoritmos além do agregado; cálculo de poder
-estatístico a priori; hipótese primária declarada com correção de múltiplas
-comparações; pré-registro do plano de análise; variante do Ascon com rodadas
-reduzidas como calibração de sensibilidade; publicação do dataset como
-benchmark público. Lista completa em
-`docs/plano_experimento_v2/05_execucao_riscos_pendencias.md`.
+Da lista original de recomendações pendentes: **controles negativos**
+(PRNG + embaralhamento de bytes), **análise par a par** das 6 combinações,
+**poder estatístico a priori** e **hipótese primária com correção de
+múltiplas comparações (BH-FDR)** foram todos aprovados e já estão
+implementados. O poder a priori já rodou com número real: o desenho
+detecta ~1 ponto percentual acima do acaso (4 classes) com 80% de poder —
+um resultado nulo não será "ausência de evidência" sem qualificação, será
+"efeito, se existir, é menor que ~1 p.p.".
+
+**Ainda em aberto** (não decidido, aguarda o senhor): pré-registro formal
+do plano de análise (rejeitado nesta fase); variante do Ascon com rodadas
+reduzidas (rejeitada); publicação do dataset como benchmark público via
+Zenodo (proposta pendente de conversa). Lista completa e demais
+pendências técnicas menores (bootstrap por cluster de chave, baseline de
+features aleatórias, ordem de corte de GPU) em
+`docs/plano_experimento_v2/05_execucao_riscos_pendencias.md` §P.
 
 ## 8. Pendências de redação (deferidas para depois do experimento)
 

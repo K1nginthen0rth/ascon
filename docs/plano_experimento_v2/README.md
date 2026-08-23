@@ -56,18 +56,32 @@ e em `docs/analise_critica_plano_v2.md`.
 | [02_features_e_selecao.md](02_features_e_selecao.md) | Suíte completa de features (com fontes) e o redesenho do seletor |
 | [03_classificadores.md](03_classificadores.md) | Os 6 Caminhos (A–F), correção do SVM, réplicas da literatura |
 | [04_protocolo_metricas_validacao.md](04_protocolo_metricas_validacao.md) | Split/CV, ablações, métricas, regra de relato obrigatória, controles, arcabouço estatístico |
-| [05_execucao_riscos_pendencias.md](05_execucao_riscos_pendencias.md) | Ordem de execução, orçamento computacional, riscos, pendências |
+| [05_execucao_riscos_pendencias.md](05_execucao_riscos_pendencias.md) | Ordem de execução, orçamento computacional, riscos, pendências, **estado real de implementação e auditoria de aderência (§5.6–5.7)** |
 | **[06_implementacao_passo_a_passo.md](06_implementacao_passo_a_passo.md)** | **Documento-norte executável** — fases, arquivos, critérios de aceite. Incorpora a rodada final de decisões (2026-08-21) e a análise crítica. **Em divergência com 01–05, o 06 prevalece.** |
+| **[07_runbook_execucao.md](07_runbook_execucao.md)** | **Sequência exata de comandos** para rodar o experimento do dataset ao consolidado — o que falta é EXECUTAR, não implementar (ver estado abaixo). |
 
-## Ordem de execução (proposta, por dependência)
+## Estado atual (2026-08-22) — todo o código está implementado
 
-1. **Wrappers + RNG** — corrigir Ascon (`ascon128av13`), implementar Grain-128AEAD e Sparkle (KAT cada), implementar CTR_DRBG (validação CAVP)
-2. **Dataset** — geração encadeada 5 algoritmos + script de validação v2
-3. **Caminho A** (CPU) + ablações baratas (key-holdout on/off, truncamento do Grain, famílias de features)
-4. **Caminhos B e C** (GPU)
-5. **Caminho E** (Transformer — maior risco de engenharia, depois de B/C estabilizarem a infra)
-6. **Caminho D** (híbrido — depende dos latentes de B, C e E)
-7. **Caminho F** (meta-classificador — depende de A–E)
+**Fases 0–11 têm código completo e testado (232/232 testes).** O gargalo
+agora é rodar, não escrever: a extração de features nas 180k amostras
+reais leva ~20h por braço (`controlado`/`cru`/`shuffled`), e os Caminhos
+B/C/E dependem de sessão de GPU (Kaggle/Colab). Sequência exata de
+comandos: [07_runbook_execucao.md](07_runbook_execucao.md). Detalhe
+fase-a-fase do que está pronto: [06_implementacao_passo_a_passo.md](06_implementacao_passo_a_passo.md)
+(status em cada cabeçalho de Fase) e a auditoria de aderência em
+[05 §5.6–5.7](05_execucao_riscos_pendencias.md#56-achados-da-implementação-20260821-22).
+
+## Ordem de execução (ver 07 para os comandos exatos)
+
+1. **Wrappers + RNG** ✅ — Ascon (`ascon128av13`), Grain-128AEAD, Sparkle (KAT cada), CTR_DRBG (CAVP)
+2. **Dataset** ✅ — 180k amostras geradas e validadas (PASS)
+3. **Extração de features** ⏳ — código pronto, ~20h/braço, ainda não rodada
+4. **Caminho A** (CPU) ✅ código pronto — clássicos + stacking + 3 réplicas + ablações + permutação
+5. **Caminhos B e C** (GPU) ✅ código pronto — inclui as 3 variantes de condicionamento da CNN2D e a réplica E05
+6. **Caminho E** (Transformer) ✅ código pronto
+7. **Caminho D** (híbrido) ✅ código pronto — latentes alinhados por fold
+8. **Caminho F** (meta-classificador) ✅ código pronto — avalia no teste canônico
+9. **Consolidação** ✅ código pronto — BH-FDR, McNemar+Bonferroni, estratificação de erro
 
 ## Valores de referência (pré-calculados, para não diagnosticar errado)
 
