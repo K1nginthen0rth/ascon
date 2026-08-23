@@ -41,15 +41,24 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
-from sklearn.ensemble import RandomForestClassifier  # noqa: E402
+from lightgbm import LGBMClassifier  # noqa: E402
+from sklearn.ensemble import (  # noqa: E402
+    RandomForestClassifier, StackingClassifier, VotingClassifier,
+)
 from sklearn.linear_model import LogisticRegression  # noqa: E402
+from sklearn.metrics import f1_score  # noqa: E402
 from sklearn.model_selection import GroupKFold  # noqa: E402
+from sklearn.neighbors import KNeighborsClassifier  # noqa: E402
+from sklearn.pipeline import Pipeline  # noqa: E402
 from sklearn.preprocessing import StandardScaler  # noqa: E402
 from sklearn.svm import SVC, LinearSVC  # noqa: E402
 from xgboost import XGBClassifier  # noqa: E402
 
 from src.eval.reporting import report_eval  # noqa: E402
+from src.features.families.nist_sts import _feature_keys as _nist_feature_keys  # noqa: E402
 from src.features.selector import LWCFeatureSelector, SelectorConfig  # noqa: E402
+from src.models.e20_classifier import E20Classifier  # noqa: E402
+from src.models.transformer_e20 import E20FeatureFilter  # noqa: E402
 
 DATASET_ID = "keyholdout_5class_v2"
 PROCESSED = REPO_ROOT / "data" / "processed"
@@ -253,6 +262,218 @@ def get_proba(model, X: np.ndarray) -> np.ndarray | None:
 
 
 # ---------------------------------------------------------------------------
+# Stacking próprio + réplicas nomeadas da literatura (03_classificadores.md §3.1)
+# ---------------------------------------------------------------------------
+
+def _group_cv_splits(groups: np.ndarray, n_splits: int = 3, seed: int = SEED_MODEL):
+    """
+    Splits pré-computados por chave, para o parâmetro `cv=` do
+    `StackingClassifier`. A CV interna DEFAULT do sklearn (KFold simples)
+    vazaria entre chaves — a mesma chave apareceria no treino e na
+    validação interna do stacking, inflando as probabilidades OOF que
+    alimentam o `final_estimator`. `n_splits` é limitado ao nº de chaves
+    disponíveis (grupos pequenos demais caem para o mínimo viável).
+    """
+    n_groups = len(np.unique(groups))
+    k = max(2, min(n_splits, n_groups))
+    return list(GroupKFold(n_splits=k).split(np.zeros(len(groups)), groups=groups))
+
+
+def build_stacking_model(seed: int, groups: np.ndarray) -> StackingClassifier:
+    """
+    `StackingClassifier` sobre os 5 modelos-base do Caminho A (RF,
+    LinearSVC, XGBoost, LR + um SVM-RBF com hiperparâmetros FIXOS —
+    repetir a busca de HP dentro de cada fold interno do stacking
+    multiplicaria o custo da busca pelo nº de splits internos, e o plano
+    não pede isso; documentado aqui como simplificação deliberada).
+    LinearSVC/LR entram como `Pipeline(StandardScaler, modelo)` porque o
+    `StackingClassifier` passa a MESMA matriz de entrada (não escalada)
+    para todos os estimadores-base.
+    """
+    estimators = [
+        ("rf", RandomForestClassifier(n_estimators=500, n_jobs=-1,
+                                      random_state=seed, class_weight="balanced")),
+        ("linearsvc", Pipeline([("scaler", StandardScaler()),
+                                ("clf", LinearSVC(C=1.0, random_state=seed,
+                                                  max_iter=5000, dual="auto"))])),
+        ("xgb", XGBClassifier(n_estimators=500, max_depth=6, learning_rate=0.1,
+                              random_state=seed, n_jobs=-1, eval_metric="mlogloss",
+                              tree_method="hist")),
+        ("lr", Pipeline([("scaler", StandardScaler()),
+                         ("clf", LogisticRegression(max_iter=2000, random_state=seed))])),
+        ("svm", SVC(kernel="rbf", C=1.0, gamma="scale", random_state=seed)),
+    ]
+    return StackingClassifier(
+        estimators=estimators, final_estimator=LogisticRegression(max_iter=2000, random_state=seed),
+        cv=_group_cv_splits(groups, seed=seed), n_jobs=-1,
+    )
+
+
+def build_hknnrf_model(seed: int, groups: np.ndarray) -> StackingClassifier:
+    """
+    Réplica HKNNRF (Yuan et al. 2022, PeerJ CS) — KNN+RF.
+
+    **Operacionalização (o artigo não expõe a arquitetura interna de
+    combinação, só o nome):** KNN e RF como estimadores-base de um
+    `StackingClassifier` com combinador logístico — um padrão comum de
+    "híbrido KNN-RF" na literatura de ensemble (KNN contribui estrutura
+    local de vizinhança, RF contribui decisão de ensemble). Documentado
+    aqui explicitamente para a seção de métodos: esta é NOSSA
+    operacionalização do nome "HKNNRF", não uma reprodução linha a linha
+    de uma arquitetura publicada em detalhe.
+    """
+    estimators = [
+        ("knn", Pipeline([("scaler", StandardScaler()),
+                          ("clf", KNeighborsClassifier(n_neighbors=5))])),
+        ("rf", RandomForestClassifier(n_estimators=500, n_jobs=-1,
+                                      random_state=seed, class_weight="balanced")),
+    ]
+    return StackingClassifier(
+        estimators=estimators, final_estimator=LogisticRegression(max_iter=2000, random_state=seed),
+        cv=_group_cv_splits(groups, seed=seed), n_jobs=-1,
+    )
+
+
+def build_xgblgbm_model(seed: int) -> VotingClassifier:
+    """
+    Réplica XGB-LGBM (Zhao et al. 2023, IEEE Access) — o maior resultado
+    real entre compostos clássicos da RSL (90,5%). A representação que
+    define o estudo é a distribuição de PESO DE HAMMING por byte (11
+    features, `hamming.py`) — não o vetor de 641 features. Sem essa
+    restrição de representação, a réplica testaria só o classificador
+    deles, não a técnica publicada. Ver `_hamming_columns`.
+
+    **Operacionalização:** votação suave (probabilidades médias) entre
+    XGBoost e LightGBM — o artigo nomeia os dois algoritmos sem detalhar
+    o mecanismo exato de combinação.
+    """
+    return VotingClassifier(
+        estimators=[
+            ("xgb", XGBClassifier(n_estimators=300, max_depth=6, learning_rate=0.1,
+                                  random_state=seed, n_jobs=-1, eval_metric="mlogloss",
+                                  tree_method="hist")),
+            ("lgbm", LGBMClassifier(n_estimators=300, max_depth=6, learning_rate=0.1,
+                                    random_state=seed, n_jobs=-1, verbosity=-1)),
+        ],
+        voting="soft", n_jobs=-1,
+    )
+
+
+def _hamming_columns(df: pd.DataFrame) -> list[str]:
+    cols = [f"hamming_weight_{k}" for k in range(9)] + [
+        "hamming_weight_mean", "hamming_weight_var"]
+    return [c for c in cols if c in df.columns]
+
+
+def _e20_columns(df: pd.DataFrame) -> list[str]:
+    """Colunas NIST+entropia disponíveis no dataframe — representação da
+    réplica E20 (filtro F + RFE reduz isso a ~8 antes do Transformer)."""
+    nist_cols = [c for c in _nist_feature_keys() if c in df.columns]
+    entropy_cols = [c for c in
+                    ["shannon_entropy", "chi2_statistic", "chi2_pvalue", "chi2_dof"]
+                    if c in df.columns]
+    return nist_cols + entropy_cols
+
+
+def run_literature_replicas(
+    tr: pd.DataFrame, va: pd.DataFrame, y_tr: np.ndarray, y_va: np.ndarray,
+    X_tr: np.ndarray, X_va: np.ndarray, run_id: str, braco: str, fold_tag,
+    classes: list[str], out_dir, n_bootstrap: int, seed: int = SEED_MODEL,
+) -> None:
+    """
+    Roda o Stacking próprio + as 3 réplicas nomeadas sobre um fold já
+    preparado (mesmos X_tr/X_va — features selecionadas — do restante do
+    Caminho A). Chamado uma vez por fold de CV e uma vez no modelo final.
+    """
+    groups_tr = tr["key_id"].to_numpy()
+    labels = list(range(len(classes)))
+
+    # --- Stacking próprio ---
+    t0 = time.perf_counter()
+    stack = build_stacking_model(seed, groups_tr)
+    stack.fit(X_tr, y_tr)
+    report_eval(
+        run_id=run_id, caminho="A", modelo="Stacking",
+        braco=braco, fold=fold_tag,
+        y_true=y_va, y_pred=stack.predict(X_va), y_proba=get_proba(stack, X_va),
+        sample_ids=va["sample_id"].tolist(), key_ids=va["key_id"].tolist(),
+        class_names=classes, labels=labels, out_dir=out_dir, n_bootstrap=n_bootstrap,
+        extra={"train_time_s": round(time.perf_counter() - t0, 1),
+               "base_estimators": [e[0] for e in stack.estimators]},
+    )
+
+    # --- HKNNRF (Yuan et al. 2022) ---
+    t0 = time.perf_counter()
+    hknnrf = build_hknnrf_model(seed, groups_tr)
+    hknnrf.fit(X_tr, y_tr)
+    report_eval(
+        run_id=run_id, caminho="A", modelo="HKNNRF_replica",
+        braco=braco, fold=fold_tag,
+        y_true=y_va, y_pred=hknnrf.predict(X_va), y_proba=get_proba(hknnrf, X_va),
+        sample_ids=va["sample_id"].tolist(), key_ids=va["key_id"].tolist(),
+        class_names=classes, labels=labels, out_dir=out_dir, n_bootstrap=n_bootstrap,
+        extra={"train_time_s": round(time.perf_counter() - t0, 1),
+               "referencia": "Yuan et al. 2022, PeerJ CS",
+               "operacionalizacao": "StackingClassifier(KNN, RF) + LR"},
+    )
+
+    # --- XGB-LGBM sobre peso de Hamming (Zhao et al. 2023) ---
+    ham_cols = _hamming_columns(tr)
+    if ham_cols:
+        X_tr_h = tr[ham_cols].to_numpy(np.float64)
+        X_va_h = va[ham_cols].to_numpy(np.float64)
+        t0 = time.perf_counter()
+        xgblgbm = build_xgblgbm_model(seed)
+        xgblgbm.fit(X_tr_h, y_tr)
+        report_eval(
+            run_id=run_id, caminho="A", modelo="XGB_LGBM_hamming_replica",
+            braco=braco, fold=fold_tag,
+            y_true=y_va, y_pred=xgblgbm.predict(X_va_h), y_proba=get_proba(xgblgbm, X_va_h),
+            sample_ids=va["sample_id"].tolist(), key_ids=va["key_id"].tolist(),
+            class_names=classes, labels=labels, out_dir=out_dir, n_bootstrap=n_bootstrap,
+            extra={"train_time_s": round(time.perf_counter() - t0, 1),
+                   "referencia": "Zhao et al. 2023, IEEE Access",
+                   "representacao": ham_cols, "n_features": len(ham_cols)},
+        )
+    else:
+        print("  [aviso] colunas de peso de Hamming ausentes — pulando réplica XGB-LGBM")
+
+    # --- Transformer sobre features NIST (réplica fiel do E20) ---
+    e20_cols = _e20_columns(tr)
+    if len(e20_cols) >= 8:
+        X_tr_n = tr[e20_cols].to_numpy(np.float64)
+        X_va_n = va[e20_cols].to_numpy(np.float64)
+        # Imputação simples de NaN (p-values inelegíveis viram 0,5 — mesma
+        # convenção neutra do módulo nist_sts.py) antes do filtro F/RFE,
+        # que não aceitam NaN.
+        X_tr_n = np.nan_to_num(X_tr_n, nan=0.5)
+        X_va_n = np.nan_to_num(X_va_n, nan=0.5)
+
+        t0 = time.perf_counter()
+        e20_filter = E20FeatureFilter(n_features_out=8, random_state=seed)
+        e20_filter.fit(X_tr_n, y_tr, feature_names=e20_cols)
+        Xr_tr = e20_filter.transform(X_tr_n)
+        Xr_va = e20_filter.transform(X_va_n)
+
+        e20_model = E20Classifier(n_features=Xr_tr.shape[1], n_classes=len(classes), seed=seed)
+        e20_model.fit(Xr_tr, y_tr)
+        report_eval(
+            run_id=run_id, caminho="A", modelo="Transformer_E20_replica",
+            braco=braco, fold=fold_tag,
+            y_true=y_va, y_pred=e20_model.predict(Xr_va), y_proba=e20_model.predict_proba(Xr_va),
+            sample_ids=va["sample_id"].tolist(), key_ids=va["key_id"].tolist(),
+            class_names=classes, labels=labels, out_dir=out_dir, n_bootstrap=n_bootstrap,
+            extra={"train_time_s": round(time.perf_counter() - t0, 1),
+                   "referencia": "Yuan et al. 2026 (E20)",
+                   "features_selecionadas": e20_filter.selected_names_,
+                   "n_params": e20_model.model_.count_parameters()},
+        )
+    else:
+        print(f"  [aviso] só {len(e20_cols)} colunas NIST+entropia disponíveis "
+              f"(<8) — pulando réplica Transformer-E20")
+
+
+# ---------------------------------------------------------------------------
 # Núcleo: uma análise = subconjunto de classes + CV + teste final
 # ---------------------------------------------------------------------------
 
@@ -267,6 +488,7 @@ def run_analysis(
     keyholdout: bool = True,
     n_bootstrap: int = 1000,
     models_subset: list[str] | None = None,
+    run_replicas: bool = True,
 ) -> None:
     """
     Roda uma análise completa: 5-fold CV por chave + modelo final no
@@ -275,6 +497,12 @@ def run_analysis(
     `keyholdout=False` é o braço da ablação: split ALEATÓRIO POR AMOSTRA
     (ignora `key_id`), estratificado por classe, com os mesmos tamanhos
     do split por chave e seed 42 — ver 04_protocolo §4.2.
+
+    `run_replicas=True` (default) também roda o Stacking próprio e as 3
+    réplicas nomeadas da literatura (HKNNRF, XGB-LGBM/Hamming,
+    Transformer-E20) — ver `run_literature_replicas`. Desligado nas
+    ablações/controles onde eles não agregam informação nova (ex.:
+    `learning_curve`, `sanity_lenct`) para não multiplicar o custo.
     """
     sub = df[df["algorithm"].isin(classes)].copy()
     if sub.empty:
@@ -405,6 +633,13 @@ def run_analysis(
                        "best_params": svm_params, "n_features_used": int(X_tr.shape[1])},
             )
 
+        if run_replicas:
+            run_literature_replicas(
+                tr, va, y_tr, y_va, X_tr, X_va,
+                run_id=f"{DATASET_ID}_{analysis_name}", braco=braco, fold_tag=fold_idx,
+                classes=classes, out_dir=out_dir, n_bootstrap=n_bootstrap,
+            )
+
     # ---------------- Modelo final: trainval completo -> teste ----------------
     print(f"\n  --- modelo final (trainval completo -> teste) ---")
     X_tv_raw = trainval_df[feat_cols].to_numpy(dtype=np.float64)
@@ -452,6 +687,13 @@ def run_analysis(
                    "best_params": svm_params},
         )
 
+    if run_replicas:
+        run_literature_replicas(
+            trainval_df, test_df, y_tv, y_te, X_tv, X_te,
+            run_id=f"{DATASET_ID}_{analysis_name}", braco=braco, fold_tag="final",
+            classes=classes, out_dir=out_dir, n_bootstrap=n_bootstrap,
+        )
+
 
 # ---------------------------------------------------------------------------
 # Análises
@@ -469,11 +711,17 @@ def analysis_pairs(df, folds, branch, out_dir, **kw) -> None:
 
 
 def analysis_ecb_control(df, folds, branch, out_dir, **kw) -> None:
+    # Réplicas desligadas por padrão: controles positivos/negativos servem
+    # para validar o protocolo (o ECB deve separar quase perfeitamente),
+    # não para sustentar a alegação "a técnica de Fulano dá X" — isso é
+    # papel de `pairs`/`4class`, onde as réplicas ficam ligadas.
+    kw.setdefault("run_replicas", False)
     run_analysis(df, folds, "control_ecb_vs_ascon",
                  ["AES-128-ECB", "Ascon-AEAD128"], branch, out_dir, **kw)
 
 
 def analysis_prng_control(df, folds, branch, out_dir, **kw) -> None:
+    kw.setdefault("run_replicas", False)
     for algo in REAL_ALGORITHMS:
         name = f"control_prng_vs_{algo.split('-')[0]}"
         run_analysis(df, folds, name, ["PRNG", algo], branch, out_dir, **kw)
@@ -483,7 +731,7 @@ def analysis_sanity_lenct(df, folds, branch, out_dir, **kw) -> None:
     """Sanity de encanamento: inclui `len_ct` DE PROPÓSITO. Pares com
     Grain (len_ct 65.544 vs 65.552) devem dar F1 > 0,95 — se não derem,
     há bug no pipeline. Rodada fora das tabelas de resultado."""
-    kw = {**kw, "include_len_ct": True, "models_subset": ["RandomForest"]}
+    kw = {**kw, "include_len_ct": True, "models_subset": ["RandomForest"], "run_replicas": False}
     run_analysis(df, folds, "sanity_lenct_grain_vs_ascon",
                  ["Grain-128AEAD", "Ascon-AEAD128"], branch, out_dir, **kw)
 
@@ -532,6 +780,216 @@ def analysis_learning_curve(df, folds, branch, out_dir, **kw) -> None:
             )
 
 
+# ---------------------------------------------------------------------------
+# Ablação de famílias de features (06 Fase 6.5)
+# ---------------------------------------------------------------------------
+
+# Famílias originais do v1 (307D antes da adição do lzma a `complexity`,
+# ver `docs/analise_completa/`). O nome "clássicas-307" é histórico — a
+# contagem real hoje é ligeiramente diferente; o que importa é o CONJUNTO
+# de famílias, não o número exato no nome.
+_CLASSICAS_FAMILIES = [
+    "histogram", "entropy", "ngrams", "autocorrelation", "complexity", "frequency",
+]
+
+
+def _family_column_sets(available_cols: set[str]) -> dict[str, list[str]]:
+    """Nome da família -> lista de colunas dessa família presentes no
+    parquet de features. Deriva os nomes chamando cada função de família
+    uma vez (mesma técnica usada para listar as 641 features em outros
+    pontos do projeto), em vez de manter uma lista hardcoded que
+    dessincronizaria da implementação real."""
+    from src.features.extractor import _FAMILY_FUNCS
+    dummy_ct = bytes(range(256)) * 256  # 65.536 bytes — evita casos de borda
+    out: dict[str, list[str]] = {}
+    for name, fn in _FAMILY_FUNCS.items():
+        keys = list(fn(dummy_ct).keys())
+        out[name] = [k for k in keys if k in available_cols]
+    return out
+
+
+def _fit_predict_rf_on_columns(
+    tr: pd.DataFrame, va: pd.DataFrame, y_tr: np.ndarray, y_va: np.ndarray,
+    cols: list[str], seed: int = SEED_MODEL,
+) -> RandomForestClassifier:
+    """RF fixo, SEM seletor — a ablação de famílias mede quanto sinal existe
+    NA FAMÍLIA INTEIRA, não depois de outra rodada de seleção por cima
+    (que dominaria o resultado em famílias pequenas, tipo Hamming com 11
+    colunas, e mascararia a comparação entre famílias)."""
+    model = RandomForestClassifier(n_estimators=500, n_jobs=-1, random_state=seed,
+                                   class_weight="balanced")
+    model.fit(tr[cols].to_numpy(np.float64), y_tr)
+    return model
+
+
+def analysis_family_ablation(df, folds, branch, out_dir, classes=None, n_bootstrap=1000,
+                             keyholdout=True, **_ignored) -> None:
+    """
+    Ablação de famílias (all / clássicas / NIST / por-família / top-1) —
+    06 Fase 6.5. Modelo fixo (RF) por corte, para isolar o efeito da
+    REPRESENTAÇÃO, não do classificador. Roda no braço `controlado`
+    (ou o passado), sobre o cenário 4-classes por default.
+    """
+    classes = classes or REAL_ALGORITHMS
+    sub = df[df["algorithm"].isin(classes)].copy()
+    label_map = {c: i for i, c in enumerate(classes)}
+    sub["y"] = sub["algorithm"].map(label_map)
+
+    all_cols = set(feature_columns(sub))
+    family_cols = _family_column_sets(all_cols)
+    classicas_cols = [c for fam in _CLASSICAS_FAMILIES for c in family_cols.get(fam, [])]
+    nist_cols = family_cols.get("nist_sts", [])
+
+    cuts: dict[str, list[str]] = {"all": sorted(all_cols), "classicas": classicas_cols,
+                                  "NIST": nist_cols}
+    for fam, cols in family_cols.items():
+        if cols:
+            cuts[f"familia_{fam}"] = cols
+
+    test_keys = set(folds["test_keys"])
+    test_mask = sub["key_id"].isin(test_keys) if keyholdout else None
+    if not keyholdout:
+        rng = np.random.default_rng(SEED_SPLIT)
+        n_test = int(sub["key_id"].isin(test_keys).sum())
+        test_mask = pd.Series(np.zeros(len(sub), dtype=bool), index=sub.index)
+        idx = rng.choice(len(sub), size=min(n_test, len(sub)), replace=False)
+        test_mask.iloc[idx] = True
+    trainval_df = sub[~test_mask]
+    test_df = sub[test_mask]
+    y_tv, y_te = trainval_df["y"].to_numpy(), test_df["y"].to_numpy()
+
+    final_f1: dict[str, float] = {}
+    for cut_name, cols in cuts.items():
+        if not cols:
+            continue
+        print(f"\n  [ablação de famílias] corte='{cut_name}' ({len(cols)} colunas)")
+        model = _fit_predict_rf_on_columns(trainval_df, test_df, y_tv, y_te, cols)
+        y_pred = model.predict(test_df[cols].to_numpy(np.float64))
+        proba = model.predict_proba(test_df[cols].to_numpy(np.float64))
+        report = report_eval(
+            run_id=f"{DATASET_ID}_family_ablation", caminho="A",
+            modelo="RandomForest", braco=f"{branch}_familia_{cut_name}", fold="final",
+            y_true=y_te, y_pred=y_pred, y_proba=proba,
+            sample_ids=test_df["sample_id"].tolist(), key_ids=test_df["key_id"].tolist(),
+            class_names=classes, labels=list(range(len(classes))),
+            out_dir=out_dir, n_bootstrap=n_bootstrap,
+            extra={"cut": cut_name, "n_features": len(cols)},
+        )
+        final_f1[cut_name] = report.f1_macro
+
+    fam_only = {k: v for k, v in final_f1.items() if k.startswith("familia_")}
+    if fam_only:
+        top1_name = max(fam_only, key=fam_only.get)
+        print(f"\n  [ablação de famílias] TOP-1 (melhor família isolada): "
+              f"{top1_name} (F1-macro={fam_only[top1_name]:.4f})")
+        (out_dir / f"{DATASET_ID}_family_ablation_top1.json").write_text(
+            json.dumps({"top1_family": top1_name, "f1_macro": fam_only[top1_name],
+                       "all_families": fam_only}, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Teste de permutação — nulo empírico (06 Fase 6.8)
+# ---------------------------------------------------------------------------
+
+N_PERM = 20
+SEED_PERM = 101
+
+
+def _shuffle_by_key(rng: np.random.Generator, groups: np.ndarray,
+                    uniq_keys: np.ndarray, n_classes: int) -> np.ndarray:
+    """
+    Rótulo aleatório CONSTANTE dentro de cada chave (generalização
+    multi-classe do esquema do v1 — ver `run_ablation_fs_60k.py`). Mede o
+    F1 alcançável em chaves novas quando o modelo pode decorar a chave no
+    treino, mas isso não transfere ao holdout (chaves inéditas).
+    """
+    reps = len(uniq_keys) // n_classes + 1
+    lab = rng.permutation(np.tile(np.arange(n_classes), reps)[:len(uniq_keys)])
+    key2lab = dict(zip(uniq_keys, lab))
+    return np.array([key2lab[g] for g in groups])
+
+
+def _shuffle_within_key(rng: np.random.Generator, groups: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """Permuta os rótulos DENTRO de cada chave — nulo mais estrito: destrói
+    só a associação criptograma-algoritmo, preservando estrutura de grupos
+    e distribuição marginal dos atributos."""
+    y_shuf = y.copy()
+    for k in np.unique(groups):
+        m = groups == k
+        y_shuf[m] = rng.permutation(y[m])
+    return y_shuf
+
+
+def analysis_permutation(df, folds, branch, out_dir, classes=None, **_ignored) -> None:
+    """
+    Distribuição nula empírica do F1 (20 repetições, esquemas `by_key` e
+    `within_key`) — 06 Fase 6.8. Sobre o braço primário, cenário
+    4-classes por default. LR + XGBoost, mesmo par de modelos do v1.
+    """
+    classes = classes or REAL_ALGORITHMS
+    sub = df[df["algorithm"].isin(classes)].copy()
+    label_map = {c: i for i, c in enumerate(classes)}
+    sub["y"] = sub["algorithm"].map(label_map)
+    feat_cols = feature_columns(sub)
+
+    test_keys = set(folds["test_keys"])
+    trainval_df = sub[~sub["key_id"].isin(test_keys)]
+    test_df = sub[sub["key_id"].isin(test_keys)]
+
+    X_tv_raw = trainval_df[feat_cols].to_numpy(np.float64)
+    X_te_raw = test_df[feat_cols].to_numpy(np.float64)
+    y_tv = trainval_df["y"].to_numpy()
+    y_te = test_df["y"].to_numpy()
+    groups = trainval_df["key_id"].to_numpy()
+    uniq_keys = np.unique(groups)
+
+    sel = LWCFeatureSelector(_selector_config())
+    sel.fit(X_tv_raw, y_tv, feature_names=feat_cols)
+    X_tv, X_te = sel.transform(X_tv_raw), sel.transform(X_te_raw)
+    scaler = StandardScaler().fit(X_tv)
+    X_tv_s, X_te_s = scaler.transform(X_tv), scaler.transform(X_te)
+
+    rng = np.random.default_rng(SEED_PERM)
+    results: dict[str, dict] = {}
+    for scheme in ("by_key", "within_key"):
+        print(f"\n{'=' * 70}\nTESTE DE PERMUTAÇÃO — esquema '{scheme}' "
+              f"({N_PERM} repetições)\n{'=' * 70}")
+        null_f1: dict[str, list[float]] = {"LogisticRegression": [], "XGBoost": []}
+        for rep in range(N_PERM):
+            if scheme == "by_key":
+                y_shuf = _shuffle_by_key(rng, groups, uniq_keys, len(classes))
+            else:
+                y_shuf = _shuffle_within_key(rng, groups, y_tv)
+
+            lr = LogisticRegression(max_iter=2000, random_state=SEED_MODEL).fit(X_tv_s, y_shuf)
+            xg = XGBClassifier(n_estimators=500, max_depth=6, learning_rate=0.1,
+                               random_state=SEED_MODEL, n_jobs=-1, eval_metric="mlogloss",
+                               tree_method="hist").fit(X_tv, y_shuf)
+
+            f_lr = float(f1_score(y_te, lr.predict(X_te_s), average="macro", zero_division=0))
+            f_xg = float(f1_score(y_te, xg.predict(X_te), average="macro", zero_division=0))
+            null_f1["LogisticRegression"].append(f_lr)
+            null_f1["XGBoost"].append(f_xg)
+            print(f"  [perm {rep + 1:02d}/{N_PERM}] LR={f_lr:.4f}  XGB={f_xg:.4f}")
+
+        results[scheme] = {
+            m: {"mean": float(np.mean(v)), "std": float(np.std(v)),
+               "p2.5": float(np.percentile(v, 2.5)), "p97.5": float(np.percentile(v, 97.5)),
+               "max": float(np.max(v)), "values": [round(x, 4) for x in v]}
+            for m, v in null_f1.items()
+        }
+
+    out_path = out_dir / f"{DATASET_ID}_permutation_null.json"
+    out_path.write_text(
+        json.dumps({"n_perm": N_PERM, "seed": SEED_PERM, "classes": classes,
+                   "schemes": results}, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    print(f"\nNulo empírico salvo em {out_path}")
+
+
 ANALYSES = {
     "4class": analysis_4class,
     "pairs": analysis_pairs,
@@ -540,6 +998,9 @@ ANALYSES = {
     "sanity_lenct": analysis_sanity_lenct,
     "learning_curve": analysis_learning_curve,
 }
+ANALYSES["family_ablation"] = analysis_family_ablation
+ANALYSES["permutation"] = analysis_permutation
+
 
 
 def main() -> None:
@@ -564,6 +1025,10 @@ def main() -> None:
                         choices=list(_SELECTOR_PRESETS),
                         help="`pleno` = configuração oficial do plano; "
                              "`rapido` = só para validar encanamento/exploração.")
+    parser.add_argument("--skip-replicas", action="store_true",
+                        help="Desliga Stacking + as 3 réplicas da literatura "
+                             "(útil para exploração rápida; NUNCA no resultado oficial "
+                             "de 4class/pairs, onde elas sustentam a comparação com a RSL).")
     args = parser.parse_args()
 
     global _SELECTOR_PRESET
@@ -582,6 +1047,11 @@ def main() -> None:
         "n_bootstrap": args.n_bootstrap,
         "models_subset": args.models.split(",") if args.models else None,
     }
+    # Só força `run_replicas=False` quando pedido explicitamente — do
+    # contrário, cada análise decide seu próprio default (True em
+    # 4class/pairs, False em ecb_control/prng_control via `setdefault`).
+    if args.skip_replicas:
+        kw["run_replicas"] = False
 
     names = (["4class", "pairs", "ecb_control", "prng_control"]
              if args.analysis == "all" else [args.analysis])
