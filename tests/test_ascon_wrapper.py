@@ -27,10 +27,17 @@ from src.crypto.ascon_wrapper import AsconAEAD128, AuthenticationError
 # ---------------------------------------------------------------------------
 _KEY = bytes(range(16))           # 0x00 … 0x0F
 _NONCE = bytes(range(16, 32))     # 0x10 … 0x1F
-_KAT_PATH = (
+# KAT oficial. Preferimos a cópia VERSIONADA em `data/kat/` — as fontes C
+# de referência (`ascon-c/`) são gitignored, então num clone limpo o teste
+# falharia por arquivo ausente (achado na auditoria de 2026-08-23: 3 das 5
+# validações-âncora não eram reproduzíveis a partir do repositório).
+# Proveniência e SHA-256 de cada arquivo em `data/kat/README.md`.
+_KAT_VERSIONADO = Path(__file__).parent.parent / "data" / "kat" / "LWC_AEAD_KAT_ASCON128AV13.txt"
+_KAT_VENDORIZADO = (
     Path(__file__).parent.parent
     / "ascon-c" / "crypto_aead" / "ascon128av13" / "LWC_AEAD_KAT_128_128.txt"
 )
+_KAT_PATH = _KAT_VERSIONADO if _KAT_VERSIONADO.exists() else _KAT_VENDORIZADO
 
 
 # ---------------------------------------------------------------------------

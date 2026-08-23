@@ -34,10 +34,16 @@ from src.crypto.sparkle_wrapper import Schwaemm256_128
 # ---------------------------------------------------------------------------
 _KEY = bytes(range(16))       # 0x00 … 0x0F
 _NONCE = bytes(range(32))     # 0x00 … 0x1F (256 bits — o maior nonce do conjunto)
-_KAT_PATH = (
+# KAT oficial. Preferimos a cópia VERSIONADA em `data/kat/` — as fontes C
+# de referência são gitignored, então num clone limpo o teste falharia por
+# arquivo ausente (auditoria de 2026-08-23). Proveniência e SHA-256 em
+# `data/kat/README.md`.
+_KAT_VERSIONADO = Path(__file__).parent.parent / "data" / "kat" / "LWC_AEAD_KAT_SCHWAEMM256_128.txt"
+_KAT_VENDORIZADO = (
     Path(__file__).parent.parent
     / "sparkle" / "crypto_aead" / "schwaemm256128v2" / "LWC_AEAD_KAT_128_256.txt"
 )
+_KAT_PATH = _KAT_VERSIONADO if _KAT_VERSIONADO.exists() else _KAT_VENDORIZADO
 
 
 # ---------------------------------------------------------------------------

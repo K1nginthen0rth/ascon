@@ -33,10 +33,16 @@ from src.crypto.grain_wrapper import Grain128AEAD
 # ---------------------------------------------------------------------------
 _KEY = bytes(range(16))       # 0x00 … 0x0F
 _NONCE = bytes(range(12))     # 0x00 … 0x0B (96 bits — Grain usa nonce menor)
-_KAT_PATH = (
+# KAT oficial. Preferimos a cópia VERSIONADA em `data/kat/` — as fontes C
+# de referência são gitignored, então num clone limpo o teste falharia por
+# arquivo ausente (auditoria de 2026-08-23). Proveniência e SHA-256 em
+# `data/kat/README.md`.
+_KAT_VERSIONADO = Path(__file__).parent.parent / "data" / "kat" / "LWC_AEAD_KAT_GRAIN128AEAD.txt"
+_KAT_VENDORIZADO = (
     Path(__file__).parent.parent
     / "grain-128aead" / "NIST" / "ref" / "LWC_AEAD_KAT_128_96.txt"
 )
+_KAT_PATH = _KAT_VERSIONADO if _KAT_VERSIONADO.exists() else _KAT_VENDORIZADO
 
 
 # ---------------------------------------------------------------------------

@@ -52,6 +52,9 @@ OUT_CSV = REPORTS / "consolidado_v2.csv"
 
 PRIMARY_CAMINHO = "A"
 PRIMARY_BRANCH = "controlado"
+# Modelo OFICIAL da família primária — pré-declarado, não escolhido pelo
+# resultado. Ver `is_primary` para o porquê de existir um único modelo.
+PRIMARY_MODEL = "RandomForest"
 
 
 def chance_level(n_classes: int) -> float:
@@ -185,11 +188,31 @@ def apply_bh_fdr(df: pd.DataFrame, q: float = 0.05) -> pd.DataFrame:
 
 
 def is_primary(df: pd.DataFrame) -> pd.Series:
-    """Família primária: 6 pares par-a-par, Caminho A, braço controlado,
-    resultado FINAL (não fold de CV)."""
+    """
+    Família primária: **exatamente 6 testes** — os 6 pares par-a-par,
+    Caminho A, braço controlado, resultado FINAL, **e só o modelo oficial
+    (`PRIMARY_MODEL`)**.
+
+    O filtro por modelo é a correção de um problema real (auditoria de
+    2026-08-23): sem ele, a "família primária de 6 comparações" capturava
+    os 9 modelos de cada par (RF, LinearSVC, XGBoost, LR, SVM-RBF,
+    Stacking e as 3 réplicas) = **54 testes sem correção**. A α=0,05 isso
+    dá P(≥1 falso positivo) ≈ 94%, e um positivo primário dispara a
+    réplica obrigatória com chaves novas (offset 7000) — caro. Pior: todo
+    o argumento para NÃO corrigir a família primária é ela ser pequena e
+    pré-declarada, o que 54 testes não são.
+
+    **Por que RandomForest** (decidido 2026-08-23): é pré-declarado (não
+    escolhido olhando o resultado), é o modelo que o v1 usou como
+    referência, e manter UM teste por par preserva a validade da análise
+    de poder já rodada — o MDE de +1,02 p.p. foi calculado a α=0,05 para
+    um único teste. Os outros 8 modelos por par continuam sendo rodados e
+    reportados, mas na tabela exploratória, sob BH-FDR.
+    """
     return (
         (df["caminho"] == PRIMARY_CAMINHO)
         & (df["braco"] == PRIMARY_BRANCH)
+        & (df["modelo"] == PRIMARY_MODEL)
         & (df["run_id"].astype(str).str.contains("_pair_"))
         & (df["fold"] == "final")
     )
@@ -376,9 +399,16 @@ def main() -> None:
                 "`*_metrics.jsonl` de `report_eval` (fonte única de métricas).\n\n")
 
         f.write("## 1. Família primária (declarada antes de rodar)\n\n")
-        f.write("6 comparações par-a-par entre os 4 algoritmos, **Caminho A, "
-                "braço controlado**, F1-macro com IC 95% bootstrap. Sem correção "
-                "de múltiplas comparações: é a família primária, pré-declarada.\n\n")
+        f.write(f"6 comparações par-a-par entre os 4 algoritmos, **Caminho A, "
+                f"braço controlado, modelo `{PRIMARY_MODEL}`**, F1-macro com IC "
+                f"95% bootstrap. **Exatamente 6 testes** — um por par, com o "
+                f"modelo pré-declarado. Sem correção de múltiplas comparações: "
+                f"é a família primária, pequena e pré-declarada, e é essa "
+                f"pequenez que justifica não corrigir (com os 9 modelos de cada "
+                f"par seriam 54 testes e P(≥1 falso positivo) ≈ 94%). Os demais "
+                f"modelos de cada par (LinearSVC, XGBoost, LR, SVM-RBF, Stacking "
+                f"e as 3 réplicas) são rodados e reportados, mas na tabela "
+                f"exploratória abaixo, sob BH-FDR.\n\n")
         f.write(md_table(primary.sort_values("run_id"), cols_primary))
 
         f.write("\n## 2. Exploratório (BH-FDR, q=%.2f)\n\n" % args.q)
