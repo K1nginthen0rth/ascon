@@ -268,3 +268,56 @@ notavelmente a estratificação de erro, que detectou corretamente um
 viés de `plaintext_source` injetado deliberadamente num modelo de teste
 e não disparou falso-positivo no modelo sem esse viés. 232/232 testes
 do projeto passando. Detalhe completo nos commits `153a337` a `a808549`.
+
+## 5.8 Segunda auditoria de aderência (2026-08-23) — 2 bloqueadores de execução
+
+Uma auditoria independente rodou os testes, releu o código v2 contra os 7
+documentos e **reproduziu** os achados em vez de reportá-los por leitura.
+Cada um foi reconferido antes de aceitar. Dois eram bloqueadores — o
+experimento não rodaria até o fim:
+
+1. **Caminho F abortaria** assim que B/C/E rodassem no braço controlado.
+   O filtro de fold usava um conjunto fixo `{"final","final_seed7"}` dos
+   DOIS lados, mas o runner grava 3 seeds (7/107/207) — as duas extras
+   caíam no lado out-of-fold, e são predições sobre chaves de TESTE, então
+   o assert de vazamento derrubava o script. (O assert protegeu do
+   vazamento silencioso; o custo foi o F não rodar.) Corrigido com
+   predicados assimétricos: exclusão ampla, inclusão estrita.
+2. **`train_cnn` devolvia o modelo da última época, não o da melhor**,
+   sempre que retomasse de checkpoint — `best_state` não era gravado.
+   Kaggle/Colab dependem de retomada por limite de sessão, então isso
+   atingiria B, C e E, com o `best_epoch` do JSON (que define as épocas do
+   modelo final via `_epochs_from_cv`) apontando uma época diferente da
+   dos pesos efetivamente avaliados.
+
+**Metodológicos:** família primária tinha 54 testes em vez de 6 (ver
+04 §4.6 — resolvido declarando `RandomForest` como modelo oficial); braço
+`shuffled` não embaralhava as 8 features de tag, então o controle negativo
+preservava justamente a estrutura sequencial que existe para destruir;
+rodadas do braço `sintetico` (features aleatórias, validação de
+encanamento) entravam no denominador do BH-FDR; `--max-train-samples`
+cortava na ordem de leitura do parquet, colapsando 192 chaves para ~50 —
+diversidade de chave é o que o key-holdout existe para medir.
+
+**Menores:** `--cond` ignorado no `hpsearch`; `--models` não filtrava
+Stacking nem as réplicas; `--no-keyholdout` ignorado em silêncio pela
+permutação; 3 dos 5 KAT não versionados (clone limpo falhava — corrigido,
+ver `data/kat/README.md`); contagem de testes divergente em 3 documentos;
+custo de extração com 3 números diferentes (reconciliado para ~2,2
+s/amostra medido em CTs reais).
+
+**Causa comum da maioria:** os ~3.600 linhas dos runners v2 tinham ZERO
+cobertura de teste — os 232 testes cobriam cripto, features, seletor,
+modelos e relato, mas nenhum tocava `run_v2_*`, `consolidate_v2` ou
+`extract_features_v2`, e é exatamente onde todos os achados viviam. Criado
+`tests/test_v2_runners.py` (11 testes), um por bug corrigido. Total do
+projeto: **243 testes**.
+
+O que a auditoria confirmou estar correto: dataset com os 180.000
+registros, encadeamento sem inconsistência, decrypt 100/100, χ² e
+compressão separando o AES-ECB como esperado, `v2_folds.json` reconstruído
+de forma independente (240/60, 5 folds de 192/48, sem sobreposição), 641
+features com nomes estáveis e sem NaN, asserts de vazamento de A e D
+funcionando, e o Caminho A rodando ponta a ponta com os 9 modelos.
+
+Detalhe nos commits `d07ac6a`, `7528acd` e `fd2cd4f`.

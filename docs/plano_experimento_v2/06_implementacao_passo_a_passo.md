@@ -106,7 +106,7 @@ dataset secundário de 1KB.
   (não autogerado). Commit `e6be72c`.
 - **Aceite:** KAT 100% ✅; testes verdes ✅.
 
-**Aceite da fase:** `pytest tests/ -v` inteiro verde — **182/182 passando** (contagem à época da Fase 1; hoje o projeto tem 242 testes). ✅
+**Aceite da fase:** `pytest tests/ -v` inteiro verde — **182/182 passando** (contagem à época da Fase 1; hoje o projeto tem 243 testes). ✅
 
 ## FASE 2 — Features novas ✅ CONCLUÍDA (todas as sub-fases)
 

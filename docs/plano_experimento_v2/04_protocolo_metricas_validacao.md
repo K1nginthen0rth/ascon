@@ -88,6 +88,18 @@ sobrevivente ⇒ replicação com chaves novas — braço primário: **controlad
 decidido 2026-08-21, com o cru como análise reportável do artefato);
 item 2 ✅; item 3 ✅; item 4 ❌ (pré-registro rejeitado); itens 5, 6, 7 ✅.
 
+> **Precisão adicionada em 2026-08-23 (auditoria de aderência):** "6 pares
+> par-a-par" precisa nomear **um modelo oficial**, senão a família são
+> 6 pares × 9 modelos = **54 testes sem correção** (P(≥1 falso positivo)
+> ≈ 94%), e a justificativa para não corrigir — família pequena e
+> pré-declarada — deixa de valer. **Modelo oficial: `RandomForest`**
+> (`consolidate_v2.py::PRIMARY_MODEL`), pré-declarado, o mesmo de
+> referência do v1. Motivo de escolher UM modelo em vez de corrigir entre
+> os 9: a análise de poder já rodada (MDE +1,02 p.p.) foi calculada a
+> α=0,05 para um único teste; Bonferroni sobre 54 levaria α efetivo a
+> 0,00093 e a invalidaria. Os outros 8 modelos por par continuam sendo
+> rodados e reportados — na tabela exploratória, sob BH-FDR.
+
 1. **Hipótese primária declarada + correção de múltiplas comparações:** com 6
    pares × 6 caminhos × ~8 modelos + ablações, 200+ testes são esperados —
    ~10 "significativos" por puro acaso em α=0,05. Proposta: hipótese primária

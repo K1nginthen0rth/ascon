@@ -35,7 +35,7 @@ dimensões medidas), seletor redesenhado, RNG de geração CTR_DRBG
 `07_runbook_execucao.md` para a sequência exata de comandos.
 **Todo o código dos 6 caminhos + extração de features + consolidação
 estatística (BH-FDR, McNemar+Bonferroni, estratificação de erro) está
-implementado e testado (242/242 testes).** Pendente: rodar a extração de
+implementado e testado (243/243 testes).** Pendente: rodar a extração de
 features nas 180k amostras reais (~20h por braço) e os Caminhos B/C/E em
 GPU (Kaggle/Colab) — ver `06_implementacao_passo_a_passo.md` para o
 estado fase-a-fase e `05_execucao_riscos_pendencias.md` §5.6–5.7 para os
