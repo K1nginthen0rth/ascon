@@ -219,9 +219,9 @@ def main() -> None:
             "resultado nulo (F1-macro dentro do IC do acaso) não significa "
             "\"ausência de evidência\" — significa que um efeito verdadeiro do "
             "tamanho do MDE reportado acima teria sido detectado com a "
-            "probabilidade da coluna **Poder empírico no MDE** "
-            + " e ".join(f"({r['name']}: {r['empirical_power_at_mde']*100:.0f}%)"
-                         for r in results)
+            "probabilidade da coluna **Poder empírico no MDE**: "
+            + "; ".join(f"{r['name']} = {r['empirical_power_at_mde']*100:.0f}%"
+                        for r in results)
             + ". Efeitos menores que o MDE podem existir sem serem detectáveis "
             "nesta escala de amostra; essa é uma limitação declarada do desenho, "
             "não uma alegação de \"prova de ausência de diferença\".\n"

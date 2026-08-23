@@ -35,7 +35,7 @@ dimensões medidas), seletor redesenhado, RNG de geração CTR_DRBG
 `07_runbook_execucao.md` para a sequência exata de comandos.
 **Todo o código dos 6 caminhos + extração de features + consolidação
 estatística (BH-FDR, McNemar+Bonferroni, estratificação de erro) está
-implementado e testado (243/243 testes).** Pendente: rodar a extração de
+implementado e testado (246/246 testes).** Pendente: rodar a extração de
 features nas 180k amostras reais (~20h por braço) e os Caminhos B/C/E em
 GPU (Kaggle/Colab) — ver `06_implementacao_passo_a_passo.md` para o
 estado fase-a-fase e `05_execucao_riscos_pendencias.md` §5.6–5.7 para os
@@ -59,7 +59,7 @@ Requer MSVC 2022 Build Tools e venv ativado. Os `.pyd` já compilados estão em 
 ### Testes
 
 ```bash
-pytest tests/ -v                                      # todos os 182 testes
+pytest tests/ -v                                      # todos os 246 testes
 pytest tests/test_ascon_wrapper.py -v                 # um módulo
 pytest tests/test_extractor.py::test_histogram -v     # um teste específico
 pytest tests/ -x                                      # para no 1o erro

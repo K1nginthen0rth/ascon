@@ -321,3 +321,69 @@ features com nomes estáveis e sem NaN, asserts de vazamento de A e D
 funcionando, e o Caminho A rodando ponta a ponta com os 9 modelos.
 
 Detalhe nos commits `d07ac6a`, `7528acd` e `fd2cd4f`.
+
+## 5.9 Terceira auditoria de aderência (2026-08-23) — erro de fórmula e mRMR sombreado
+
+Terceira passada independente. Dois achados que nenhuma auditoria anterior
+pegou, ambos reproduzidos antes de aceitar:
+
+**1. Erro de fórmula no Random Excursions Variant (SP 800-22 §2.15.4).**
+`_random_excursion_variant_fixed` aplicava `erfc(z/√2)` com `z` já
+dividido pelo denominador `sqrt(2·J·(4|x|−2))` da especificação —
+inserindo o fator √2 duas vezes. Confirmado em CT real: reimplementando a
+fórmula da especificação ao lado, os p-values divergem sistematicamente
+(média 0,4978 contra 0,3585) e a razão dos argumentos do erfc é
+exatamente 0,707107 = 1/√2 nos 18 estados.
+
+Impacto contido — é transformação monótona aplicada igualmente a todas as
+amostras, então RF/XGBoost são invariantes e não haveria sinal falso entre
+algoritmos; modelos sensíveis a escala (LinearSVC/SVM/LR) sofriam efeito
+pequeno mas real. **O que quebrava era a afirmação:** duas das 641
+features seriam reportadas na dissertação como p-values do Random
+Excursions Variant da SP 800-22 sem o serem.
+
+**2. O pacote mRMR real nunca foi usado.** Um `mrmr.py` na raiz do
+repositório sombreava o pacote instalado em toda execução dentro do
+projeto (`sys.path.insert(0, REPO_ROOT)` em todo script de produção e no
+`conftest.py`) — rodando de outro diretório, o pacote real era usado.
+Quatro problemas, nenhum deles numérico: (a) docstring e plano citavam
+Peng et al. 2005 para uma aproximação caseira; (b) `random_state=0` fixo
+violava a seed canônica FS=13; (c) resultado dependia do diretório de
+onde se rodava; (d) ~2,8 milhões de chamadas a `np.corrcoef` (~10h) fora
+de qualquer orçamento. Medido antes de remover: as duas implementações
+recuperam os mesmos sinais plantados, mas as seleções completas de 20
+features coincidem em apenas **5/20**.
+
+**3. Padrão nos testes.** Os testes que passavam não cobriam onde o erro
+estava. Monobit, Runs e Berlekamp-Massey são validados por recomputação
+independente da fórmula — e estavam corretos. Já o teste do Random
+Excursions Variant afirmava apenas `0 < p <= 1`, que o erro de √2
+satisfaz. Mesmo padrão em Linear Complexity (só `extreme_count <= 1`) e
+Non-overlapping Template (só determinismo). **A cobertura de fórmula era
+parcial exatamente onde o código foi escrito à mão.** Adicionados testes
+de recomputação para o caso corrigido.
+
+**4. `power_analysis.md` se contradizia internamente** — tabela com poder
+empírico 96%/78% e parágrafo afirmando 80%. Reescrito para citar os
+valores medidos e declarar as premissas do método (SE estimado só sob H₀;
+grade discreta com arredondamento para cima; verificação com
+`n_bootstrap=150` contra 1000 da produção; erro uniforme no classificador
+simulado, que torna o MDE otimista).
+
+**Menores:** templates são 158, não 154 (número que vai para a seção de
+métodos); `moments.py` fazia `list(ct)` sobre 65KB (5,77 → 3,60 ms);
+`chi2_dof` é constante 255,0 e é descartado pelo VT (ocupa um slot, sem
+custo real); dois scripts soltos do v1 removidos de `data/processed/`.
+
+**A prova mais forte que o projeto tem, e nenhum script fazia:** a
+auditoria re-derivou as 300 chaves do zero a partir de
+`CTRDRBG(seed=42+6000, label="keys")` — 300/300 idênticas ao arquivo
+guardado — e, pegando um slot real, recuperou o plaintext decifrando o
+Ascon e re-cifrou com os cinco algoritmos: os cinco criptogramas saíram
+**byte a byte idênticos** aos armazenados, com os comprimentos certos.
+Ou seja, **o dataset de 11,8 GB é integralmente reconstruível a partir da
+seed**. O decrypt spot-check do validador não prova isso (lê as chaves do
+JSON de interim); se aquele arquivo se perder, está demonstrado que se
+regenera. Vale registrar na dissertação e na proposta do Zenodo.
+
+246/246 testes. Detalhe no commit `cd8abf7`.
