@@ -1,0 +1,118 @@
+Review 1	
+META_REVIEW Short or full paper:
+PEER_REVIEW References to Related Work: 1: Poor2: Average3: Good4: Excellent
+PEER_REVIEW Paper's relevance to the field of Security: 1: Not relevant2: Somewhat relevant3: Quite relevant4: Extremely relevant
+PEER_REVIEW Novelty & contribution: 1: Absent of novel contribution2: Questionable novelty and contribution3: Novel contribution with minor impact4: Novel contribution with major impact
+PEER_REVIEW Technical Content and Originality: 1: Poor2: Weak3: Good4: Excellent
+PEER_REVIEW Presentation & readability: 1: Poor2: Weak3: Good4: Excellent
+PEER_REVIEW Confidence level: Please, consider your familiarity with the paper's area of research.: 1: Far from my main area2: Average3: Good4: High
+PEER_REVIEW Overall Recommendation: 1: Strong Reject2: Weak Reject3: Weak Accept4: Strong Accept
+− PEER_REVIEW What are the major strengths of this paper?:
+O artigo investiga criptogramas produzidos por Ascon-AEAD128 e GIFT-COFB por meio de aprendizado de máquina para responder se ele podem ser distinguidos em cenário ciphertext-only e usa Vigenère como cifra de controle. 
+− PEER_REVIEW What are the major shortcomings of this paper?:
+Conforme os autores (e a literatura) afirmam:
+"os criptogramas produzidos por tais esquemas devem se aproximar, do ponto de vista estatístico, de sequências indistinguíveis de sequências aleatórias".
+Falta apontar evidências de que o uso de ML realmente não diferenciou de sequências aleatórias. Isto é, falta responder: ML aprendeu a diferenciar vieses caso existam ou aprendeu outra característica? (ex: correlações entre chave e mensagem?) 
+− PEER_REVIEW Detailed comments for the authors:
+Descrevam o que o modelo realmente está classificando (o criptograma é ou não é distinguível de sequência aleatória).
+É preciso uniformizar a apresentação dos resultados principais e do controle. Em um, usa-se a matriz de confusão, sem deixar claro qual é o recall e precisão; no controle, só tem recall e precisão.
+
+Traduzir "6. Conclusion" 
+− PEER_REVIEW Author(s) Identification:
+Não há 
+META_REVIEW FINAL RECOMMENDATION:
+− META_REVIEW Summary & Recommendation:
+Review 2	
+META_REVIEW Short or full paper:
+PEER_REVIEW References to Related Work: 1: Poor2: Average3: Good4: Excellent
+PEER_REVIEW Paper's relevance to the field of Security: 1: Not relevant2: Somewhat relevant3: Quite relevant4: Extremely relevant
+PEER_REVIEW Novelty & contribution: 1: Absent of novel contribution2: Questionable novelty and contribution3: Novel contribution with minor impact4: Novel contribution with major impact
+PEER_REVIEW Technical Content and Originality: 1: Poor2: Weak3: Good4: Excellent
+PEER_REVIEW Presentation & readability: 1: Poor2: Weak3: Good4: Excellent
+PEER_REVIEW Confidence level: Please, consider your familiarity with the paper's area of research.: 1: Far from my main area2: Average3: Good4: High
+PEER_REVIEW Overall Recommendation: 1: Strong Reject2: Weak Reject3: Weak Accept4: Strong Accept
+− PEER_REVIEW What are the major strengths of this paper?:
+Authors tackle an interesting and timely research question of how ML classifiers can be used to in cryptanalysis as distinguishers. 
+They experimentally study the ciphertext indistinguishability of two LWC finalists for AEAD, Ascon (the actual winner) and Gift, from a machine learning point of view.
+
+The methodology introduced is interesting, where authors analyze only the output ciphertext bytes according to a set of relevant features that could potentially capture byte or group of byte patterns.
+A positive control group (Vigenère cipher) was also analyzed to validate the model, which confirmed perfectly classification with separation from random ciphertexts.
+
+Authors are careful to not overstate the result and jump to precipitate conclusions like Ascon is thus secure. 
+− PEER_REVIEW What are the major shortcomings of this paper?:
+The main shortcoming is that it is a negative result. In other words, it does not bring any surprise since the ciphers studied had their security analysis already supporting ciphertext indistinguishability from random.
+Although the methodology is interesting it does not seem strong enough to give confidence that the critically relevant ML techniques and feature descriptors were carefully selected to reveal any weakness in the studied ciphers.
+Authors could have explored other techniques like CNNs and transformers to get a stronger support to their conclusion that ML techniques cannot distinguish ciphertexts in modern lightweight AEADs.
+Also, other LWC finalists could have been analyzed in an attempt to obtain cryptographic insights in the feature descriptors for example in case some of them present a weakness and which could be correlated to the underlying algorithm design. 
+− PEER_REVIEW Detailed comments for the authors:
+The paper addresses a relevant question, whether ML classifiers can distinguish ciphertexts from modern lightweight AEAD schemes in a ciphertext-only setting. The use of message-holdout and key-holdout is a positive aspect, as it reduces leakage between training and testing. The Vigenère positive control is also useful because it shows that the pipeline can detect patterns when they are present.
+
+However, the paper contribution seems limited because the main result is expectedly negative: modern AEAD ciphertexts should look statistically close to random, so the failure of classical ML models over some not so carefully picked descriptors is not surprising. The paper should explain what new cryptographic insights could come from this experiment.
+
+The ML evaluation is also narrow. Random Forest, SVM, and XGBoost are tested only over manually designed statistical descriptors, so the conclusion applies mainly to this representation and not to ML techniques more broadly. The paper would be stronger with models operating directly on ciphertext bytes, such as CNNs or Transformer-based approaches.
+
+The results should also include stronger statistical analysis beyond confusion matrices, such as accuracy, confidence intervals, and significance tests. Finally, the scope is limited to Ascon-AEAD128 and GIFT-COFB, including additional lightweight AEAD schemes would help show whether the findings generalize.
+
+Overall, the paper is clear and presents reasonable methodology, but the novelty and depth seem limited in its current form. 
+− PEER_REVIEW Author(s) Identification:
+No 
+META_REVIEW FINAL RECOMMENDATION:
+− META_REVIEW Summary & Recommendation:
+Review 3	
+META_REVIEW Short or full paper:
+PEER_REVIEW References to Related Work: 1: Poor2: Average3: Good4: Excellent
+PEER_REVIEW Paper's relevance to the field of Security: 1: Not relevant2: Somewhat relevant3: Quite relevant4: Extremely relevant
+PEER_REVIEW Novelty & contribution: 1: Absent of novel contribution2: Questionable novelty and contribution3: Novel contribution with minor impact4: Novel contribution with major impact
+PEER_REVIEW Technical Content and Originality: 1: Poor2: Weak3: Good4: Excellent
+PEER_REVIEW Presentation & readability: 1: Poor2: Weak3: Good4: Excellent
+PEER_REVIEW Confidence level: Please, consider your familiarity with the paper's area of research.: 1: Far from my main area2: Average3: Good4: High
+PEER_REVIEW Overall Recommendation: 1: Strong Reject2: Weak Reject3: Weak Accept4: Strong Accept
+− PEER_REVIEW What are the major strengths of this paper?:
+A ideia de investigar a classificação de algoritmos AEAD utilizando aprendizado de máquina é interessante. A Tabela 1 é útil para resumir os trabalhos relacionados e facilitar o comparativo 
+− PEER_REVIEW What are the major shortcomings of this paper?:
+A qualidade da escrita do artigo não é boa e precisa de revisão. Além disso, o artigo não apresenta os instrumentos necessários para reproduzir os resultados. 
+− PEER_REVIEW Detailed comments for the authors:
+O artigo apresenta uma avaliação experimental da distinguibilidade entre dois algoritmos — Ascon‑AEAD128 e GIFT‑COFB — usando técnicas de aprendizado de máquina no cenário ciphertext‑only. No trabalho, os classificadores recebem apenas os criptogramas e devem classificá‑los como pertencentes a um dos dois algoritmos. A proposta do artigo é interessante, considerando o uso de técnicas de aprendizado de máquina neste cenário. No entanto, o texto precisa ser revisado. Diversas siglas foram utilizadas no texto sem definição, como por exemplo IoT, AEAD e SVM. Há separações silábicas incorretas, como "aux-liares", "de-scritores" e "normal-izadas". Palavras em inglês que deveriam estar em itálico não estão. Palavras que deveriam estar no português como Methodologia, Conclusion, Table e Figure. A seção 4.1 explica como foi executado o experimento, mas o código-fonte usado para gerar os resultados não está disponível; assim, os testes não podem ser replicados. O artigo cita que aplicou três classificadores nos experimentos, mas na Figura 1 são apresentados quatro; o LinearSVC não foi citado durante o texto. 
+− PEER_REVIEW Author(s) Identification:
+Não 
+META_REVIEW FINAL RECOMMENDATION:
+− META_REVIEW Summary & Recommendation:
+Review 4	
+META_REVIEW Short or full paper: 1: Short paper2: Full paper
+PEER_REVIEW References to Related Work: 1: Poor2: Average3: Good4: Excellent
+PEER_REVIEW Paper's relevance to the field of Security: 1: Not relevant2: Somewhat relevant3: Quite relevant4: Extremely relevant
+PEER_REVIEW Novelty & contribution: 1: Absent of novel contribution2: Questionable novelty and contribution3: Novel contribution with minor impact4: Novel contribution with major impact
+PEER_REVIEW Technical Content and Originality: 1: Poor2: Weak3: Good4: Excellent
+PEER_REVIEW Presentation & readability: 1: Poor2: Weak3: Good4: Excellent
+PEER_REVIEW Confidence level: Please, consider your familiarity with the paper's area of research.: 1: Far from my main area2: Average3: Good4: High
+PEER_REVIEW Overall Recommendation: 1: Strong Reject2: Weak Reject3: Weak Accept4: Strong Accept
+− PEER_REVIEW What are the major strengths of this paper?:
+ 
+− PEER_REVIEW What are the major shortcomings of this paper?:
+ 
+− PEER_REVIEW Detailed comments for the authors:
+ 
+− PEER_REVIEW Author(s) Identification:
+ 
+META_REVIEW FINAL RECOMMENDATION: 1: Reject2: Weak Reject3: Weak Accept4: Accept
+− META_REVIEW Summary & Recommendation:
+O fato da pesquisa não ter conseguido um resultado positivo, isto é, não conseguir mostrar que é possível fazer um algoritmo de aprendizado de máquina capaz de distinguir entre diferentes cifradores leves não é algo totalmente sem valor para a comunidade.
+
+No entanto, para que isso seja realmente considerado como um resultado confiável e aproveitável, é preciso que se busque outras formas de configurar os algoritmos de ML além da parametrização específica usada nos experimentos relatados.
+
+Apesar dessa configuração ter sido capaz de identificar claramente os textos cifrados produzidos pelo algoritmo de Vigenère, não está claro que ela é suficiente para detectar e separar textos cifrados por dois algoritmos de melhor qualidade que este.
+
+Lembremo-nos de que a área de IA permaneceu estagnada por muito tempo, até que começaram a testar modelos cada vez maiores e os resultados surpreenderam.
+
+No artigo "An approach to identifying cryptographic algorithm from ciphertext" de junho/2016, DOI: 10.1109/ICCSN.2016.7586649,  os autores não usaram ML, mas conseguiram resultados muito interessantes na identificação de diversos algoritmos simétricos, mostrando que tal identificação não é tão inalcançável assim.
+
+Podemos entender que se trata de um trabalho em andamento e que ainda tem muito o que explorar na parte de ML e até de IA. Mas os autores não parecem ver assim, já que parecem satisfeitos com a forma como ML foi configurada e utilizada ao declararem que trabalhos futuros deveriam focar em outros algoritmos criptográficos e não em outras formas de configurar o sistema de ML.
+
+Em uma versão futura do trabalho, os autores devem atentar mais para os seguintes pontos adicionais:
+- falta de consistência entre português e inglês no texto (uso de termos em inglês indevidamente e uso de "Quadro 1" vs. "Table 1"), 
+- falta de consistência entre texto e figuras (três modelos no texto contra quatro na Fig. 1), 
+- falta de busca sistemática de hiperparâmetros (poderá melhorar o modelo e trazer novos resultados), 
+- Acon-AEAD128 => Ascon-AEAD128 ,
+- Methodologia => Metodologia ,
+- o conjunto holdout. => remover o ponto (.) ,
+- os nomes dos autores precisam ser corrigidos na refência Brunetta 2022. 

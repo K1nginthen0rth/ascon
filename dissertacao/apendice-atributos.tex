@@ -1,0 +1,90 @@
+\chapter{Lista dos 307 Atributos Extraídos dos Criptogramas}
+\label{ap:atributos}
+
+Este apêndice relaciona os 307 atributos calculados sobre a sequência de bytes de cada criptograma, organizados nas seis famílias descritas na Seção~\ref{sec:extracao-atributos}. Os nomes correspondem aos identificadores usados na implementação, o que permite rastrear cada atributo diretamente no código e nos relatórios de seleção.
+
+\begin{table}[htb]
+\centering
+\caption{Família 1 --- Histograma de bytes (256 atributos).}
+\begin{tabular}{llp{7.5cm}}
+\toprule
+Atributo & Dim. & Descrição \\
+\midrule
+\texttt{byte\_hist\_000} \ldots \texttt{byte\_hist\_255} & 256 & Frequência relativa de cada valor de byte $i \in [0, 255]$, calculada como a contagem do valor dividida pelo comprimento do criptograma. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htb]
+\centering
+\caption{Família 2 --- Entropia e qui-quadrado (4 atributos).}
+\begin{tabular}{llp{7.5cm}}
+\toprule
+Atributo & Dim. & Descrição \\
+\midrule
+\texttt{shannon\_entropy} & 1 & Entropia de Shannon da distribuição de bytes, em bits por byte. \\
+\texttt{chi2\_statistic}  & 1 & Estatística $\chi^2$ da distribuição de bytes contra a uniforme de 256 categorias. \\
+\texttt{chi2\_pvalue}     & 1 & P-valor associado à estatística $\chi^2$. \\
+\texttt{chi2\_dof}        & 1 & Graus de liberdade do teste $\chi^2$. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htb]
+\centering
+\caption{Família 3 --- Agregados de n-gramas (15 atributos: 5 estatísticas $\times$ ordens $n \in \{2, 3, 4\}$).}
+\begin{tabular}{llp{7.5cm}}
+\toprule
+Atributo & Dim. & Descrição \\
+\midrule
+\texttt{ngram\_\{n\}\_entropy}        & 3 & Entropia de Shannon da distribuição de n-gramas de ordem $n$. \\
+\texttt{ngram\_\{n\}\_nunique}        & 3 & Número de n-gramas distintos observados. \\
+\texttt{ngram\_\{n\}\_max\_freq}      & 3 & Frequência relativa do n-grama mais comum. \\
+\texttt{ngram\_\{n\}\_chi2}           & 3 & Estatística $\chi^2$ da distribuição de n-gramas contra a uniforme. \\
+\texttt{ngram\_\{n\}\_collision\_rate} & 3 & Taxa de colisão, $1 - k/256^n$, em que $k$ é o número de n-gramas distintos. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htb]
+\centering
+\caption{Família 4 --- Autocorrelação e runs (18 atributos).}
+\begin{tabular}{llp{7.5cm}}
+\toprule
+Atributo & Dim. & Descrição \\
+\midrule
+\texttt{autocorr\_lag\_01} \ldots \texttt{autocorr\_lag\_16} & 16 & Coeficiente de autocorrelação normalizado da sequência de bytes no lag $\ell \in [1, 16]$. \\
+\texttt{runs\_count}  & 1 & Número total de runs na sequência binarizada pela mediana. \\
+\texttt{runs\_zscore} & 1 & Z-score do teste de runs de Wald-Wolfowitz sob a hipótese de sequência aleatória. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htb]
+\centering
+\caption{Família 5 --- Complexidade de Lempel-Ziv e compressão (4 atributos).}
+\begin{tabular}{llp{7.5cm}}
+\toprule
+Atributo & Dim. & Descrição \\
+\midrule
+\texttt{lz\_complexity}            & 1 & Número de frases na decomposição LZ76 da sequência. \\
+\texttt{lz\_complexity\_normalized} & 1 & Complexidade LZ76 dividida pelo comprimento do criptograma. \\
+\texttt{compression\_ratio\_zlib}   & 1 & Razão entre o tamanho comprimido com zlib (nível 9) e o tamanho original. \\
+\texttt{compression\_ratio\_bz2}    & 1 & Razão entre o tamanho comprimido com bz2 (nível 9) e o tamanho original. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htb]
+\centering
+\caption{Família 6 --- Atributos espectrais via FFT (10 atributos).}
+\begin{tabular}{llp{7.5cm}}
+\toprule
+Atributo & Dim. & Descrição \\
+\midrule
+\texttt{fft\_band\_0} \ldots \texttt{fft\_band\_7} & 8 & Energia relativa em cada uma das oito bandas de frequência de igual largura do espectro de potência (excluída a componente DC); as energias somam aproximadamente 1. \\
+\texttt{fft\_peak\_freq}        & 1 & Posição normalizada (0 a 1) do pico dominante do espectro. \\
+\texttt{fft\_spectral\_entropy} & 1 & Entropia de Shannon do espectro de potência normalizado. \\
+\bottomrule
+\end{tabular}
+\end{table}

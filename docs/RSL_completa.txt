@@ -1,0 +1,2100 @@
+================================================================================
+IDENTIFICAÇÃO DE ALGORITMOS CRIPTOGRÁFICOS POR APRENDIZADO DE MÁQUINA A PARTIR DE
+CIPHERTEXTS, COM FOCO EM CRIPTOGRAFIA LEVE: UMA REVISÃO SISTEMÁTICA DA LITERATURA
+================================================================================
+
+
+Data de fechamento da busca: agosto de 2026.
+Bases consultadas: Scopus, IEEE Xplore, ACM Digital Library, SpringerLink e Web
+of Science.
+Registros únicos após deduplicação: 864.
+Estudos com extração completa: 23. 
+
+--------------------------------------------------------------------------------
+RESUMO
+--------------------------------------------------------------------------------
+
+Contexto. Uma linha de pesquisa investiga se modelos de aprendizado de máquina
+conseguem determinar qual algoritmo criptográfico produziu um ciphertext, tendo
+como entrada apenas o próprio ciphertext. A tarefa não é recuperar a chave nem
+decifrar a mensagem, e sim reconhecer o algoritmo. Com a difusão de primitivas de
+criptografia leve (Lightweight Cryptography, LWC) em dispositivos de recursos
+restritos, a pergunta passa a ter relevância para essa família de algoritmos.
+
+Objetivo. Levantar e sintetizar a evidência empírica sobre identificação de
+algoritmos criptográficos por aprendizado de máquina em cenário ciphertext-only, e
+verificar o que essa evidência permite afirmar sobre algoritmos LWC.
+
+Método. Três consultas em cada uma de cinco bases bibliográficas. Após
+consolidação e deduplicação, 864 registros únicos. A triagem por título e resumo,
+apoiada pelo Rayyan, reteve 55 registros, refinados para 51 elegíveis. A extração
+foi concluída para 23 estudos, cada um analisado de forma isolada. Dois estudos foram classificados como adjacentes e
+retirados da análise principal: um por usar a chave de cifragem como entrada do
+modelo, outro por tratar de cifras clássicas. A análise principal cobre 21 estudos
+publicados entre 2016 e 2026.
+
+Resultados. As acurácias relatadas vão de 22% a 100%. Três estudos enquadram
+explicitamente seus algoritmos como criptografia leve, e um quarto inclui seis
+algoritmos que a literatura reconhece como leves sem usar o termo. Nove algoritmos
+LWC distintos aparecem no corpus: LBlock, PRESENT, SPECK, SIMON, SKINNY, Midori,
+TWINE, CLEFIA e KASUMI. Ascon e GIFT não aparecem em nenhum estudo.
+
+A análise transversal identifica seis fatores experimentais associados à dispersão
+dos resultados, ordenados pela evidência intra-estudo que os sustenta:
+granularidade da tarefa (oito estudos), tamanho do ciphertext (cinco estudos),
+condição da chave (três estudos manipulam), modo de operação (quatro estudos),
+heterogeneidade do conjunto de classes (dois estudos quantificam) e tipo de
+conteúdo do plaintext (dois estudos, em direções diferentes).
+
+O fator melhor evidenciado continua sendo a granularidade, e o corpus ampliado
+acrescenta um mecanismo candidato. Tan e Ji (2016), recuperado nesta atualização,
+mostra que, quando as chaves de treino e teste diferem, AES é separável de cada
+uma de quatro cifras de 64 bits com 88% a 94% de acurácia, enquanto todos os seis
+pares formados entre essas quatro cifras ficam entre 42% e 55%, ou seja, no acaso,
+em qualquer tamanho de ciphertext. Os próprios autores atribuem o resultado ao
+comprimento de bloco. Zhao et al. (2023) chegam à mesma associação por outro
+caminho.
+
+Conclusão. A literatura demonstra que modelos de aprendizado de máquina separam
+ciphertexts em condições experimentais específicas, inclusive para algoritmos LWC.
+A evidência disponível é compatível com a hipótese de que o que se separa são
+propriedades estruturais grosseiras, e não a identidade do algoritmo. Como nenhum
+estudo do corpus varia mais de três fatores de forma controlada, e como os fatores
+se movem juntos ao longo da literatura, a atribuição causal permanece
+indisponível. Para o subconjunto LWC, a base é de quatro estudos e nove
+algoritmos, e não inclui Ascon, GIFT nem esquemas de criptografia autenticada.
+
+Palavras-chave: revisão sistemática; identificação de algoritmos criptográficos;
+criptografia leve; aprendizado de máquina; ciphertext-only; protocolo experimental.
+
+
+--------------------------------------------------------------------------------
+1 INTRODUÇÃO
+--------------------------------------------------------------------------------
+
+1.1 A tarefa
+
+Dado um ciphertext e nenhuma outra informação, é possível dizer qual algoritmo o
+produziu? Essa é a pergunta que organiza a linha de pesquisa revisada aqui. Os
+estudos do corpus a chamam de identificação de algoritmo criptográfico, e vários
+deles a definem formalmente antes de propor um método.
+
+A tarefa é distinta de outras que aparecem próximas na literatura. Não é
+criptanálise, porque não busca a chave nem o plaintext. Não é a construção de um
+distinguisher diferencial, que avalia se pares de textos com diferença conhecida
+produzem saídas separáveis de saídas aleatórias. Não é avaliação de
+indistinguibilidade, que testa uma propriedade de segurança do esquema. Não é
+identificação de função hash, que opera sobre a saída de uma função unidirecional
+e não sobre um criptograma.
+
+A separação importa por duas razões. A primeira é operacional: a triagem desta
+revisão encontrou volume considerável de trabalhos das outras categorias, e
+misturá-los produziria uma síntese incoerente. A segunda apareceu na própria
+extração: quatro estudos do corpus ampliado combinam a identificação de algoritmo
+com uma segunda tarefa no mesmo experimento e reportam métricas agregadas que
+somam as duas. A seção 5.7 trata desse problema.
+
+1.2 Por que a pergunta tem interesse prático
+
+Três aplicações aparecem declaradas nos próprios estudos incluídos.
+
+Avaliação de conformidade. Li et al. (2025) enquadram a tarefa como problema de
+agências reguladoras que precisam verificar se um produto criptográfico comercial
+usa o algoritmo que declara usar, sem acesso físico ao equipamento. Li e Chen
+(2025) trabalham no mesmo enquadramento, aplicado a algoritmos comerciais chineses.
+
+Etapa preliminar de criptanálise. Tan e Ji (2016) abrem o artigo com o argumento de
+que um criptanalista raramente conhece o algoritmo empregado, e que identificá-lo
+reduz o espaço de hipóteses antes de qualquer ataque. Bhagat e Mishra (2025)
+retomam o mesmo enquadramento.
+
+Segurança de infraestrutura e dispositivos restritos. Mishra et al. (2021) situam
+o problema em IoT, com cifras leves aplicadas a imagens. Yao et al. (2025) o situam
+em redes elétricas.
+
+1.3 Criptografia leve como recorte
+
+Criptografia leve designa primitivas projetadas para operar sob restrições de área,
+energia e latência típicas de microcontroladores, etiquetas RFID e nós de sensor.
+PRESENT e CLEFIA integram a ISO/IEC 29192. SIMON e SPECK foram propostas pela NSA.
+O NIST conduziu processo de padronização dedicado e selecionou a família Ascon,
+especificada na publicação SP 800-232.
+
+A questão que esta revisão persegue é se a literatura de identificação, construída
+majoritariamente sobre algoritmos convencionais, oferece evidência aplicável a esse
+recorte.
+
+1.4 Objetivo e contribuições
+
+O objetivo é mapear a evidência empírica disponível sobre identificação de
+algoritmos criptográficos por aprendizado de máquina em cenário ciphertext-only, e
+avaliar se ela sustenta algo a respeito de criptografia leve.
+
+As contribuições são quatro:
+
+1. Caracterização de 21 estudos primários em dimensões comparáveis.
+
+2. Uma taxonomia das representações de ciphertext usadas na área, organizada em
+   sete famílias.
+
+
+3. A identificação de um problema de delimitação de tarefa: em
+   quatro estudos, a identificação de algoritmo é reportada de forma agregada com
+   uma segunda tarefa de natureza distinta.
+
+4. Um levantamento de lacunas de cobertura e de protocolo, com agenda derivada.
+
+
+--------------------------------------------------------------------------------
+2 MÉTODO
+--------------------------------------------------------------------------------
+
+2.1 Perguntas de pesquisa
+
+RQ1. É possível distinguir algoritmos de criptografia leve utilizando aprendizado
+de máquina a partir de ciphertexts?
+
+RQ2. O que a literatura apresenta sobre a distinção e a identificação de
+algoritmos criptográficos utilizando aprendizado de máquina?
+
+RQ3. Quais técnicas de aprendizado de máquina apresentam melhor desempenho na
+distinção entre algoritmos criptográficos?
+
+RQ4. Quais protocolos experimentais são utilizados nesses estudos?
+
+RQ5. Quais tipos de features ou representações são utilizados para caracterizar
+ciphertexts?
+
+2.2 Estratégia de busca
+
+A busca foi organizada em três blocos conceituais, executados como consultas
+independentes em cada base para não perder recall por excesso de conjunção.
+
+Bloco A, tarefa de identificação:
+"cipher identification", "cipher classification", "algorithm identification",
+"cryptographic algorithm identification", "cryptographic algorithm classification",
+"algorithm fingerprinting".
+
+Bloco B, domínio de criptografia leve:
+"lightweight cryptography", "lightweight cipher", "NIST lightweight cryptography".
+
+Bloco C, primitivas nomeadas:
+ASCON, "PRESENT cipher", "GIFT cipher", "GIFT-COFB", SPECK, SIMON, SKINNY.
+
+Cada bloco foi combinado com ("machine learning" OR "deep learning") e, nos blocos
+B e C, com (classification OR identification OR recognition OR fingerprinting). As
+strings completas estão no Apêndice C.
+
+Registros recuperados por base e por consulta:
+
+  Base            | Bloco A | Bloco B | Bloco C
+  ----------------|---------|---------|--------
+  Scopus          |      85 |      38 |      74
+  SpringerLink    |      28 |     420 |  13.104
+  ACM DL          |       8 |     106 |  42.408
+  Web of Science  |      12 |      12 |      54
+  IEEE Xplore     |      22 |      16 |   1.174
+
+O bloco C na SpringerLink e na ACM retornou volume incompatível com precisão
+aceitável, porque termos como SIMON e PRESENT são palavras comuns em inglês e as
+duas bases aplicam busca em texto completo por padrão. Para essas duas
+combinações, apenas o subconjunto restrito a título e resumo foi exportado.
+
+Restrições aplicadas na Scopus para o bloco C: áreas COMP, ENGI e MATH, publicação
+entre 2015 e 2027. Ao aplicar a restrição "Abstract" para o ACM, o numero na terceira busca, o numero de artigos cai para 330.
+
+2.3 Critérios de inclusão e exclusão
+
+Critérios de inclusão:
+
+I1. O estudo emprega aprendizado de máquina, aprendizado profundo ou aprendizado
+    estatístico para analisar, identificar, classificar ou caracterizar algoritmos
+    criptográficos.
+I2. O objeto de análise são algoritmos criptográficos, cifras, primitivas ou
+    características de dados cifrados relacionadas à identificação do algoritmo.
+I3. O estudo apresenta uma tarefa de identificação, classificação, distinção,
+    fingerprinting ou reconhecimento de algoritmos criptográficos.
+I4. O estudo apresenta abordagem experimental ou metodológica que permita analisar
+    técnicas, representações, protocolos ou métricas.
+I5. Artigo científico publicado em veículo com conteúdo técnico suficiente para
+    avaliação.
+I6. Texto disponível em inglês.
+I7. Publicação dentro do período definido no protocolo.
+
+Critérios de exclusão:
+
+E1. Não utiliza aprendizado de máquina.
+E2. Objeto de estudo não criptográfico.
+E3. Aprendizado de máquina aplicado a outra finalidade de segurança sem relação
+    com identificação ou caracterização de algoritmos.
+E4. Ausência de resultados relevantes para a tarefa de identificação.
+E5. Tipo de publicação inadequado, como editorial, tutorial, patente ou
+    apresentação.
+E6. Texto não disponível em inglês.
+E7. Fora do período definido.
+E8. Revisão ou survey sem contribuição experimental própria.
+
+A presença de algoritmos LWC não foi usada como critério de inclusão. Aplicá-la na
+triagem reduziria o corpus a três ou quatro estudos e eliminaria a base
+metodológica necessária para interpretá-los. A marcação LWC foi feita na extração,
+como variável de análise.
+
+Dois critérios adicionais foram aplicados na extração, e não na triagem, porque
+dependem de informação que só o texto completo fornece:
+
+X1. Entrada do modelo. Estudos em que o classificador recebe a chave de cifragem
+    além do ciphertext foram classificados como adjacentes, porque a tarefa
+    resultante não é a mesma que as RQs pressupõem.
+X2. Natureza do objeto. Estudos restritos a cifras clássicas foram classificados
+    como adjacentes.
+
+Os estudos assim classificados foram extraídos e são documentados na seção 3.9,
+mas não entram nas contagens da análise principal.
+
+2.4 Processo de seleção
+
+Identificação. As exportações das cinco bases foram consolidadas em um gerenciador
+de referências, preservando a informação de origem por base e por consulta. Após a
+remoção de duplicatas, restaram 864 registros únicos da revisão. A biblioteca do
+gerenciador continha um registro adicional, anterior às buscas e usado como
+exemplo, que foi descartado da contagem.
+
+Triagem por título e resumo. Os 864 registros foram importados no Rayyan (OUZZANI
+et al., 2016) e triados com decisão ternária de incluir, excluir ou dúvida. A
+função de ordenação por relevância do Rayyan foi usada para priorizar a ordem de
+leitura, nunca como critério de decisão. O resultado foi 44 inclusões e 11 dúvidas.
+Os 11 casos duvidosos foram reavaliados a partir de título e resumo completos, o
+que consolidou 51 registros elegíveis à leitura de texto completo.
+
+Priorização para leitura. Os 51 registros foram separados em três grupos por
+profundidade de leitura. Vinte e um foram designados para leitura integral com
+extração detalhada. Vinte e seis foram designados para leitura de
+contextualização, grupo que inclui a literatura de distinguishers diferenciais
+neurais. Esse subgrupo aplica aprendizado de máquina a cifras leves, inclusive
+Ascon e GIFT, mas responde à pergunta de construir um distinguidor diferencial
+melhor, e não à de identificar qual algoritmo gerou um ciphertext. Quatro registros
+foram excluídos: um survey, um estudo de recuperação de informação sem relação com
+o problema, um benchmark de frameworks de CNN e uma análise bibliométrica sem
+experimento primário.
+
+2.5 Alterações de protocolo nesta versão
+
+Duas alterações ocorreram após a primeira rodada de extração e precisam ser
+declaradas, conforme recomendação de Kitchenham e Charters (2007).
+
+Primeira. Um dos estudos previamente registrados como não recuperados, Tan e Ji
+(2016), foi obtido. Ele passa a integrar a análise principal, e o número de estudos
+elegíveis não recuperados cai de sete para seis.
+
+Segunda. Oito estudos originalmente designados para leitura de contextualização
+foram promovidos a extração completa. Todos os oito pertencem ao subgrupo de
+identificação de algoritmo dentro dos 26 contextuais, e nenhum vem do subgrupo de
+distinguishers diferenciais. A promoção foi motivada por uma constatação da
+primeira rodada: o cohort de 2025 e 2026 concentra-se nesses estudos, e mantê-los
+fora da extração produziria uma caracterização temporalmente enviesada da área.
+
+O efeito das duas alterações sobre as conclusões está avaliado na seção 6.7. Em
+resumo, a ampliação reforçou o achado central sobre granularidade, acrescentou um
+mecanismo candidato para ele e introduziu um problema novo, tratado na seção 5.7.
+
+2.6 Fluxo PRISMA
+
+  IDENTIFICAÇÃO
+    Registros exportados das cinco bases ...................... consolidados
+    Registros únicos após remoção de duplicatas ...................... 864
+
+  TRIAGEM
+    Registros triados por título e resumo ............................ 864
+    Registros excluídos na triagem ................................... 809
+    Registros retidos (44 incluir + 11 dúvida) ........................ 55
+    Registros elegíveis após resolução das dúvidas .................... 51
+
+  ELEGIBILIDADE
+    Designados para leitura integral .................................. 21
+      dos quais extraídos ............................................. 15
+      dos quais não recuperados por falta de acesso .................... 6
+    Designados para leitura de contextualização ....................... 26
+      dos quais promovidos a extração completa (seção 2.5) ............. 8
+    Excluídos nesta fase ............................................... 4
+
+  INCLUSÃO
+    Estudos com extração completa ..................................... 23
+      classificados como adjacentes e retirados da análise (2.3) ....... 2
+    Estudos na análise principal ...................................... 21
+
+2.7 Extração de dados
+
+Cada artigo foi analisado de forma isolada. Referências cruzadas entre estudos do
+próprio corpus não foram usadas para completar campos, mesmo quando um artigo
+citava outro também incluído. Todo campo ausente no texto original foi marcado como
+"NR" em vez de inferido.
+
+O formulário cobriu 14 dimensões: identificação bibliográfica, objetivo, algoritmos
+avaliados com marcação LWC, entrada do modelo e confirmação de cenário
+ciphertext-only, modelos e hiperparâmetros, representação e features, dataset,
+protocolo experimental, métricas, resultados, limitações declaradas pelos autores,
+observações metodológicas do revisor, contribuição por RQ e classificação final.
+
+As limitações foram registradas em dois campos separados. Um para o que os próprios
+autores reconhecem no texto. Outro para observações do revisor. A separação evita
+atribuir aos autores críticas que eles não fizeram, e é usada ao longo do relato.
+
+Uma regra de extração merece registro por ter produzido a correção descrita na
+seção 3.6: a marcação LWC deve refletir o que o artigo declara, e não o que a
+literatura externa reconhece. Onde o revisor considera que um algoritmo é
+reconhecido como leve mas o artigo não o diz, isso aparece como observação do
+revisor, separada do campo extraído.
+
+2.8 Itens de completude de relato
+
+Não foi aplicado instrumento validado de avaliação de qualidade. Seis itens
+objetivos de completude foram extraídos do formulário e tabulados para os 21
+estudos:
+
+  C1. O modo de operação está descrito?
+  C2. O tratamento das chaves está descrito?
+  C3. O protocolo usa validação cruzada ou reamostragem repetida?
+  C4. Há teste de significância estatística?
+  C5. A linha de base do acaso é declarada ou determinável pelo texto?
+  C6. Dados ou código estão disponíveis?
+
+Os resultados aparecem na seção 3.8 e no Apêndice A.3.
+
+2.9 Síntese
+
+A síntese é narrativa e estruturada por RQ, seguida de análise transversal por
+fator experimental. Não foi feita meta-análise. Os estudos usam datasets próprios,
+conjuntos de algoritmos diferentes, tamanhos de ciphertext diferentes e definições
+de classe diferentes, o que torna a agregação de acurácias uma operação sem
+significado interpretável. Toda acurácia relatada aparece acompanhada das condições
+que a produziram.
+
+
+--------------------------------------------------------------------------------
+3 RESULTADOS: CARACTERIZAÇÃO DOS ESTUDOS
+--------------------------------------------------------------------------------
+
+3.1 Os 21 estudos da análise principal
+
+  ID   Estudo                          Ano   Veículo
+  ---- ------------------------------- ----- ------------------------------------
+  E01  de Mello e Xexéo                2016  IEEE Latin America Transactions
+  E02  Tan e Ji                        2016  ICCSN
+  E03  Barbosa et al.                  2017  IEEE Latin America Transactions
+  E04  Yuan (Chuxuan)                  2021  CAIBDA
+  E05  Mishra et al.                   2021  Defence Science Journal
+  E06  Yuan et al.                     2022  PeerJ Computer Science
+  E07  Zhao et al.                     2023  IEEE Access
+  E08  Ithape e Purushothama           2023  INDICON
+  E09  Rachini et al.                  2023  EICEEAI
+  E10  Jeong et al.                    2024  ICEIB
+  E11  Li e Chen                       2025  SPIE, CVAA 2024
+  E12  Bhagat e Mishra                 2025  ICAFT
+  E13  Zhou                            2025  ICCASIT
+  E14  Li et al.                       2025  Journal of Inf. Security and Appl.
+  E15  Yuan et al.                     2025  Soft Computing
+  E16  Dhawade et al.                  2025  CONIT
+  E17  Simhadri et al.                 2025  NETCRYPT
+  E18  Jha et al.                      2025  CISES
+  E19  Yao et al.                      2025  BDPC
+  E20  Yuan et al.                     2026  Evolving Systems
+  E21  Ananthi et al.                  2026  ICCNCT
+
+Nota sobre a numeração: os identificadores foram reordenados cronologicamente nesta
+versão e não correspondem aos da versão anterior.
+
+Oito são artigos de periódico e treze são artigos de conferência.
+
+3.2 Distribuição temporal
+
+  2016  |##
+  2017  |#
+  2021  |##
+  2022  |#
+  2023  |###
+  2024  |#
+  2025  |#########
+  2026  |##
+
+Onze dos 21 estudos foram publicados em 2025 ou 2026. A área acelerou de forma
+acentuada nos dois últimos anos, e a aceleração se concentra em conferências: dos
+onze estudos de 2025 e 2026, dez são artigos de conferência.
+
+3.3 Origem dos estudos
+
+Quatro estudos (E06, E14, E15, E20) compartilham autoria com o grupo de Ke Yuan e
+Chunfu Jia. Dois (E01, E03) compartilham autoria com F. L. de Mello. Os demais vêm
+de grupos distintos entre si.
+
+A concentração é menor do que na versão anterior desta revisão, porque a ampliação
+trouxe nove grupos novos. Ela continua relevante para a leitura dos resultados
+sobre LWC: o único estudo com conjunto integralmente LWC e aprendizado profundo
+(E20) vem do mesmo grupo que produziu outros três estudos incluídos, com pipeline
+metodológico semelhante entre eles.
+
+Observação de desambiguação: Girish Mishra (E05) e Arun Mishra (coautor de E12) são
+pesquisadores distintos, e os dois estudos não têm relação entre si.
+
+3.4 Algoritmos criptográficos avaliados
+
+  Estudo  N alg.  Algoritmos                                        LWC
+  ------  ------  ------------------------------------------------  --------
+  E01        7    DES, Blowfish, RSA, ARC4, Rijndael, Serpent,       0
+                  Twofish
+  E02        5    AES, Blowfish, 3DES, RC5, DES                      0
+  E03        4    DES, Blowfish, RSA, ARC4                           0
+  E04        4    AES, 3DES, Blowfish, RSA                           0
+  E05        3    LBlock, PRESENT, SPECK                             3 (100%)
+  E06        5    AES, 3DES, Blowfish, CAST, RC2                     0
+  E07       10    AES-128, AES-256, 3DES, DES, Camellia, IDEA,       0
+                  Blowfish, SM4, CAST, RC2
+  E08        2    AES, DES (x 4 modos = 8 classes)                   0
+  E09        3    AES, 3DES, Blowfish                                0
+  E10        8    DES, S-DES, AES, S-AES, Blowfish, RC2, SPECK, RSA  1 (SPECK)
+  E11        2    SM4, AES-128 (x 2 modos)                           0
+  E12        4    AES-ECB, AES-CBC, DES, Blowfish                    0
+  E13       10    ARIA, Midori, PRESENT, Serpent, SKINNY, KASUMI,    0 declarado
+                  SIMON, Speck, TWINE, Twofish                       (ver 3.6)
+  E14       10    RSA, ECC, SM2, Salsa20, ChaCha20, RC4, AES,        0
+                  3DES, CAST, SM4
+  E15        5    AES, 3DES, Blowfish, CAST, RC2                     0
+  E16      3-5    AES, ChaCha20, Blowfish; avaliação estendida com   0
+                  AES, DES, Blowfish, RSA e uma variante
+  E17        4    AES, 3DES, Blowfish, Twofish (classificação);      0
+                  DES e Twofish (reconstrução, tarefa distinta)
+  E18        4    AES, DES, RSA, Blowfish (+ SHA256, tarefa          0
+                  distinta)
+  E19       17    AES, 3DES, CAST, Blowfish, RC2, Salsa20, RC4,      0
+                  ChaCha20, RSA, ECC, Caesar, Rail Fence, e
+                  outros não nomeados
+  E20        6    KASUMI, SIMON, PRESENT, CLEFIA, SKINNY, Midori     6 (100%)
+  E21        5    AES, DES, RC4, ChaCha, RSA (+ 4 funções hash,      0
+                  tarefa distinta)
+
+Frequência dos algoritmos convencionais: AES em 17 estudos, DES ou 3DES em 15,
+Blowfish em 12, RSA em 8, RC4 ou ARC4 em 6, CAST em 4, ChaCha20 em 4, SM4 em 4,
+RC2 em 4.
+
+3.5 Cobertura de criptografia leve
+
+Quatro estudos incluem algoritmos que a literatura reconhece como leves. Eles
+diferem quanto a assumir esse enquadramento.
+
+E05 (Mishra et al., 2021) é integralmente LWC e declara o enquadramento desde o
+título. O resumo situa o trabalho em comunicação IoT com cifras leves. Três
+algoritmos: LBlock, PRESENT e SPECK, um de cada princípio de projeto.
+
+E20 (Yuan et al., 2026) é integralmente LWC e declara o enquadramento. O texto usa
+o termo em 21 passagens e nomeia KASUMI, SKINNY, CLEFIA, PRESENT, SIMON e Midori
+como "lightweight block cipher algorithms".
+
+E10 (Jeong et al., 2024) descreve SPECK como "one of the lightweight block ciphers
+that requires less memory, fewer computing resources, and a small amount of power".
+É o único algoritmo leve entre oito classes, e seu desempenho específico não é
+isolado pelos autores.
+
+E13 (Zhou, 2025) inclui Midori, PRESENT, SKINNY, SIMON, Speck e TWINE, seis
+algoritmos que a literatura reconhece como leves. O artigo não os enquadra assim
+(ver seção 3.6).
+
+Algoritmos LWC distintos presentes no corpus, com o número de estudos:
+
+  PRESENT   3 (E05, E13, E20)
+  SPECK     3 (E05, E10, E13)
+  SIMON     2 (E13, E20)
+  SKINNY    2 (E13, E20)
+  Midori    2 (E13, E20)
+  LBlock    1 (E05)
+  TWINE     1 (E13)
+  CLEFIA    1 (E20)
+  KASUMI    1 (E20)
+
+Algoritmos LWC ausentes do corpus incluem Ascon, GIFT e GIFT-COFB, as demais
+finalistas do processo de padronização do NIST, e cifras como PRINCE, LED, Piccolo,
+KATAN e HIGHT. Ascon aparece na literatura adjacente de distinguishers diferenciais
+neurais, lida para contextualização, que trata de outra tarefa.
+
+Dois estudos citam criptografia leve como trabalho futuro sem implementá-la: E19
+menciona esquemas leves e pós-quânticos, e E21 menciona algoritmos leves para IoT.
+
+3.6 Correção de classificação em relação à versão anterior
+
+A versão anterior desta revisão classificou E13 (Zhou, 2025) como estudo de
+criptografia leve, com seis dos dez algoritmos marcados como LWC. A verificação no
+texto original não sustenta essa classificação.
+
+O termo "lightweight" não ocorre nenhuma vez no artigo. O texto apresenta os dez
+algoritmos exclusivamente por estrutura: "For SPN-based algorithms, five
+representative algorithms were adopted: ARIA, Midori, PRESENT, Serpent, and SKINNY"
+e "For Feistel-based algorithms, five widely used algorithms were chosen: KASUMI,
+SIMON, Speck, TWINE, and Twofish". A Tabela I do artigo caracteriza cada algoritmo
+por estrutura, tipo de chave, modo, escala de parâmetro e implementação, sem campo
+relativo a peso ou a restrição de recursos.
+
+E13 permanece no corpus e continua relevante para a RQ1, porque avalia seis
+algoritmos que a literatura reconhece como leves. O que muda é o estatuto da
+evidência: E13 não é um estudo sobre criptografia leve, e sim um estudo sobre
+estrutura de cifra de bloco cujo conjunto de teste inclui, sem que os autores o
+notem, seis primitivas leves. A distinção importa porque o desenho experimental de
+E13 foi construído para separar SPN de Feistel, e não para separar cifras leves
+entre si.
+
+A mesma verificação confirmou que E20 e E05 declaram o enquadramento LWC, e que E20
+classifica KASUMI como cifra leve. A versão anterior registrava uma divergência
+entre E13 e E20 quanto a KASUMI. A divergência não existe: E13 não classifica
+KASUMI de forma alguma.
+
+3.7 Técnicas de aprendizado de máquina
+
+Modelos clássicos e ensembles, por número de estudos em que aparecem:
+
+  Random Forest              12  (E04, E06, E07, E08, E09, E13, E14, E15,
+                                  E16, E18, E19, E21)
+  SVM                        10  (E02, E06, E07, E09, E10, E13, E15, E16,
+                                  E18, E20)
+  KNN                         7  (E06, E09, E10, E15, E18, E20, E21)
+  Regressão logística         6  (E08, E13, E14, E15, E19, E20)
+  Naive Bayes                 5  (E01, E03, E15, E16, E20)
+  Árvores e regras            3  (E01, E03, E16)
+  Boosting (XGBoost,
+    LightGBM, GBDT,
+    AdaBoost)                 3  (E07, E18, E19)
+
+Modelos de aprendizado profundo:
+
+  MLP ou DNN densa            6  (E01, E03, E08, E11, E15, E21)
+  CNN                         5  (E05, E11, E12, E18, E21)
+  LSTM, GRU ou BiLSTM         3  (E10, E11, E17)
+  Atenção ou Transformer      2  (E11, E20)
+  DenseNet                    1  (E05)
+  BERT, como baseline         1  (E10)
+  WiSARD, rede sem peso       1  (E01)
+
+Dezesseis dos 21 estudos comparam dois ou mais modelos no mesmo experimento. As
+exceções: E02 usa apenas SVM e compara condições experimentais em vez de modelos;
+E04 testa apenas Random Forest e compara variantes de features; E11 compara quatro
+arquiteturas profundas entre si sem baseline clássico; E12 anuncia comparação com
+ResNet, 1D-CNN e modelos clássicos mas não apresenta resultados numéricos para
+nenhum deles; E18 atribui um modelo dedicado a cada algoritmo, o que impede
+comparação entre técnicas para a mesma tarefa.
+
+Oito estudos propõem modelos compostos: HKNNRF em E06, XGB-LGBM em E07, dual-input
+em E12, HRFLR em E14, RFLR em E19, esquema hierárquico em E20, meta-aprendizado com
+regressão logística em E21, e o conjunto por nó de blockchain em E18.
+
+3.8 Protocolos experimentais
+
+Cenário de entrada. Os 21 estudos operam em cenário ciphertext-only na tarefa de
+identificação. E17 tem uma segunda tarefa de reconstrução de plaintext que exige
+pares alinhados; apenas a parte de classificação entra nesta revisão.
+
+Origem do plaintext:
+
+  Texto em linguagem natural     E01 (7 idiomas), E09 (texto aleatório de
+                                 letras), E10 (Brown, ISEAR), E12 (corpus de
+                                 palavras em inglês), E16 (Wikipedia, notícias,
+                                 OpenSubtitles, Common Crawl), E17 (IMDb),
+                                 E18 (frases em inglês)
+  Imagens                        E05 (MNIST, Fashion-MNIST), E07 (Caltech-256),
+                                 E11 (COCO 2014)
+  Multimídia, áudio e vídeo      E03
+  Misto                          E04 (CIFAR-10, Caltech256, LibriSpeech,
+                                 THUCNews), E21 (texto e imagens)
+  Dados aleatórios               E06, E13, E14, E15, E19, E20
+  Não reportado                  E02 (220 plaintexts, natureza não descrita),
+                                 E08 (dataset de terceiros no Kaggle)
+
+Tamanho do ciphertext. Cinco estudos variam o tamanho sistematicamente: E06, E13,
+E15 e E20 usam cinco tamanhos de 1 KB a 512 KB, e E02 usa cinco tamanhos de 0,8 KB
+a 500 KB. E07, E11, E14 e E19 usam 512 KB fixo. E01 usa arquivos de pelo menos
+140.000 caracteres. E09 usa linhas de 1.000 caracteres. E12 usa janelas de 256
+bytes sobre chunks de 16 KB. E08 usa entradas de 193 bytes. E05 usa imagens de 28
+por 28 pixels, o que corresponde a 784 bytes por amostra.
+
+Modo de operação:
+
+  Apenas ECB                     E01, E02, E05, E06, E07, E13, E14, E15, E20  (9)
+  ECB e CBC                      E11, E12                                     (2)
+  Quatro modos                   E08 (ECB, CBC, CFB, CTR),
+                                 E10 (CBC, CFB, OFB, CTR)                     (2)
+  Apenas CBC                     E17                                          (1)
+  ECB e CBC como classes
+    do próprio esquema           E19                                          (1)
+  Variações simuladas
+    de CBC e CTR                 E21                                          (1)
+  Não reportado                  E03, E04, E09, E16, E18                      (5)
+
+Sete estudos avaliam algum modo além de ECB. Nenhum avalia modos de criptografia
+autenticada. Onde ChaCha20 aparece (E16, E19, E21), aparece como cifra de fluxo, e
+não como o esquema AEAD ChaCha20-Poly1305.
+
+Tratamento das chaves:
+
+  Chave fixa e chave variável
+    comparadas como condição
+    experimental                         E02, E05, E20                      (3)
+  Chave distinta ou dinâmica
+    por amostra, sem comparação          E01, E21                           (2)
+  Chave fixa, sem separação
+    entre treino e teste                 E06, E07, E11, E12, E13, E14,
+                                         E15, E19                           (8)
+  Não reportado                          E03, E04, E08, E09, E10, E16,
+                                         E17, E18                           (8)
+
+Validação:
+
+  Validação cruzada k-fold                        E07 (10), E16 (10),
+                                                  E21 (5)                    (3)
+  Reamostragem aleatória repetida                 E15, E19, E20              (3)
+  Repetição por grupos de teste                   E02 (9 grupos)             (1)
+  Partição única                                  os 14 restantes           (14)
+
+Teste de significância estatística: apenas E20 aplica testes formais (Friedman,
+Nemenyi post-hoc e Wilcoxon signed-rank).
+
+Controle contra contaminação entre partições: E12 declara que os limites dos chunks
+de plaintext não cruzam partições. E01 declara a diversidade de chaves como
+salvaguarda contra viés. E14 organiza a divisão como separação institucional
+simulada, com dois servidores distintos. E02 usa 220 plaintexts distintos por
+algoritmo, com separação entre os usados no treino e no teste. Os demais não
+discutem o tema.
+
+Disponibilidade: E15 informa dataset público em repositório. E08 usa dataset
+público de terceiros, sem documentação de geração. Os outros 19 não disponibilizam
+dados nem código.
+
+Completude de relato, sobre 21 estudos:
+
+  C1. Modo de operação descrito ........................ 16 / 21
+  C2. Tratamento de chaves descrito .................... 13 / 21
+  C3. Validação cruzada ou reamostragem repetida ........ 7 / 21
+  C4. Teste de significância estatística ................ 1 / 21
+  C5. Linha de base do acaso determinável .............. 13 / 21
+  C6. Dados ou código disponíveis ....................... 2 / 21
+
+3.9 Estudos extraídos e classificados como adjacentes
+
+Dois estudos foram extraídos e depois retirados da análise principal pelos
+critérios X1 e X2 da seção 2.3. Eles são documentados aqui porque a extração foi
+feita e porque a razão da exclusão é informativa.
+
+A1. Dadiyala et al. (2025), "Cryptographic Algorithm Identifier with Vulnerability
+Detection and Recommendations", InCoWoCo. Oito algoritmos, 800.000 amostras,
+ensemble de votação com XGBoost, LightGBM e HistGradientBoosting, 91,66% de
+acurácia. O modelo recebe o ciphertext e a chave, e parte das features é derivada
+da chave: entropia da chave, comprimento da chave e razão entre chave e ciphertext.
+O artigo declara operar "without requiring access to the plaintext", o que é
+verdadeiro, mas a tarefa resultante não é a tarefa ciphertext-only que as RQs
+pressupõem. O estudo é relevante como referência de diagnóstico de qualidade
+criptográfica.
+
+A2. Shreyashi (2026), "Classical Cipher Identification Using Binary Encodings and
+Deep Learning", Procedia Computer Science, v. 282. Doze cifras clássicas, 40.000
+amostras, representação binária ASCII de 800 bits, CNN residual com blocos
+Squeeze-and-Excitation atingindo 95,01% contra 81,21% do SVM. O objeto são cifras
+clássicas, não criptografia moderna. O estudo é relevante para a RQ5 como
+demonstração de que representação binária pura, sem features artesanais, sustenta
+classificação de alta acurácia, e para a RQ3 pela hierarquia entre arquiteturas.
+
+3.10 Faixa de resultados
+
+  Estudo  Melhor resultado                              Classes  Acaso
+  ------  --------------------------------------------  -------  ------
+  E01     ~100%, exceto RSA, blocos de 21 bits                7  14,3%
+  E02     100% (mesma chave, 4 classes, >=100 KB);        4 a 5  20/25%
+          22% a 39% (chaves distintas)
+  E03     97%, bloco de 16 bits                               4  25,0%
+  E04     92,3% binário; 70,7% em quatro classes          2 a 4  50/25%
+  E05     98,78% chave fixa; 31,11% chave aleatória           3  33,3%
+  E06     72,5% binário; 34% em cinco classes             2 a 5  50/20%
+  E07     90,53% em oito classes; 89,65% em dez          8 a 10  12,5/10%
+  E08     72% global                                          8  12,5%
+  E09     99% (RF); 91% (SVM); 34% (KNN)                      3  33,3%
+  E10     99,4% (ISEAR, CBC e CFB)                            8  12,5%
+  E11     88,9% (Attention, melhor configuração)              2  50,0%
+  E12     33% global, macro-F1 0,29                           4  25,0%
+  E13     66% binário; 45% em cinco classes               2 a 5  50/20%
+  E14     80,25% camada 1; 38,80% bloco específico        2 a 4  50/25%
+  E15     76,5% binário; 36,2% em cinco classes           2 a 5  50/20%
+  E16     85% (RF, três classes); 85,00% média em cinco   3 a 5  33,3/20%
+  E17     87,91% (BiLSTM)                                     4  25,0%
+  E18     98,02% a 99,00% por modelo dedicado           ver nota      NA
+  E19     não quantificado no texto                    hierárquico    var.
+  E20     99,7% binário chave fixa; 54,2% em seis         2 a 6  50/16,7%
+          classes; 58,3% a 60,5% chave aleatória
+  E21     90,4% a 94,2% entre cifras; 95,4% macro
+          incluindo funções hash                              9  11,1%
+
+Nota sobre E18: o estudo treina um modelo dedicado por algoritmo e reporta acurácia
+por modelo, e não uma matriz de confusão multiclasse. As acurácias de 98,02% a
+99,00% não são comparáveis às demais linhas desta tabela, porque o problema
+resolvido por cada modelo não é o mesmo.
+
+A faixa vai de 22% a 100%. A seção 5 examina os fatores associados a essa
+dispersão.
+
+
+--------------------------------------------------------------------------------
+4 RESPOSTAS ÀS PERGUNTAS DE PESQUISA
+--------------------------------------------------------------------------------
+
+4.1 RQ1. É possível distinguir algoritmos LWC utilizando aprendizado de máquina?
+
+Quatro estudos fornecem evidência, três deles com enquadramento LWC declarado.
+
+E20 (Yuan et al., 2026) é o estudo mais completo do corpus sobre a pergunta. Seis
+algoritmos, todos declarados como cifras leves, cobrindo estruturas SP e Feistel,
+em cenário ciphertext-only, com 76 features candidatas reduzidas a oito por filtro
+de estatística F seguido de RFE, e Transformer encoder-only comparado a cinco
+modelos clássicos com validação estatística formal. O esquema de camada única
+avalia quatro cifras leves em classificação binária. Sob chave fixa, a acurácia em
+512 KB chega a 99,7%, contra 88,7% do Random Forest e 89,5% do Gaussian Naive
+Bayes, e o texto reporta ganho médio superior a 30 pontos percentuais sobre os
+modelos clássicos. Sob chave aleatória, o Transformer fica entre 58,3% e 60,5% e a
+vantagem estatística permanece significativa apenas contra a regressão logística e
+o SVM. Para ciphertexts de 1 KB, a acurácia cai para 56,3% mesmo sob chave fixa. O
+esquema de múltiplas camadas, aplicado a seis cifras leves, atinge 70,2% na
+identificação da estrutura, 92,8% dentro do cluster Feistel e 70,0% dentro do
+cluster SP, contra 54,2% da classificação direta em seis classes e 16,7% de acaso.
+
+E05 (Mishra et al., 2021) avalia três algoritmos leves, um de cada princípio de
+projeto, com a imagem cifrada fornecida diretamente a CNN e DenseNet, em modo ECB.
+O estudo compara dois cenários de chave. Sob chave fixa, o MNIST atinge 98,78% de
+acurácia de validação com CNN, e o Fashion-MNIST atinge 64,50% com a mesma rede.
+Sob chave aleatória por imagem, testado apenas no MNIST, a CNN cai para 31,11% e a
+DenseNet para 36,77%, com acaso em 33,3%. Os autores concluem que, nessa condição,
+os modelos não capturam características distintivas.
+
+E10 (Jeong et al., 2024) inclui SPECK como uma classe entre oito. O modelo RNN
+híbrido atinge 97,3% no Brown Corpus em CBC e 99,4% no ISEAR em CBC e CFB. O
+desempenho específico do SPECK não é isolado, e as oito classes incluem duas cifras
+didáticas de 16 bits e um algoritmo assimétrico. A contribuição para a RQ1 é
+indireta.
+
+E13 (Zhou, 2025) avalia dez algoritmos, seis dos quais a literatura reconhece como
+leves, sob chave fixa e modo ECB, com plaintext aleatório. O artigo não usa o
+enquadramento LWC (seção 3.6). A distinção binária entre estrutura SPN e Feistel
+atinge 66,0% com SVM em 512 KB, contra 50% de acaso. A classificação em cinco
+classes dentro do grupo SPN, que inclui PRESENT, Midori e SKINNY, atinge 45,0% com
+Random Forest, contra 20% de acaso.
+
+Resposta.
+
+Sim, dentro das condições testadas. Os estudos demonstram que modelos de
+aprendizado de máquina separam ciphertexts produzidos por diferentes algoritmos
+leves, com desempenho que varia de equivalente ao acaso a 99,7% conforme a
+configuração experimental.
+
+Quatro qualificações que os próprios dados impõem.
+
+Primeira, sobre a dependência de condições. Nenhum dos quatro estudos reporta um
+valor único de desempenho. Em E20, a mesma tarefa binária vai de 56,3% a 99,7%
+variando apenas o tamanho do ciphertext, e cai para cerca de 59% quando a chave
+varia. Em E05, o mesmo modelo e a mesma configuração de chave produzem 98,78% no
+MNIST e 64,50% no Fashion-MNIST.
+
+Segunda, sobre a granularidade. Os estudos que testam mais de um nível convergem:
+distinguir estrutura de projeto é mais fácil que identificar o algoritmo. Em E20, a
+estrutura sai a 70,2% e a classificação direta em seis algoritmos leves a 54,2%. Em
+E13, a estrutura sai a 66,0% e os cinco algoritmos SPN a 45,0%.
+
+Terceira, sobre o tamanho da base. Três estudos assumem o enquadramento LWC. Um
+deles (E10) contém um único algoritmo leve diluído entre oito classes. Dois (E05 e
+E20) são integralmente LWC, e um deles avalia três algoritmos e o outro seis. A
+base de evidência direta é, portanto, de dois estudos.
+
+Quarta, sobre o escopo. A resposta cobre nove algoritmos leves, todos cifras de
+bloco, avaliados em modo ECB. Não cobre Ascon, não cobre GIFT e não cobre esquemas
+de criptografia autenticada, que são os modos em que os padrões atuais operam.
+
+4.2 RQ2. O que a literatura apresenta sobre identificação de algoritmos
+criptográficos com aprendizado de máquina?
+
+O corpus cobre onze anos e mostra uma trajetória com quatro fases.
+
+Fundação em features estatísticas manuais (2016 a 2017). E01, E02 e E03
+estabelecem o formato. E01 e E03 extraem histogramas de blocos de bits contíguos do
+criptograma e alimentam classificadores de mineração de dados. E01 opera sobre
+corpora em sete idiomas, com chave de 128 bits distinta por arquivo, e reporta
+identificação de sete algoritmos com precisão praticamente total a partir de blocos
+de 21 bits com Complement Naive Bayes. O estudo também testa a influência do idioma
+e conclui que ela não é significativa, com desvio médio de 5,28%. E03 aplica a
+mesma técnica a áudio e vídeo, com blocos de 4 a 16 bits, e obtém até 97%.
+
+E02, publicado no mesmo ano de E01, faz algo diferente e menos citado. Em vez de
+propor um método, o estudo usa um único classificador SVM e varia a condição
+experimental. É o primeiro trabalho do corpus a comparar diretamente treino e teste
+com a mesma chave contra treino e teste com chaves distintas, e a reportar os dois
+resultados lado a lado. Os achados estão detalhados nas seções 5.1 e 5.3.
+
+Testes de aleatoriedade e ensembles (2021 a 2023). A suíte NIST SP 800-22 se torna
+o extrator de features dominante. E06 usa 10 dos 15 testes e propõe o stacking
+HKNNRF. E07 propõe a distribuição de peso de Hamming como representação mais
+compacta que a probabilidade de bit-string, com seleção por XGBoost-RFE, e atinge
+90,5% em oito classes. E08 aplica TF-IDF, tratando cada ciphertext como documento.
+E09 compara SVM, Random Forest e KNN sobre um dataset de 50.000 linhas. E04, um
+pouco antes, propõe extração por convolução com kernel de pesos fixos derivados de
+distribuição qui-quadrado, sem retropropagação.
+
+Representações aprendidas e arquiteturas profundas (2024 a 2026). E10 abandona a
+engenharia de features e usa embedding com RNN híbrida. E11 converte p-values NIST
+em mapas em escala de cinza de 512 por 512 e compara MLP, CNN, LSTM e atenção. E12
+funde um ramo estatístico NIST com um ramo de CNN dilatada sobre bytes. E17 usa
+tokenização em nível de caractere com BiLSTM e BiGRU. E20 aplica Transformer com
+seleção de features em dois estágios e validação estatística.
+
+Esquemas hierárquicos e arquiteturas de sistema (2025 a 2026). Uma linha nova
+aparece no cohort recente. E14 propõe identificação em camadas, da categoria ampla
+ao algoritmo específico. E19 estende a ideia para quatro estágios em cascata,
+incluindo a distinção entre modos ECB e CBC como camada própria. E20 aplica o mesmo
+princípio a cifras leves. Em paralelo, três estudos deslocam a contribuição do
+método para a arquitetura do sistema: E18 distribui um modelo por nó de blockchain
+com agregação por trust score, E21 combina três modelos base por meta-aprendizado,
+e A1 acopla identificação a diagnóstico de vulnerabilidade.
+
+Duas observações sobre o conjunto.
+
+Comparação com trabalhos anteriores. Sete estudos comparam seus resultados com
+números publicados por outros (E07, E10, E11, E13, E14, E18, E19). Apenas E13
+executa a comparação de forma controlada, reimplementando o baseline NIST no
+próprio dataset. Os demais confrontam números obtidos em condições diferentes.
+
+Reconhecimento de limitações. E12 declara a chave e o IV únicos como limitação
+central, rotula seus resultados como preliminares e interpreta o desempenho de 33%
+como consistente com a indistinguibilidade esperada em cenário ciphertext-only. E07
+declara que o esquema não é eficaz para blocos de 128 bits. E01 atribui o próprio
+desempenho ao problema conhecido de repetição de padrões no modo ECB. E02 declara
+que a identificação com chaves distintas é difícil e que o comprimento de bloco
+parece explicar seus resultados. E19 declara que os experimentos ocorreram em
+condições idealizadas.
+
+Um ponto de tensão interno. E11 critica na revisão de literatura o uso de chave
+fixa por outros estudos, com o argumento de que a prática não é realista, e depois
+adota chave fixa no próprio experimento, sem comentar a diferença.
+
+4.3 RQ3. Quais técnicas apresentam melhor desempenho?
+
+Não é possível produzir um ranking válido entre estudos. Os datasets, os conjuntos
+de algoritmos, os tamanhos de ciphertext, os modos e as condições de chave são
+diferentes, e a diferença de acurácia entre dois estudos não é atribuível ao
+modelo.
+
+Comparações dentro de cada estudo:
+
+  Estudo  Melhor modelo               Superou                       Nota
+  ------  --------------------------  ----------------------------  -------------
+  E01     Complement Naive Bayes      C4.5, PART, FT, MLP, WiSARD   supera o MLP
+  E02     SVM (único)                 não comparado                 compara
+                                                                    condições
+  E03     Complement Naive Bayes      J48, PART, FT, MLP            supera o MLP
+  E04     Random Forest (único)       não comparado                 sem baseline
+  E05     CNN (chave fixa),           entre si                      margem pequena
+          DenseNet (chave aleatória)
+  E06     HKNNRF                      SVM, KNN, RF                  +10 p.p. s/ RF
+  E07     XGB-LGBM                    SVM, RF, MLP, XGBoost,        macro-F1
+                                      LightGBM, AdaBoost            0,8982
+  E08     DNN                         RF (68%), LR (65%)            72% global
+  E09     Random Forest (99%)         SVM (91%), KNN (34%)          ver nota
+  E10     RNN híbrida                 SVM, KNN; próximo ao BERT     supera 6
+                                                                    trabalhos
+  E11     CNN (estabilidade),         entre si                      Attention
+          Attention (pico)                                          diverge em 4
+                                                                    de 7 config.
+  E12     dual-input fundido          sem comparação numérica       33% global
+  E13     SVM (binário),              features NIST                 comparação
+          RF (cinco classes)          reimplementadas               controlada
+  E14     HRFLR                       RF e LR isolados              em todas as
+                                                                    camadas
+  E15     MLP                         SVM, GNB, KNN, RF, LR         76,5% contra
+                                                                    54% a 60%
+  E16     Random Forest               SVM, DT, NB                   85% contra
+                                                                    79% a 83%
+  E17     BiLSTM                      BiGRU                         87,91% contra
+                                                                    86,98%
+  E18     um modelo por algoritmo     não comparável                ver 3.10
+  E19     RFLR                        GBDTLR, KRF                   sem números
+                                                                    tabulados
+  E20     Transformer                 SVM, LR, KNN, GNB, RF         com validação
+                                                                    estatística
+  E21     ensemble com meta-          resultados individuais dos    macro 95,4%
+          aprendizado                 modelos base não reportados
+
+Nota sobre E09: o estudo reporta 99% para Random Forest e 34% para KNN sobre o
+mesmo dataset, com acaso em 33,3% para três classes. O artigo não descreve como o
+ciphertext é convertido em vetor de features, o que impede avaliar a origem da
+discrepância. A extração registra a lacuna.
+
+Cinco observações.
+
+Modelos compostos vencem onde são testados contra seus componentes. HKNNRF,
+XGB-LGBM, HRFLR, RFLR e o esquema hierárquico de E20 superam seus componentes
+isolados nos respectivos estudos. E21 não reporta os resultados individuais dos
+modelos base, o que impede verificar o ganho do ensemble no seu caso.
+
+Aprendizado profundo vence em datasets grandes e ciphertexts longos. E15 e E20
+mostram isso de forma explícita, e E20 documenta que a vantagem do Transformer
+cresce com o tamanho do ciphertext e diminui sob chave aleatória.
+
+Modelos simples vencem em dois estudos. Em E01 e E03, o Complement Naive Bayes
+supera o MLP, com tempo de execução ordens de grandeza menor: 512 segundos contra
+739 horas em E03. Nos dois casos, a representação é o histograma de blocos de bits
+sobre plaintext estruturado em ECB.
+
+Sensibilidade a hiperparâmetros. E11 documenta que o modelo de atenção diverge por
+completo em quatro das sete configurações testadas, e converge a 88,9% na melhor
+delas. A ficha de extração registra ambiguidade do artigo sobre se esse valor
+corresponde a SM4-ECB ou a AES128-ECB, e o ponto fica sinalizado para conferência.
+
+Ausência de teste estatístico. Como apenas E20 aplica teste de significância, as
+demais comparações desta tabela são diferenças de ponto sem intervalo de confiança
+associado. Diferenças como a de E17, de 0,93 ponto percentual entre BiLSTM e BiGRU,
+ou a de A1, de 0,09 ponto entre quatro configurações de ensemble, não são
+distinguíveis de ruído amostral com a informação reportada.
+
+4.4 RQ4. Quais protocolos experimentais são utilizados?
+
+A configuração modal do corpus é:
+
+  gerar plaintext -> cifrar com N algoritmos em modo ECB com chave fixa ->
+  extrair features estatísticas do ciphertext -> partição única de 80/20 ->
+  treinar e comparar classificadores -> reportar acurácia
+
+Os desvios dessa configuração são poucos e definem o teto de rigor da área.
+
+E02 é o desvio mais informativo. Em vez de propor um método, o estudo fixa o
+classificador e varia a condição experimental em três eixos: mesma chave contra
+chaves distintas, cinco tamanhos de ciphertext, e conjuntos de algoritmos com e sem
+AES. Usa 220 plaintexts distintos por algoritmo, 40 para treino e 180 divididos em
+nove grupos de teste, o que produz nove execuções e permite reportar desvio padrão.
+Nenhum outro estudo do corpus tem desenho fatorial comparável.
+
+E01 gera uma chave de 128 bits distinta para cada arquivo de plaintext, por um
+gerador inspirado no ANSI X9.17, e declara a escolha como salvaguarda contra viés
+no processo de mineração. Também balanceia a partição por classe e por idioma, e
+mede a influência do idioma como variável.
+
+E05 trata a condição da chave como fator experimental, com dois cenários reportados.
+
+E07 aplica validação cruzada de 10 folds no experimento principal e testa o efeito
+do tamanho de bloco de forma sistemática.
+
+E12 controla a fronteira dos chunks de plaintext entre partições para evitar
+quase-duplicatas, e usa estratificação por classe em uma divisão de 70/15/15.
+
+E14 organiza a divisão como separação institucional simulada, com 800 plaintexts
+gerando ciphertexts de treino em um servidor de teste e 200 gerando ciphertexts de
+teste em uma agência-alvo.
+
+E21 usa validação cruzada de 5 folds tanto para treinar os modelos base quanto para
+gerar as meta-features do meta-classificador, evitando que o meta-modelo veja
+predições in-sample.
+
+E20 avalia sistematicamente três fatores, tamanho do ciphertext, estrutura do
+algoritmo e condição da chave, e é o único a aplicar testes de significância.
+
+Práticas ausentes do corpus inteiro:
+
+  Particionamento declarado por chave, com verificação de disjunção
+  Controle negativo, como permutação de rótulos
+  Avaliação em modos de criptografia autenticada
+  Reporte de intervalo de confiança, presente apenas como desvio padrão em E02
+  Análise de sensibilidade a hiperparâmetros além do caso de E11
+
+4.5 RQ5. Quais representações são usadas para caracterizar ciphertexts?
+
+As representações se organizam em sete famílias. A sétima foi acrescentada nesta
+versão.
+
+Família 1: testes de aleatoriedade NIST SP 800-22.
+A abordagem dominante. E06 usa 10 dos 15 testes. E11 usa 10 métodos que geram até
+160 p-values por bloco. E12 usa 21 dimensões adaptadas, somadas a skewness e
+variância por bloco. E14 usa 40 features de 14 métodos. E15 usa 40 features de 15
+testes, reduzidas a 10. E19 usa os 15 testes e seleciona 10 valores significativos.
+E20 usa 36 features NIST somadas a 40 de entropia. E13 usa NIST como baseline
+reimplementado. Oito dos 21 estudos tocam nessa família.
+
+Há uma tensão metodológica nessa escolha que a área não discute. A suíte NIST SP
+800-22 foi projetada para verificar se uma sequência se comporta como aleatória.
+Usá-la para identificar o algoritmo equivale a apostar que cada cifra falha nos
+testes de aleatoriedade de um jeito ligeiramente diferente e reprodutível.
+
+Família 2: estatísticas de frequência e histogramas.
+E01 usa histogramas de blocos de bits contíguos de 2 a 34 bits, com o limite
+superior imposto por memória. E03 usa a mesma técnica com blocos de 4 a 16 bits.
+E07 propõe a distribuição de peso de Hamming sobre subsequências de 16, 32 e 64
+bits, combinada com probabilidade de bit-string, num vetor de 371 dimensões
+filtrado por XGBoost-RFE. E16 usa vetor de frequência de caracteres normalizado,
+com média, desvio padrão e entropia, e PCA opcional.
+
+Família 3: domínio espectral.
+E13 inclui 150 features de sinal: momentos estatísticos de quarta ordem, FFT,
+densidade espectral de potência por Welch, centroide espectral, largura de banda,
+flatness e roll-off de 0,85 de energia. E11 testou análises de Fourier e wavelet de
+forma preliminar e as descartou por baixo conteúdo informativo. Os dois únicos
+estudos que exploraram o domínio espectral chegaram a avaliações opostas.
+
+Família 4: representações emprestadas de processamento de linguagem natural.
+E08 aplica TF-IDF sobre ciphertexts de 193 bytes tratados como documentos, sem
+detalhar a tokenização. E13 mapeia o ciphertext para caracteres via Latin-1, extrai
+n-gramas de ordem 2 e 3 com pesos TF-IDF e reduz por SVD truncada. E18 usa n-gramas
+de caracteres combinados com entropia de Shannon.
+
+Família 5: representações aprendidas de ponta a ponta.
+E10 tokeniza o ciphertext e o converte em embedding alimentado a BiLSTM, GRU e
+LSTM. E05 fornece a imagem cifrada de 28 por 28 pixels diretamente a CNN e
+DenseNet. E17 tokeniza em nível de caractere, com os ciphertexts codificados em
+Base64, e alimenta BiLSTM e BiGRU. E04 ocupa posição intermediária: usa arquitetura
+convolucional com kernel de pesos fixos não treinados, sobre matriz 32 por 32
+obtida por soma acumulada de blocos de 8 bits.
+
+Família 6: fusão híbrida.
+E12 concatena um ramo estatístico de 21 dimensões NIST com um ramo de embedding de
+bytes processado por CNN dilatada residual, e funde os dois num vetor de 256
+dimensões. E13 funde três modalidades, sinal, informação e linguagem, em 405
+dimensões por fusão precoce. E11 converte p-values NIST em mapa tipo imagem e
+aplica arquiteturas de visão.
+
+Família 7: features estruturais explícitas.
+E21 introduz uma categoria que os demais estudos não isolam: features que descrevem
+a organização do ciphertext em vez de sua distribuição estatística. O estudo extrai
+tamanho de bloco, presença e formato de padding, repetição de sequências e
+assinaturas de formato, e cita como exemplo a repetição de blocos de 8 bytes que
+DES produz em modo ECB e a variação de IV que AES-CBC produz. A família é relevante
+para a seção 5.1, porque torna explícito, no nível da representação, aquilo que
+vários estudos parecem estar capturando de forma implícita.
+
+Seleção de features aparece em seis estudos, com estratégias distintas: RFE por
+XGBoost em E07, importância por Random Forest por camada hierárquica em E14,
+variância e correlação em E15, filtro por estatística F seguido de RFE em E20,
+seleção de 10 valores significativos entre 15 testes em E19, e SelectKBest com
+ANOVA F em A1.
+
+Dois resultados negativos merecem registro. E12 relata que aumentar a complexidade
+da representação, com features enriquecidas, janelas maiores e conexões residuais,
+não melhorou o macro-F1. E13 relata que, em algumas combinações, a fusão multimodal
+não supera o baseline de feature única, e atribui isso a possível interferência de
+features redundantes.
+
+Uma restrição prática da família 1 aparece declarada em E15: vários testes NIST
+exigem sequências longas, e o teste universal de Maurer requer pelo menos 387.840
+bits. Isso limita a aplicabilidade dessa família a ciphertexts curtos.
+
+Uma lacuna de relato aparece em E09, que aplica SVM, Random Forest e KNN sobre
+ciphertexts sem descrever como a string é convertida em vetor numérico. E02
+descreve a arquitetura de extração em alto nível sem especificar as features.
+
+
+--------------------------------------------------------------------------------
+5 ANÁLISE TRANSVERSAL: FATORES ASSOCIADOS AO DESEMPENHO
+--------------------------------------------------------------------------------
+
+Os resultados relatados no corpus vão de 22% a 100%. Esta seção examina os fatores
+experimentais associados a essa dispersão, em ordem decrescente de evidência
+intra-estudo, que é o único tipo de evidência que permite isolar um fator com os
+demais mantidos constantes. A seção 5.8 discute os limites de atribuição causal.
+
+5.1 Granularidade da tarefa, e o comprimento de bloco como mecanismo candidato
+
+Este é o fator com mais evidência intra-estudo no corpus. Oito estudos comparam
+níveis de granularidade dentro do próprio protocolo, e todos encontram a mesma
+direção.
+
+  Nível de granularidade                       Acurácia    Acaso   Estudo
+  -------------------------------------------  ----------  ------  ------
+  Simétrico contra assimétrico                     80,25%     50%   E14
+  Estrutura SPN contra Feistel                     70,20%     50%   E20
+  Estrutura SPN contra Feistel                     66,00%     50%   E13
+  Stream contra bloco                              61,43%     50%   E14
+  Algoritmo específico, 3 classes assimétricas     70,00%   33,3%   E14
+  Algoritmo específico, 6 classes leves            54,20%   16,7%   E20
+  Algoritmo específico, 3 classes de fluxo         46,67%   33,3%   E14
+  Algoritmo específico, 5 classes SPN              45,00%     20%   E13
+  Algoritmo específico, 4 classes de bloco         38,80%     25%   E14
+  Algoritmo específico, 5 classes de bloco         36,20%     20%   E15
+  Algoritmo específico, 5 classes de bloco         34,00%     20%   E06
+  Binário contra 4 classes                     92,3% / 70,7%        E04
+
+E14 fornece a demonstração mais limpa em um único pipeline: 80,25% para simétrico
+contra assimétrico, 61,43% para stream contra bloco, e depois 70,00%, 46,67% e
+38,80% para o algoritmo específico dentro de cada uma das três subcategorias. A
+queda acompanha a especificidade e não a quantidade de classes, já que a camada de
+três classes assimétricas sai melhor que a de quatro classes de bloco.
+
+O corpus ampliado acrescenta um mecanismo candidato para esse padrão, e ele vem do
+estudo mais antigo do conjunto.
+
+E02 (Tan e Ji, 2016) executa, sob chaves distintas entre treino e teste, todas as
+dez comparações um contra um entre AES, Blowfish, 3DES, RC5 e DES. O resultado
+separa-se em dois blocos nítidos:
+
+  Par                     500 KB   100 KB    20 KB     4 KB
+  ----------------------  -------  -------  -------  -------
+  AES contra Blowfish      94,17%   94,17%   89,72%   50,00%
+  AES contra 3DES          93,89%   94,17%   90,28%   50,00%
+  AES contra RC5           93,89%   94,17%   88,09%   50,00%
+  AES contra DES           94,17%   94,17%   89,44%   50,00%
+  Blowfish contra 3DES     43,89%   48,89%   41,67%   50,83%
+  Blowfish contra RC5      46,11%   46,11%   44,44%   54,72%
+  Blowfish contra DES      50,00%   42,50%   47,78%   51,94%
+  3DES contra RC5          50,56%   49,17%   50,56%   48,89%
+  3DES contra DES          44,44%   49,44%   46,39%   45,83%
+  RC5 contra DES           48,06%   46,94%   50,83%   47,50%
+
+Os quatro pares que envolvem AES ficam entre 88% e 94% a partir de 20 KB. Os seis
+pares formados entre Blowfish, 3DES, RC5 e DES ficam entre 41,67% e 54,72% em todos
+os tamanhos, ou seja, no acaso de 50%, sem tendência de melhora com o aumento do
+ciphertext. AES opera com bloco de 128 bits e os outros quatro com bloco de 64
+bits. Os próprios autores concluem que "the block length exerts a significant
+influence on identification results".
+
+O mesmo estudo mostra o efeito na classificação multiclasse. Sob chaves distintas,
+identificar as cinco cifras rende de 35,89% a 39,11%, acima do acaso de 20%.
+Retirar AES e identificar apenas as quatro cifras de 64 bits rende de 21,94% a
+24,86%, ao redor ou abaixo do acaso de 25%. Reduzir o número de classes piorou o
+resultado. Os autores registram que isso contraria a intuição e atribuem o efeito à
+saída de AES do conjunto.
+
+E07 chega à mesma associação por outro caminho e sem manipular a chave. O estudo
+encontra que as cifras de bloco de 64 bits do seu conjunto, Blowfish, DES, IDEA e
+RC2, são identificadas com acurácia bem maior que as de 128 bits, AES-128, AES-256,
+Camellia e SM4.
+
+E21, por sua vez, torna a propriedade explícita no nível da representação, ao
+incluir tamanho de bloco, padding e repetição de sequências como uma categoria
+declarada de features (família 7 da seção 4.5).
+
+Reunindo: o que separa bem, e o que continua separando quando a chave varia, é uma
+propriedade estrutural grosseira. Pares de cifras que compartilham o comprimento de
+bloco ficam no acaso.
+
+E20 oferece um contraponto parcial que precisa ser registrado. Dentro do esquema
+hierárquico, o cluster Feistel sai a 92,8% e o cluster SP a 70,0%, com o mesmo
+número de classes e sob o parâmetro-base de chave fixa, o que indica que a
+estrutura de projeto também influencia, e não apenas o comprimento de bloco.
+
+Consequência para LWC. Cifras leves compartilham parte do espaço de projeto: blocos
+pequenos, chaves curtas, estruturas simples. Se a separabilidade que sobrevive à
+variação de chave depende de comprimento de bloco, a distinção entre cifras leves
+de mesmo tamanho de bloco cai no caso desfavorável. Vale notar que LBlock, PRESENT
+e SPECK64, os três algoritmos de E05, têm bloco de 64 bits, e que E05 é justamente
+o estudo em que a acurácia sob chave aleatória cai ao acaso.
+
+5.2 Tamanho do ciphertext (cinco estudos)
+
+Cinco estudos variam o tamanho do ciphertext de forma sistemática: E02, E06, E13,
+E15 e E20. Onde a tendência é reportada com números, ela é a mesma.
+
+E20 dá o número mais nítido: a distinção binária sob chave fixa vai de 56,3% em
+1 KB para 99,7% em 512 KB. São 43 pontos percentuais atribuíveis ao tamanho.
+
+E02 mostra um limiar abrupto. Sob mesma chave, com quatro algoritmos, a acurácia é
+de 100% em 500 KB e 100 KB, 99,17% em 20 KB, 98,33% em 4 KB, e despenca para 28,33%
+em 0,8 KB. Com cinco algoritmos, o mesmo padrão aparece deslocado: 98% em 500 KB e
+29,67% em 4 KB. O estudo sugere que existe um comprimento mínimo abaixo do qual o
+método deixa de funcionar, e que esse limiar depende do conjunto de algoritmos.
+
+E13 reporta seus melhores resultados no maior tamanho testado, tanto no caso
+binário quanto no de cinco classes.
+
+E15 registra a razão técnica em suas limitações declaradas: os testes NIST exigem
+sequências longas, e o de Maurer requer pelo menos 387.840 bits.
+
+Há uma exceção importante, já descrita na seção 5.1: em E02, sob chaves distintas,
+os pares entre cifras de 64 bits permanecem no acaso em todos os tamanhos, de
+0,8 KB a 500 KB. Aumentar o ciphertext não recupera informação que não está lá.
+
+O corpus tem uma distribuição de tamanhos concentrada nos valores altos. Os estudos
+com resultados mais elevados usam 512 KB ou mais. Os que operam com entradas curtas
+reportam valores mais baixos: E12 usa janelas de 256 bytes e obtém 33%, e E05 usa
+imagens de 784 bytes e obtém 31,11% sob chave aleatória.
+
+5.3 Condição da chave (três estudos manipulam)
+
+Três estudos tratam a condição da chave como variável experimental e reportam os
+dois cenários. O corpus ampliado acrescentou um deles.
+
+E02 (Tan e Ji, 2016). Com cinco algoritmos e ciphertexts de 500 KB, a acurácia vai
+de 98% sob mesma chave para 37,67% sob chaves distintas. Com quatro algoritmos, vai
+de 100% para 22,92%. É a maior queda documentada no corpus.
+
+E05 (Mishra et al., 2021). Mantendo tudo constante e alterando apenas a chave, a
+CNN vai de 98,78% para 31,11% no MNIST, com acaso em 33,3%. A DenseNet vai de
+95,67% para 36,77%.
+
+E20 (Yuan et al., 2026). O Transformer vai de 99,7% na tarefa binária em 512 KB
+para 58,3% a 60,5% sob chave aleatória, contra 50% de acaso, e a vantagem
+estatística sobre os modelos clássicos permanece em apenas duas das cinco
+comparações.
+
+Os três encontram queda. As magnitudes diferem: até abaixo do acaso em E02, até o
+acaso em E05, e até cerca de nove pontos acima do acaso em E20.
+
+E01 é o contraponto e precisa ser lido junto. O estudo usa uma chave de 128 bits
+distinta para cada arquivo de plaintext, declarada como salvaguarda contra viés, e
+ainda assim reporta precisão praticamente total para sete algoritmos. Variar a
+chave por amostra, nesse protocolo, não derrubou o desempenho.
+
+A comparação entre E01 e E02 é instrutiva porque os dois são de 2016, ambos em modo
+ECB, ambos com chaves variando entre treino e teste. E01 obtém quase 100% e E02
+obtém 22% a 39%. As diferenças estão em outros eixos. E01 avalia sete algoritmos de
+categorias distintas, incluindo uma cifra de fluxo e um assimétrico, sobre texto em
+linguagem natural com pelo menos 140.000 caracteres por amostra. E02 avalia cinco
+cifras de bloco, quatro das quais com o mesmo comprimento de bloco. A leitura
+compatível com a seção 5.1 é que E01 media majoritariamente separações estruturais
+grosseiras, que sobrevivem à variação de chave, e E02 media separações entre cifras
+estruturalmente equivalentes, que não sobrevivem.
+
+Oito estudos usam chave fixa sem separação e oito não informam o tratamento das
+chaves. Treze dos 21 descrevem o tratamento, o que significa que, para oito, não é
+possível situar o resultado em nenhum dos regimes acima.
+
+Nenhum dos 21 estudos descreve um particionamento formal por chave, com verificação
+de que as chaves do teste não ocorrem no treino. E01, E02, E05, E20 e E21 chegam
+perto por consequência do desenho, e E02 é o único que declara o número de chaves
+de teste utilizadas, nove, e que elas diferem entre si e da chave de treino.
+
+5.4 Modo de operação (quatro estudos comparam)
+
+Quatro estudos comparam modos dentro do próprio protocolo, com resultados não
+uniformes.
+
+E08 classifica simultaneamente algoritmo e modo, em oito classes, e encontra ECB
+como o modo mais facilmente identificado nos três modelos testados, com F1 entre
+0,92 e 0,95.
+
+E12 reporta recall de 54% para AES-ECB e 46% para AES-CBC, mesma direção, diferença
+pequena.
+
+E10 compara quatro modos em dois datasets e encontra ordenações diferentes. No
+Brown Corpus, CTR sai melhor (97,6%) e OFB pior (85,7%). No ISEAR, CBC e CFB saem
+melhor (99,4%) e CTR pior (92,5%). O modo pior em um dataset é quase o melhor no
+outro.
+
+E19 incorpora a distinção entre ECB e CBC como uma camada do próprio esquema
+hierárquico, o que trata o modo como alvo de classificação e não como condição.
+
+O que o corpus sustenta é que ECB tende a ser mais identificável onde foi comparado
+diretamente com outros modos (E08 e E12), e que entre modos que não são ECB a
+ordenação depende do conjunto de dados (E10). Nove dos 21 estudos usam apenas ECB.
+
+Vale notar que E17 opera inteiramente em CBC e obtém 87,91% em quatro classes,
+contra 25% de acaso, o que indica que o modo ECB não é condição necessária para
+desempenho alto. A condição de chave em E17 não é reportada.
+
+5.5 Heterogeneidade do conjunto de classes (dois estudos quantificam)
+
+Vários estudos montam conjuntos com algoritmos estruturalmente incomparáveis. E10
+classifica oito cryptosystems que incluem duas cifras didáticas de 16 bits, cifras
+completas de 64 e 128 bits e um algoritmo assimétrico. E04 mistura três cifras
+simétricas de bloco com RSA. E14 mistura assimétricos, cifras de fluxo e cifras de
+bloco. E01 mistura cifras de bloco, cifra de fluxo e RSA, o que os autores
+descrevem como escolha exploratória deliberada. E19 vai mais longe e inclui cifras
+clássicas, simétricas de bloco e de fluxo e assimétricas no mesmo esquema. E21
+inclui funções hash ao lado de cifras.
+
+Dois estudos quantificam o efeito dentro do próprio protocolo.
+
+E14 atravessa os dois regimes com sua arquitetura hierárquica: 80,25% para
+simétrico contra assimétrico e 38,80% para o algoritmo específico entre quatro
+cifras de bloco, com mesmo dataset, mesmas features e mesmo modelo.
+
+E02 quantifica de forma ainda mais direta ao remover uma única classe. Sob chaves
+distintas, retirar AES do conjunto de cinco reduz a acurácia de 35,89% a 39,11%
+para 21,94% a 24,86%, apesar de reduzir também o número de classes.
+
+E21 acrescenta uma variante do problema. As acurácias por classe vão de 90,4% a
+94,2% para as cinco cifras e de 95,4% a 98,2% para as quatro funções hash. A macro
+média reportada, de 95,4%, é puxada para cima pelas classes de hash, que
+representam uma tarefa diferente.
+
+Uma acurácia global alta em conjunto heterogêneo não informa sobre a
+distinguibilidade das classes difíceis dentro dele. E07 e E02 são os estudos que
+mais aproximam esse detalhamento, o primeiro por reportar matriz de confusão
+normalizada com métricas por algoritmo, o segundo por reportar todas as comparações
+par a par.
+
+5.6 Tipo de conteúdo do plaintext (dois estudos, direções diferentes)
+
+Dois estudos investigam o efeito do conteúdo do plaintext dentro do próprio
+protocolo, e chegam a conclusões que se aplicam a aspectos diferentes.
+
+E01 varia o idioma do texto em claro entre sete idiomas, com alfabetos distintos, e
+mede a diferença. O desvio médio é de 5,28%, com desvio padrão de 1,82%, e o estudo
+conclui que o idioma não influencia significativamente a identificação.
+
+E05 varia o conjunto de imagens entre MNIST e Fashion-MNIST, com todo o resto
+constante, e encontra diferença grande: 98,78% contra 64,50% de acurácia de
+validação com CNN. Os autores atribuem a diferença à frequência de mudança de
+valores de pixel na imagem original.
+
+E03 acrescenta uma observação de terceira natureza. O estudo aplica a técnica de
+E01 a áudio e vídeo e descreve os resultados como compatíveis com os obtidos antes
+em texto, o que sugere invariância ao tipo de mídia dentro daquela linha
+metodológica. A comparação é textual, sem reexecução no mesmo dataset.
+
+A leitura conjunta é que o idioma do texto não parece importar e o tipo de mídia não
+parece importar dentro de uma mesma técnica, mas a estrutura estatística interna do
+conteúdo importa. O corpus não contém nenhum estudo que compare plaintext
+estruturado contra plaintext aleatório dentro do mesmo protocolo.
+
+5.7 Delimitação de tarefa no cohort recente
+
+Um problema que não aparecia na versão anterior desta revisão emergiu com a
+ampliação do corpus. Quatro estudos de 2025 e 2026 combinam a identificação de
+algoritmo com uma segunda tarefa de natureza distinta, e três deles reportam
+métricas que somam as duas.
+
+E17 combina classificação de esquema de criptografia com reconstrução de plaintext
+por Seq2Seq. A segunda tarefa exige pares alinhados de plaintext e ciphertext para
+treino supervisionado, o que a coloca fora do cenário ciphertext-only. O artigo
+reporta as duas tarefas em tabelas separadas, com métricas distintas, o que permite
+separá-las na extração.
+
+E21 combina identificação de cifra com classificação de função hash e reporta uma
+macro média única sobre as nove classes. Como as classes de hash têm acurácia mais
+alta (95,4% a 98,2%) que as classes de cifra (90,4% a 94,2%), a macro média de
+95,4% descreve a tarefa combinada e superestima o desempenho na tarefa de
+identificação de cifra.
+
+E18 combina identificação de quatro cifras com identificação de SHA256, e trata
+SHA256 como uma quinta classe ao lado das cifras.
+
+A1, classificado como adjacente, combina identificação com diagnóstico de
+vulnerabilidade e usa a chave como entrada.
+
+Além disso, dois estudos incluem cifras clássicas dentro de esquemas destinados a
+criptografia moderna: E19 inclui Caesar e Rail Fence como classes na primeira camada
+do seu esquema hierárquico, e A2 trata exclusivamente de cifras clássicas.
+
+A consequência prática é que números extraídos de resumos e tabelas agregadas desses
+estudos não são comparáveis aos dos estudos que resolvem apenas a tarefa de
+identificação de cifra. Na seção 3.10 e no Apêndice A, os valores foram
+desagregados sempre que o artigo permitiu.
+
+5.8 Por que a atribuição causal não é possível com este corpus
+
+Os fatores acima covariam entre si ao longo do corpus. Os estudos que usam plaintext
+aleatório também tendem a usar chave fixa e modo ECB. Os estudos com conjuntos
+heterogêneos tendem a reportar acurácias altas nas camadas mais amplas. Os estudos
+com ciphertexts grandes concentram os melhores resultados.
+
+E02 é o estudo que mais se aproxima de um desenho fatorial, com três fatores
+variados (condição da chave, tamanho do ciphertext e composição do conjunto de
+algoritmos), mantendo fixos o classificador, o modo e o tipo de plaintext. E20 varia
+três fatores diferentes (tamanho, estrutura e chave). Nenhum outro estudo varia mais
+de dois.
+
+A consequência é direta. Quando dois estudos reportam acurácias muito diferentes,
+não é possível dizer qual dos fatores responde pela diferença, porque eles mudam
+juntos. Uma comparação entre estudos nesta área compara protocolos inteiros, não
+modelos nem representações.
+
+Isso vale também na direção positiva. O resultado de 99,7% de E20 e o de 31,11% de
+E05 não se contradizem, porque foram obtidos sob configurações que diferem em várias
+dimensões. Tratá-los como evidências conflitantes sobre a mesma pergunta seria um
+erro de leitura.
+
+Uma associação adicional merece registro, com a mesma cautela. Os estudos que
+reportam as acurácias mais altas do corpus tendem a ser os que menos documentam o
+protocolo. E09 reporta 99% sem descrever como o ciphertext vira vetor de features.
+E18 reporta 98% a 99% por modelo dedicado, sem matriz de confusão multiclasse e com
+ambiguidade sobre a composição do dataset. E19 descreve o desempenho como
+"near-perfect" sem tabular valores. Em contraste, os estudos que declaram chave
+fixa, usam plaintext aleatório e reportam a linha de base do acaso ficam entre 33% e
+45% em tarefas multiclasse. A associação é consistente, mas o corpus não permite
+separar quanto dela vem de protocolo mais frágil e quanto vem de tarefas mais
+fáceis.
+
+O que a área precisaria para permitir atribuição causal é um protocolo comum que
+mantenha fixos todos os fatores menos um. E02 mostra que esse tipo de desenho é
+viável e barato, e que já era viável em 2016.
+
+
+--------------------------------------------------------------------------------
+6 AMEAÇAS À VALIDADE DESTA REVISÃO
+--------------------------------------------------------------------------------
+
+6.1 Viés de seleção
+
+A triagem foi conduzida por um único revisor, sem segunda avaliação independente
+nem cálculo de concordância. Decisões em casos limítrofes, sobretudo na fronteira
+entre identificação de algoritmo e criptanálise diferencial, dependem de julgamento
+e podem variar entre revisores.
+
+Mitigação aplicada: os critérios foram definidos e registrados antes do início da
+triagem, os motivos de exclusão foram padronizados para não fragmentar o PRISMA, e
+casos duvidosos foram marcados como dúvida em vez de decididos por conveniência.
+
+6.2 Alteração de protocolo durante a revisão
+
+A promoção de oito estudos do grupo contextual para extração completa foi decidida
+após a primeira rodada de extração, o que configura alteração de protocolo em curso.
+A decisão está declarada na seção 2.5 e o efeito sobre as conclusões está avaliado
+em 6.7.
+
+O risco associado é que a seleção dos oito não seja neutra. Eles foram escolhidos
+por critério declarado, pertencer ao subgrupo de identificação de algoritmo dentro
+dos 26 contextuais, e não por conveniência de resultado. Ainda assim, a decisão foi
+tomada com conhecimento parcial do conteúdo dos estudos, o que impede tratá-la como
+cega.
+
+6.3 Estudos não recuperados
+
+Seis dos 21 estudos designados para leitura integral não foram obtidos, por ausência
+de acesso institucional. A perda não é aleatória, porque depende de política de
+acesso das editoras.
+
+Um dos não recuperados, "Block Cipher Algorithm Identification Based on
+CNN-Transformer Fusion Model", recebeu rótulo LWC na triagem, e sua ausência afeta
+diretamente a base da RQ1. Dois outros propõem representações que não aparecem em
+nenhum estudo incluído, transformada rápida de Fourier como feature primária e
+ensemble de GBDT com regressão logística, o que significa que a taxonomia da RQ5
+pode estar incompleta. A lista está no Apêndice B.
+
+6.4 Viés de publicação
+
+Na maioria dos estudos que propõem um método novo, o método proposto vence os
+baselines. Resultados baixos aparecem em poucos casos: E12 com 33%, E05 sob chave
+aleatória, E02 sob chaves distintas e E09 no KNN. Nos três primeiros, o resultado
+baixo acompanha um achado metodológico que o estudo destaca. É plausível que existam
+experimentos de identificação com resultado negativo que nunca foram submetidos, o
+que deslocaria a estimativa agregada da área para cima.
+
+6.5 Viés de extração
+
+A extração foi apoiada por modelo de linguagem, sob protocolo de análise isolada por
+artigo, com proibição de inferir campos ausentes e marcação obrigatória de "não
+reportado". Não houve segundo extrator nem verificação cruzada sistemática de todos
+os campos.
+
+A primeira rodada de extração produziu um erro de classificação, corrigido na seção
+3.6: E13 foi marcado como estudo de criptografia leve com base em conhecimento
+externo sobre os algoritmos, e não com base no texto. A verificação no artigo
+original mostrou que o termo não ocorre nele. O caso motivou a regra de extração
+descrita na seção 2.7 e sugere que outras marcações derivadas de conhecimento de
+domínio, e não do texto, podem existir nas fichas.
+
+Quatro pontos permanecem sinalizados para conferência contra os artigos originais:
+
+  Em E08, um valor de F1 numericamente incompatível com a precision e o recall
+  reportados na mesma linha da tabela.
+  Em E04, divergência textual entre 191 e 192 dimensões do vetor de features.
+  Em E11, ambiguidade sobre se o resultado de 88,9% do modelo de atenção
+  corresponde a SM4-ECB ou a AES128-ECB.
+  Em E16, dois experimentos com números de amostras e de algoritmos diferentes, sem
+  que o artigo explicite a relação entre eles.
+
+Os números centrais usados nas seções 4.1, 5.1, 5.2 e 5.3 foram verificados
+diretamente nos artigos originais de E02, E05, E10, E13 e E20.
+
+6.6 Limites da estratégia de busca
+
+A busca cobriu cinco bases e não incluiu literatura cinzenta, teses, relatórios
+técnicos nem repositórios de preprint. O critério de idioma restringiu a publicações
+em inglês, o que pode excluir trabalhos publicados em chinês, dado que parte
+substancial desta linha vem de grupos chineses.
+
+Para duas combinações de base e string, o volume indicou precisão insuficiente e
+apenas o subconjunto restrito a título e resumo foi exportado. As exportações do
+IEEE Xplore vieram em lotes com limite por download, e duas delas atingiram
+exatamente 100 registros, o que sugere truncamento.
+
+6.7 Efeito da ampliação do corpus sobre as conclusões
+
+A ampliação de 14 para 21 estudos produziu quatro efeitos, registrados aqui para que
+a comparação com a versão anterior seja auditável.
+
+Reforço. O achado sobre granularidade passou de seis para oito estudos com evidência
+intra-estudo, e ganhou um mecanismo candidato, o comprimento de bloco, sustentado
+por E02 e E07 de forma independente.
+
+Reordenação. A condição da chave passou de dois para três estudos que a manipulam, e
+subiu de quinto para terceiro fator na ordenação por evidência. E02 documenta a
+maior queda do corpus.
+
+Correção. A classificação de E13 como estudo de criptografia leve não se sustentou
+na verificação. O número de estudos que assumem o enquadramento LWC é três, e o de
+estudos integralmente LWC é dois.
+
+Novidade. O problema de delimitação de tarefa (seção 5.7) não existia no corpus
+anterior e apareceu concentrado no cohort de 2025 e 2026.
+
+Nenhuma conclusão da versão anterior foi invertida pela ampliação. A conclusão sobre
+impossibilidade de atribuição causal permanece, com E02 como exceção parcial que
+mostra o desenho necessário.
+
+6.8 Ausência de instrumento formal de qualidade
+
+Não foi aplicado instrumento validado. Os seis itens de completude da seção 2.8
+foram definidos pelo revisor a partir dos padrões observados durante a extração.
+Eles capturam o que se mostrou variável neste corpus, mas não têm validação externa.
+
+6.9 Limite da síntese
+
+A seção 5 identifica fatores associados à variação de desempenho, sem estabelecer
+causalidade. Essa limitação é imposta pelos dados, conforme discutido em 5.8, e não
+por escolha metodológica desta revisão. Nenhuma das associações relatadas deve ser
+lida como relação causal estabelecida.
+
+
+--------------------------------------------------------------------------------
+7 LACUNAS E AGENDA
+--------------------------------------------------------------------------------
+
+7.1 Lacunas identificadas
+
+L1. Ausência de protocolo comum e de benchmark compartilhado.
+Cada estudo constrói o próprio dataset, com plaintext, chaves, modos, tamanhos e
+conjuntos de algoritmos diferentes. Dois dos 21 disponibilizam dados. Sem base
+comum, comparações entre trabalhos comparam protocolos inteiros.
+
+L2. Cobertura restrita de criptografia leve.
+Três estudos assumem o enquadramento LWC, dois deles integralmente. Nove algoritmos
+leves distintos aparecem no corpus. Ascon, GIFT e as demais primitivas do processo
+de padronização do NIST não aparecem em nenhum. Dois estudos as citam apenas como
+trabalho futuro.
+
+L3. Domínio do modo ECB e ausência de criptografia autenticada.
+Nove estudos usam apenas ECB. Sete avaliam algum modo além de ECB. Nenhum avalia
+modos AEAD com nonce, que é como os padrões LWC operam.
+
+L4. Rigor estatístico insuficiente.
+Um estudo em 21 aplica testes de significância. Sete usam validação cruzada ou
+reamostragem repetida. Um único estudo, E02, reporta desvio padrão entre repetições.
+Diferenças de menos de um ponto percentual são apresentadas como resultado em pelo
+menos dois estudos.
+
+L5. Faixa de tamanhos de ciphertext concentrada nos valores altos.
+Os melhores resultados concentram-se em 512 KB. E02 mostra que abaixo de um limiar,
+entre 0,8 KB e 4 KB no seu protocolo, o método deixa de funcionar. Essa é justamente
+a faixa de payload de dispositivos restritos, e nenhum estudo a caracteriza de forma
+sistemática.
+
+L6. Ausência de controles negativos.
+Nenhum estudo executa permutação de rótulos ou teste equivalente.
+
+L7. Documentação incompleta de protocolo.
+Oito estudos não descrevem o tratamento das chaves, cinco não descrevem o modo de
+operação, dois não descrevem como o ciphertext é convertido em features, e um não
+tabula os resultados numéricos.
+
+L8. Delimitação de tarefa.
+Quatro estudos do cohort recente reportam identificação de algoritmo agregada a uma
+segunda tarefa. Um usa a chave como entrada. Dois incluem cifras clássicas em
+esquemas destinados a criptografia moderna.
+
+L9. Evidência antiga não incorporada.
+E02, de 2016, já documentava que a identificação entre cifras de mesmo comprimento
+de bloco fica no acaso quando as chaves diferem. A maior parte dos estudos
+posteriores do corpus não replica esse controle nem discute o achado.
+
+7.2 Agenda proposta
+
+A1. Construir um benchmark público com protocolo documentado.
+Conjunto de referência que especifique plaintext, chaves, nonces, modos, tamanhos e
+partições, permitindo que estudos diferentes variem um fator de cada vez.
+
+A2. Replicar o desenho fatorial de E02 com cifras leves.
+O desenho é simples: fixar o classificador, variar condição da chave, tamanho do
+ciphertext e composição do conjunto, e reportar todas as comparações par a par.
+Aplicá-lo a cifras leves de mesmo comprimento de bloco responderia diretamente à
+RQ1 sob condições realistas.
+
+A3. Testar o comprimento de bloco como variável explicativa.
+A hipótese sugerida por E02 e E07 é verificável: montar conjuntos controlados em que
+o comprimento de bloco varia enquanto o algoritmo é mantido, e vice-versa. Se a
+hipótese se confirmar, boa parte dos resultados da área ganha uma interpretação
+única.
+
+A4. Estender a avaliação a Ascon, GIFT e às demais primitivas do NIST, em modo AEAD.
+As implementações de referência são públicas. É a lacuna de cobertura mais direta.
+
+A5. Caracterizar a faixa de tamanhos pequenos.
+Faixa sugerida de 16 bytes a 4 KB, com relato por faixa, dado que E02 localiza o
+colapso do método nessa região.
+
+A6. Adotar reporte estatístico mínimo.
+Validação cruzada ou reamostragem repetida, desvio padrão entre repetições, teste de
+Friedman com post-hoc de Nemenyi para comparações múltiplas, e declaração da linha
+de base do acaso ao lado de cada acurácia. E20 demonstra a viabilidade.
+
+A7. Declarar a tarefa resolvida.
+Trabalhos que combinam identificação de cifra com identificação de hash,
+reconstrução de plaintext ou diagnóstico de vulnerabilidade deveriam reportar
+métricas desagregadas por tarefa.
+
+A8. Padronizar a documentação de protocolo.
+Registrar sempre modo de operação, geração e tratamento de chaves, origem e tamanho
+do plaintext, tamanho do ciphertext, critério de partição e método de extração de
+features.
+
+
+--------------------------------------------------------------------------------
+8 CONCLUSÃO
+--------------------------------------------------------------------------------
+
+Esta revisão partiu de 864 registros únicos e chegou a 23 estudos com extração
+completa, dos quais 21 compõem a análise principal, publicados entre 2016 e 2026.
+
+Sobre a pergunta central, a resposta é positiva dentro das condições testadas.
+Quatro estudos avaliam algoritmos que a literatura reconhece como leves, três deles
+assumindo esse enquadramento, e demonstram separabilidade acima do acaso em várias
+configurações, com desempenho de equivalente ao acaso a 99,7% conforme o protocolo.
+A base é de nove algoritmos leves, todos cifras de bloco em modos sem autenticação,
+e não inclui os padrões selecionados pelo NIST.
+
+Sobre técnicas, a área percorreu classificadores clássicos sobre histogramas de
+bits, ensembles de stacking, redes profundas, Transformer e, no cohort mais recente,
+arquiteturas de sistema com meta-aprendizado e distribuição por nós. Dentro de cada
+estudo, o modelo proposto quase sempre vence. Entre estudos, o ranking não é
+construível.
+
+Sobre representações, os testes de aleatoriedade NIST dominam, e as propostas
+recentes combinam features estatísticas com representações aprendidas. Um estudo
+isola features estruturais explícitas, como comprimento de bloco e padrão de
+padding, o que se conecta diretamente ao achado transversal desta revisão.
+
+Sobre protocolos, a configuração modal é chave fixa, modo ECB e partição única de
+80/20. Sete estudos em 21 usam validação cruzada ou reamostragem repetida e um
+aplica teste de significância.
+
+O achado transversal mais bem sustentado é a degradação por granularidade, observada
+dentro do protocolo de oito estudos independentes. O corpus ampliado acrescenta um
+mecanismo candidato. Tan e Ji (2016) mostram que, sob chaves distintas entre treino
+e teste, AES é separável de cada uma de quatro cifras de 64 bits com 88% a 94% de
+acurácia, enquanto os seis pares formados entre essas quatro cifras ficam no acaso
+em qualquer tamanho de ciphertext, e atribuem o resultado ao comprimento de bloco.
+Zhao et al. (2023) chegam à mesma associação por outro caminho, e Ananthi et al.
+(2026) incorporam a propriedade como categoria explícita de features.
+
+Se essa leitura estiver correta, ela reorganiza a interpretação da área: o que os
+modelos separam de forma estável é a granularidade estrutural do criptograma, e não
+a identidade do algoritmo que o produziu. Para criptografia leve, isso situa a
+tarefa no caso desfavorável, porque cifras leves compartilham comprimento de bloco
+entre si com frequência.
+
+Outros cinco fatores covariam com o desempenho relatado: tamanho do ciphertext,
+condição da chave, modo de operação, heterogeneidade do conjunto de classes e tipo
+de conteúdo do plaintext. Como nenhum estudo varia mais de três fatores de forma
+controlada, e como eles se movem juntos ao longo da literatura, a evidência
+disponível não permite ordenar suas contribuições. E02, o estudo mais antigo do
+corpus, é o que mais se aproxima do desenho necessário, e continua sem replicação
+dez anos depois.
+
+
+--------------------------------------------------------------------------------
+REFERÊNCIAS
+--------------------------------------------------------------------------------
+
+Estudos primários da análise principal
+
+ANANTHI, S.; SUBBULAKSHMI, A.; BHARATHI, V. C.; SATHYA, R.; ANANTHI, P.; PAVITHRA,
+P. AI-Driven Cryptanalysis: A Novel Framework for Heterogeneous Encryption
+Algorithms Identification and Evaluation. In: 2026 International Conference on
+Computer Networks and Inventive Communication Technologies (ICCNCT), 2026.
+DOI: 10.1109/ICCNCT68477.2026.11590696.
+
+BARBOSA, F. M.; VIDAL, A. R. S. F.; ALMEIDA, H. L. S.; MELLO, F. L. de. Machine
+Learning Applied to the Recognition of Cryptographic Algorithms Used for Multimedia
+Encryption. IEEE Latin America Transactions, v. 15, n. 7, 2017.
+DOI: 10.1109/TLA.2017.7959350.
+
+BHAGAT, A. G.; MISHRA, A. Deep Learning based Identification of Encryption
+Algorithms for Cryptanalysis. In: 2025 1st International Conference on Advancement
+in Futuristic Technologies (ICAFT), 2025. DOI: 10.1109/ICAFT66710.2025.11453279.
+
+DHAWADE, G.; KALE, A.; GUPTA, A.; SAYYAD, I.; WAGH, K. S. Encryption Algorithm
+Identification through ML with Character Frequency Approach. In: 2025 5th
+International Conference on Intelligent Technologies (CONIT), 2025.
+DOI: 10.1109/CONIT65521.2025.11167658.
+
+ITHAPE, S.; PURUSHOTHAMA, B. R. Identification of Encryption Method for Block
+Ciphers using Machine Learning Methods. In: 2023 IEEE 20th India Council
+International Conference (INDICON), 2023. DOI: 10.1109/INDICON59947.2023.10440785.
+
+JEONG, O.; MARTIN, A. D.; AHAMADZADEH, E.; MOON, I. Robust Cryptosystem
+Identification under Various Operation Modes using Deep Recurrent Neural Networks.
+In: 2024 IEEE 4th International Conference on Electronic Communications, Internet of
+Things and Big Data (ICEIB), 2024. DOI: 10.1109/ICEIB61477.2024.10602570.
+
+JHA, P. K.; AHMED, S.; NANTHINI, N. A Blockchain Integrated Machine Learning
+Framework for Cryptographic Algorithm Identification. In: 2025 International
+Conference on Intelligent and Secure Engineering Solutions (CISES), 2025.
+DOI: 10.1109/CISES66934.2025.11264967.
+
+LI, J.; SUN, H.; DU, Z.; WANG, Y.; YUAN, K.; JIA, C. A generic cryptographic
+algorithm identification scheme based on ciphertext features. Journal of Information
+Security and Applications, v. 89, art. 103984, 2025.
+DOI: 10.1016/j.jisa.2025.103984.
+
+LI, L.; CHEN, J. Research on identification of domestic commercial block cipher
+algorithms based on deep learning. In: Proceedings of SPIE, v. 13486, Fourth
+International Conference on Computer Vision, Application, and Algorithm (CVAA 2024),
+2025. DOI: 10.1117/12.3055806.
+
+MELLO, F. L. de; XEXÉO, J. A. M. Cryptographic Algorithm Identification Using
+Machine Learning and Massive Processing. IEEE Latin America Transactions, v. 14,
+n. 11, 2016. DOI: 10.1109/TLA.2016.7795833.
+
+MISHRA, G.; PAL, S. K.; MURTHY, S. V. S. S. N. V. G. K.; VATS, K.; RAINA, R.
+Distinguishing Lightweight Block Ciphers in Encrypted Images. Defence Science
+Journal, v. 71, n. 5, 2021. DOI: 10.14429/dsj.71.16843.
+
+RACHINI, A.; ABI ASSAF, M.; FARES, C.; KHATOUN, R. Cryptographic Algorithm
+Identification through Machine Learning for Enhanced Data Security. In: 2023 2nd
+International Engineering Conference on Electrical, Energy, and Artificial
+Intelligence (EICEEAI), 2023. DOI: 10.1109/EICEEAI60672.2023.10590185.
+
+SIMHADRI, S.; RAGHAVENDRA; PURUSHOTHAMA, B. R. AI-Powered Cryptanalysis: Identifying
+Encryption Algorithms and Recovering Plaintext. In: 2025 International Conference on
+Networks and Cryptology (NETCRYPT), 2025. DOI: 10.1109/NETCRYPT65877.2025.11102567.
+
+TAN, C.; JI, Q. An Approach to Identifying Cryptographic Algorithm from Ciphertext.
+In: 2016 8th IEEE International Conference on Communication Software and Networks
+(ICCSN), 2016.
+
+YAO, T.; WANG, P.; BAI, J.; ZHU, H. Optimizing Cryptographic Algorithm Identification
+in Power Grids Using Machine Learning. In: 2025 3rd International Conference on Big
+Data and Privacy Computing (BDPC), 2025. DOI: 10.1109/BDPC63545.2025.11135530.
+
+YUAN, C. Cryptosystem Recognition Scheme Based on Convolution Features. In: 2021
+International Conference on Artificial Intelligence, Big Data and Algorithms
+(CAIBDA), 2021. DOI: 10.1109/CAIBDA53561.2021.00055.
+
+YUAN, K.; YU, D.; FENG, J.; YANG, L.; JIA, C.; HUANG, Y. A block cipher algorithm
+identification scheme based on hybrid k-nearest neighbor and random forest
+algorithm. PeerJ Computer Science, v. 8, e1110, 2022. DOI: 10.7717/peerj-cs.1110.
+
+YUAN, K.; YU, D.; YANG, W.; DU, Z.; SHEN, L.; LI, Z. Identification of block cipher
+algorithms using multi-layer perception algorithm. Soft Computing, v. 29,
+p. 3823-3834, 2025. DOI: 10.1007/s00500-025-10595-y.
+
+YUAN, K.; ZHAO, C.; SUN, H.; ZHOU, Y.; FAN, G.; JIA, C. Lightweight block cipher
+algorithm identification scheme based on transformer. Evolving Systems, v. 17,
+art. 36, 2026. DOI: 10.1007/s12530-026-09802-4.
+
+ZHAO, L.; CHI, Y.; XU, Z.; YUE, Z. Block Cipher Identification Scheme Based on
+Hamming Weight Distribution. IEEE Access, v. 11, 2023.
+DOI: 10.1109/ACCESS.2023.3249753.
+
+ZHOU, H. Block Cipher Algorithm Identification Scheme Based on Multi-Modal Feature
+Fusion. In: 2025 IEEE 7th International Conference on Civil Aviation Safety and
+Information Technology (ICCASIT), 2025. DOI: 10.1109/ICCASIT66611.2025.11348899.
+
+
+Estudos extraídos e classificados como adjacentes
+
+DADIYALA, C.; SHINGNE, H.; CHAVAN, V.; DEKATE, A. Cryptographic Algorithm Identifier
+with Vulnerability Detection and Recommendations. In: 2025 IEEE 2nd International
+Conference for Women in Computing (InCoWoCo), 2025.
+DOI: 10.1109/InCoWoCo68239.2025.11407046.
+
+SHREYASHI. Classical Cipher Identification Using Binary Encodings and Deep Learning.
+Procedia Computer Science, v. 282, p. 894-903, 2026. ISSN 1877-0509.
+
+
+Referências metodológicas e normativas (não integram o corpus revisado)
+
+KITCHENHAM, B.; CHARTERS, S. Guidelines for performing Systematic Literature Reviews
+in Software Engineering. EBSE Technical Report EBSE-2007-01. Keele University e
+University of Durham, 2007.
+
+OUZZANI, M.; HAMMADY, H.; FEDOROWICZ, Z.; ELMAGARMID, A. Rayyan: a web and mobile
+app for systematic reviews. Systematic Reviews, v. 5, art. 210, 2016.
+
+PAGE, M. J. et al. The PRISMA 2020 statement: an updated guideline for reporting
+systematic reviews. BMJ, v. 372, n. 71, 2021.
+
+RUKHIN, A. et al. A Statistical Test Suite for Random and Pseudorandom Number
+Generators for Cryptographic Applications. NIST Special Publication 800-22 Revision
+1a, 2010.
+
+NATIONAL INSTITUTE OF STANDARDS AND TECHNOLOGY. Ascon-Based Lightweight Cryptography
+Standards for Constrained Devices. NIST Special Publication 800-232.
+
+INTERNATIONAL ORGANIZATION FOR STANDARDIZATION. ISO/IEC 29192: Information
+technology, Security techniques, Lightweight cryptography.
+
+
+--------------------------------------------------------------------------------
+APÊNDICE A. MATRIZ DE EXTRAÇÃO
+--------------------------------------------------------------------------------
+
+A.1 Protocolo por estudo
+
+ID   | Alg | LWC | Modo        | Plaintext        | Chave              | Partição
+-----|-----|-----|-------------|------------------|--------------------|------------
+E01  |  7  |  0  | ECB         | texto, 7 idiomas | distinta por arq.  | 66/34
+E02  |  5  |  0  | ECB         | NR               | fixa e distintas   | 40/180, 9
+     |     |     |             |                  | (comparadas)       | grupos
+E03  |  4  |  0  | NR          | áudio e vídeo    | NR                 | 66/34
+E04  |  4  |  0  | NR          | img/áudio/txt    | NR                 | 70/30
+E05  |  3  |  3  | ECB         | imagens MNIST    | fixa e aleatória   | val. 0,2
+     |     |     |             |                  | (comparadas)       |
+E06  |  5  |  0  | ECB         | aleatório        | fixa               | 80/20
+E07  | 10  |  0  | ECB         | imagens          | fixa por algoritmo | 60/20/20+CV
+E08  |  2  |  0  | 4 modos     | NR (Kaggle)      | NR                 | 80/20
+E09  |  3  |  0  | NR          | texto aleatório  | NR                 | 80/20
+E10  |  8  |  1  | 4 modos     | texto (corpus)   | NR                 | 80/20
+E11  |  2  |  0  | ECB e CBC   | imagens COCO     | fixa               | NR
+E12  |  4  |  0  | ECB e CBC   | texto (inglês)   | única, chave e IV  | 70/15/15
+E13  | 10  |  0* | ECB         | aleatório        | fixa               | 80/20
+E14  | 10  |  0  | ECB         | aleatório        | fixa por algoritmo | 80/20
+E15  |  5  |  0  | ECB         | aleatório        | fixa               | 80/20 rep.
+E16  | 3-5 |  0  | NR          | texto público    | NR                 | NR+10-fold
+E17  |  4  |  0  | CBC         | IMDb reviews     | NR                 | NR
+E18  |  4  |  0  | NR          | frases em inglês | NR                 | 80/20
+E19  | 17  |  0  | ECB e CBC   | aleatório        | consistente por    | 75/25 rep.
+     |     |     | como classe |                  | algoritmo          |
+E20  |  6  |  6  | ECB         | aleatório        | fixa e aleatória   | 80/20 rep.
+     |     |     |             |                  | (comparadas)       |
+E21  |  5  |  0  | CBC e CTR   | texto e imagens  | dinâmica por       | 80/20+5-fold
+     |     |     | simulados   |                  | operação           |
+
+* E13 contém seis algoritmos que a literatura reconhece como leves, sem que o
+  artigo os enquadre assim. Ver seção 3.6.
+
+A.2 Modelo, representação e resultado
+
+ID   | Melhor modelo        | Representação          | Melhor resultado (condição)
+-----|----------------------|------------------------|----------------------------
+E01  | Compl. Naive Bayes   | histograma de blocos   | ~100%, exceto RSA, blocos
+     |                      | de bits (2 a 34)       | de 21 bits, 7 classes
+E02  | SVM (único)          | não detalhada          | 100% mesma chave 4 classes
+     |                      |                        | >=100KB; 22-39% chaves
+     |                      |                        | distintas
+E03  | Compl. Naive Bayes   | histograma de blocos   | 97%, bloco de 16 bits,
+     |                      | de bits (4 a 16)       | 4 classes
+E04  | Random Forest        | convolução com kernel  | 92,3% binário;
+     |                      | fixo, Conv_192         | 70,7% em 4 classes
+E05  | CNN / DenseNet       | imagem cifrada 28x28   | 98,78% chave fixa MNIST;
+     |                      | ponta a ponta          | 64,50% Fashion; 31,1%
+     |                      |                        | chave aleatória
+E06  | HKNNRF               | 10 testes NIST         | 72,5% binário;
+     |                      |                        | 34% em 5 classes
+E07  | XGB-LGBM (stacking)  | Hamming weight + bit-  | 90,53% em 8 classes;
+     |                      | string prob., 371 dim  | 89,65% em 10 classes
+E08  | DNN                  | TF-IDF                 | 72% global; ECB com
+     |                      |                        | F1 de 0,92 a 0,95
+E09  | Random Forest        | NR                     | 99% RF; 91% SVM; 34% KNN
+E10  | BiLSTM + GRU + LSTM  | embedding, ponta a     | 99,4% (ISEAR, CBC/CFB);
+     |                      | ponta                  | 97,3% (Brown, CBC)
+E11  | CNN (estabilidade);  | p-values NIST como     | 88,9% na melhor config.
+     | Attention (pico)     | mapa 512x512           | de atenção
+E12  | dual-input fundido   | NIST 21-dim +          | 33% global, macro-F1
+     |                      | embedding de bytes     | 0,29 (acaso 25%)
+E13  | SVM / Random Forest  | fusão SIL, 405 dim     | 66% SPN vs Feistel;
+     |                      |                        | 45% em 5 classes SPN
+E14  | HRFLR                | 40 features NIST +     | 80,25% camada 1;
+     |                      | entropia               | 38,80% bloco específico
+E15  | MLP                  | 40 features NIST       | 76,5% binário;
+     |                      | reduzidas a 10         | 36,2% em 5 classes
+E16  | Random Forest        | frequência de carac-   | 85% em 3 classes;
+     |                      | teres + PCA opcional   | 85,00% média em 5
+E17  | BiLSTM               | tokenização por        | 87,91% em 4 classes
+     |                      | caractere, Base64      |
+E18  | um por algoritmo     | n-gramas + entropia    | 98,02% a 99,00% por
+     |                      | de Shannon             | modelo dedicado
+E19  | RFLR                 | 15 testes NIST, 10     | não tabulado
+     |                      | features selecionadas  |
+E20  | Transformer          | 76 features NIST +     | 99,7% binário chave fixa
+     |                      | entropia, reduzidas    | 512 KB; 58-60% chave
+     |                      | a 8                    | aleatória; 54,2% 6 classes
+E21  | ensemble com meta-   | estatísticas +         | 90,4% a 94,2% entre
+     | aprendizado          | estruturais + n-gramas | cifras; 95,4% macro com
+     |                      |                        | funções hash
+
+A.3 Completude de relato por estudo
+
+  ID   C1 modo  C2 chaves  C3 val.rep.   C4 estat.  C5 acaso  C6 dados
+  ---- -------- ---------- ------------- ---------- --------- --------------
+  E01  sim      sim        não           não        sim       não
+  E02  sim      sim        9 grupos      desvio pd. sim       não
+  E03  não      não        não           não        sim       não
+  E04  não      não        não           não        não       não
+  E05  sim      sim        não           não        sim       não
+  E06  sim      sim        não           não        sim       não
+  E07  sim      sim        10-fold       não        não       não
+  E08  sim      não        não           não        não       sim (terceiros)
+  E09  não      não        não           não        sim       não
+  E10  sim      não        não           não        não       não
+  E11  sim      sim        não           não        não       não
+  E12  sim      sim        não           não        sim       não
+  E13  sim      sim        não           não        sim       não
+  E14  sim      sim        não           não        não       não
+  E15  sim      sim        reamostragem  não        sim       sim (GitHub)
+  E16  não      não        10-fold       não        sim       não
+  E17  sim      não        não           não        sim       não
+  E18  não      não        não           não        não       não
+  E19  sim      sim        reamostragem  não        não       não
+  E20  sim      sim        reamostragem  sim        sim       não
+  E21  sim      sim        5-fold        não        sim       não
+
+  Totais: C1 16/21, C2 13/21, C3 7/21, C4 1/21, C5 13/21, C6 2/21.
+
+  Nota sobre C4: E02 reporta desvio padrão entre as nove execuções, o que não é um
+  teste de significância mas é a única medida de dispersão do corpus além de E20.
+
+A.4 Contribuição por pergunta de pesquisa
+
+  ID   RQ1        RQ2      RQ3        RQ4        RQ5
+  ---- ---------- -------- ---------- ---------- ----------
+  E01  não        forte    moderada   forte      fraca
+  E02  não        forte    fraca      forte      fraca
+  E03  não        forte    moderada   moderada   fraca
+  E04  não        forte    moderada   forte      forte
+  E05  forte      forte    moderada   forte      forte
+  E06  não        forte    forte      forte      forte
+  E07  moderada   forte    forte      forte      forte
+  E08  não        forte    forte      fraca      moderada
+  E09  não        moderada moderada   fraca      fraca
+  E10  moderada   forte    forte      forte      forte
+  E11  não        forte    forte      forte      forte
+  E12  não        forte    moderada   forte      forte
+  E13  moderada   forte    moderada   moderada   forte
+  E14  não        forte    forte      moderada   moderada
+  E15  não        moderada forte      moderada   forte
+  E16  não        moderada moderada   fraca      moderada
+  E17  não        moderada moderada   fraca      fraca
+  E18  não        moderada moderada   fraca      moderada
+  E19  não        forte    moderada   moderada   forte
+  E20  forte      forte    forte      forte      forte
+  E21  não        moderada moderada   moderada   forte
+
+
+--------------------------------------------------------------------------------
+APÊNDICE B. ESTUDOS ELEGÍVEIS NÃO RECUPERADOS
+--------------------------------------------------------------------------------
+
+Seis estudos designados para leitura integral não foram obtidos por ausência de
+acesso institucional. Não foram excluídos por critério de conteúdo e devem ser
+reavaliados caso o acesso seja obtido.
+
+B1. Block Cipher Algorithm Identification Scheme Based on Fast Fourier Transform
+B2. Block Cipher Algorithm Identification Scheme Based on Hybrid Gradient Boosting
+    Decision Tree and Logistic Regression Model
+B3. Block Cipher Algorithm Identification Based on CNN-Transformer Fusion Model
+    (rotulado como LWC na triagem por título e resumo)
+B4. Cryptographic Algorithm Identification Using Deep Learning Techniques
+B5. Identifying encryption algorithms in ECB and CBC modes using computational
+    intelligence
+B6. The Cryptographic Algorithm Identification: Using Deep Learning to Empower
+    Smart Grids
+
+O estudo listado como B1 na versão anterior, "An approach to identifying
+cryptographic algorithm from ciphertext", foi obtido e integra a análise principal
+como E02.
+
+Impacto estimado dos remanescentes: B3 acrescentaria um estudo com algoritmos LWC e
+a única arquitetura híbrida CNN-Transformer do conjunto elegível. B1 e B2
+acrescentariam representações ausentes da taxonomia da RQ5. B5 acrescentaria uma
+comparação direta entre ECB e CBC. B6 trata de identificação em redes elétricas,
+domínio que E19 cobre parcialmente.
+
+
+--------------------------------------------------------------------------------
+APÊNDICE C. STRINGS DE BUSCA
+--------------------------------------------------------------------------------
+
+C.1 Scopus
+
+Consulta A (85 registros):
+TITLE-ABS-KEY( ( "cipher identification" OR "cipher classification" OR "algorithm
+identification" OR "cryptographic algorithm identification" OR "cryptographic
+algorithm classification" ) AND ( "machine learning" OR "deep learning" ) )
+
+Consulta B (38 registros):
+TITLE-ABS-KEY( ( "lightweight cryptography" OR "lightweight cipher" OR "NIST
+lightweight cryptography" ) AND ( "machine learning" OR "deep learning" ) AND
+( classification OR identification ) ) AND ( LIMIT-TO ( SUBJAREA, "COMP" ) OR
+LIMIT-TO ( SUBJAREA, "ENGI" ) OR LIMIT-TO ( SUBJAREA, "MATH" ) )
+
+Consulta C (74 registros):
+TITLE-ABS-KEY( ( ASCON OR "PRESENT cipher" OR "GIFT cipher" OR "GIFT-COFB" OR SPECK
+OR SIMON OR SKINNY ) AND ( "machine learning" OR "deep learning" ) AND
+( classification OR identification OR recognition OR fingerprinting ) ) AND
+( LIMIT-TO ( SUBJAREA, "COMP" ) OR LIMIT-TO ( SUBJAREA, "ENGI" ) OR LIMIT-TO
+( SUBJAREA, "MATH" ) ) AND PUBYEAR > 2014 AND PUBYEAR < 2028
+
+C.2 SpringerLink
+
+Consulta A (28 registros):
+( "cipher identification" OR "cipher classification" OR "cryptographic algorithm
+identification" OR "cryptographic algorithm classification" OR "algorithm
+fingerprinting" ) AND ( "machine learning" OR "deep learning" )
+
+Consulta B (420 registros):
+( "lightweight cryptography" OR "lightweight cipher" OR "NIST lightweight
+cryptography" ) AND ( "machine learning" OR "deep learning" ) AND ( classification
+OR identification OR recognition OR fingerprinting )
+
+Consulta C (13.104 registros, precisão insuficiente, exportação restrita a título e
+resumo):
+( ASCON OR "PRESENT cipher" OR "GIFT cipher" OR "GIFT-COFB" OR SPECK OR SIMON OR
+SKINNY ) AND ( "machine learning" OR "deep learning" ) AND ( classification OR
+identification OR recognition OR fingerprinting )
+
+C.3 ACM Digital Library
+
+Consulta A (8 registros):
+( "cipher identification" OR "cipher classification" OR "cryptographic algorithm
+identification" OR "cryptographic algorithm classification" OR "algorithm
+fingerprinting" ) AND ( "machine learning" OR "deep learning" )
+
+Consulta B (106 registros):
+( "lightweight cryptography" OR "lightweight cipher" OR "NIST lightweight
+cryptography" ) AND ( "machine learning" OR "deep learning" ) AND ( classification
+OR identification OR recognition OR fingerprinting )
+
+Consulta C (330 registros em resumo, 42.408 em texto completo, exportação restrita
+ao subconjunto de resumo):
+( ASCON OR "PRESENT cipher" OR "GIFT cipher" OR "GIFT-COFB" OR SPECK OR SIMON OR
+SKINNY ) AND ( "machine learning" OR "deep learning" ) AND ( classification OR
+identification OR recognition OR fingerprinting )
+
+C.4 Web of Science
+
+Consulta A (12 registros):
+TS=( ( "cipher identification" OR "cipher classification" OR "cryptographic
+algorithm identification" OR "cryptographic algorithm classification" OR "algorithm
+fingerprinting" ) AND ( "machine learning" OR "deep learning" ) )
+
+Consulta B (12 registros):
+TS=( ( "lightweight cryptography" OR "lightweight cipher" OR "NIST lightweight
+cryptography" ) AND ( "machine learning" OR "deep learning" ) AND ( classification
+OR identification OR recognition OR fingerprinting ) )
+
+Consulta C (54 registros):
+TS=( ( ASCON OR "PRESENT cipher" OR "GIFT cipher" OR "GIFT-COFB" OR SPECK OR SIMON
+OR SKINNY ) AND ( "machine learning" OR "deep learning" ) AND ( classification OR
+identification OR recognition OR fingerprinting ) )
+
+C.5 IEEE Xplore
+
+As três consultas equivalentes foram executadas no IEEE Xplore e exportadas em três
+lotes, com 100, 100 e 28 registros, totalizando 228. A exportação da base aplica
+limite por lote, o que significa que as duas consultas com exatamente 100 registros
+podem estar truncadas.
+
+
+--------------------------------------------------------------------------------
+NOTA SOBRE O USO DE ASSISTÊNCIA COMPUTACIONAL
+--------------------------------------------------------------------------------
+
+A triagem por título e resumo foi apoiada pela função de ordenação por relevância do
+Rayyan, usada exclusivamente para priorizar a ordem de leitura. As decisões de
+inclusão e exclusão foram tomadas pelo revisor.
+
+A extração de dados foi apoiada por modelos de linguagem, sob protocolo que exigia
+análise isolada de cada artigo, proibia inferência de campos ausentes e obrigava a
+marcação "não reportado". Os números centrais das seções 4.1, 5.1, 5.2 e 5.3 foram
+verificados diretamente nos artigos originais, verificação que produziu a correção
+descrita na seção 3.6. Inconsistências numéricas detectadas nos artigos foram
+registradas em vez de corrigidas, e estão listadas na seção 6.5.
+
+A síntese, a interpretação dos achados e as conclusões são de responsabilidade do
+revisor.
+
+================================================================================
+FIM
+================================================================================

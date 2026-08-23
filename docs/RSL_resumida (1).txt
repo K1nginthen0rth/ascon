@@ -1,0 +1,743 @@
+================================================================================
+IDENTIFICAÇÃO DE ALGORITMOS CRIPTOGRÁFICOS POR APRENDIZADO DE MÁQUINA A PARTIR
+DE CIPHERTEXTS: UMA REVISÃO SISTEMÁTICA DA LITERATURA
+================================================================================
+
+Revisão conduzida segundo Kitchenham e Charters (2007), relatada conforme o
+PRISMA 2020. Bases: Scopus, IEEE Xplore, ACM Digital Library, SpringerLink e Web
+of Science. Busca encerrada em agosto de 2026. Vinte e um estudos incluídos.
+
+
+--------------------------------------------------------------------------------
+RESUMO
+--------------------------------------------------------------------------------
+
+Há uma linha de pesquisa que investiga se modelos de aprendizado de máquina
+conseguem descobrir qual algoritmo criptográfico produziu um ciphertext, usando
+apenas o ciphertext como entrada. Com a padronização da família Ascon pelo NIST e
+a difusão de primitivas leves em dispositivos de recursos restritos, a pergunta
+ganhou relevância para a criptografia leve (LWC). Esta revisão mapeia a evidência
+empírica disponível sobre essa tarefa e avalia o que ela sustenta a respeito de
+algoritmos LWC.
+
+Após deduplicação, 864 registros únicos foram triados por título e resumo, o que
+produziu 51 candidatos à leitura de texto completo. A extração cobriu 21 estudos
+publicados entre 2016 e 2026, cada um analisado isoladamente, com marcação de
+"não reportado" para todo campo ausente no artigo original.
+
+As acurácias relatadas vão de 22% a 100%. Apenas quatro estudos incluem
+algoritmos que a literatura reconhece como leves, e três deles assumem esse
+enquadramento. Nove primitivas LWC aparecem no corpus, e Ascon não é uma delas.
+O padrão mais consistente é a degradação por granularidade: distinguir categorias
+amplas de algoritmos rende entre 66% e 80%, enquanto identificar algoritmos
+individuais dentro de uma mesma família estrutural rende entre 34% e 45%. Tan e
+Ji (2016) oferecem o dado mais direto sobre o mecanismo. Quando as chaves de
+treino e teste diferem, AES é separável de cada uma de quatro cifras de 64 bits
+com 88% a 94% de acurácia, enquanto os seis pares formados entre essas quatro
+cifras ficam no acaso em qualquer tamanho de ciphertext. Os autores atribuem o
+resultado ao comprimento de bloco.
+
+A literatura demonstra separabilidade em condições específicas, mas os protocolos
+variam em vários eixos ao mesmo tempo, o que impede atribuir a dispersão dos
+resultados a qualquer fator isolado.
+
+Palavras-chave: revisão sistemática; identificação de algoritmos criptográficos;
+criptografia leve; aprendizado de máquina; ciphertext-only.
+
+
+--------------------------------------------------------------------------------
+1 INTRODUÇÃO
+--------------------------------------------------------------------------------
+
+Dado um ciphertext e nenhuma outra informação, é possível dizer qual algoritmo o
+produziu? A tarefa não é recuperar a chave nem decifrar a mensagem. É
+reconhecimento de padrões aplicado a um objeto que, por definição de projeto,
+deveria ser indistinguível de uma sequência aleatória.
+
+A pergunta aparece na literatura com três motivações. Li et al. (2025) e Li e
+Chen (2025) a enquadram como avaliação de conformidade, em que uma agência
+reguladora precisa verificar se um produto comercial usa o algoritmo que declara
+usar, sem acesso físico ao equipamento. Tan e Ji (2016) e Bhagat e Mishra (2025)
+a tratam como etapa preliminar de criptanálise, que reduz o espaço de hipóteses
+antes de qualquer ataque. Mishra et al. (2021) e Yao et al. (2025) a situam em
+segurança de dispositivos restritos e de infraestrutura.
+
+Convém separar essa tarefa de outras que aparecem próximas. Ela não é a
+construção de um distinguisher diferencial, que avalia se pares de textos com
+diferença conhecida produzem saídas separáveis de saídas aleatórias. Não é
+avaliação de indistinguibilidade. E não é identificação de função hash, que opera
+sobre a saída de uma função unidirecional. A triagem desta revisão encontrou
+volume considerável de trabalhos dessas outras categorias.
+
+A criptografia leve designa primitivas projetadas para operar sob restrições de
+área, energia e latência típicas de microcontroladores e nós de sensor. PRESENT e
+CLEFIA integram a ISO/IEC 29192, SIMON e SPECK foram propostas pela NSA, e o NIST
+selecionou a família Ascon em seu processo de padronização dedicado. Como a
+literatura de identificação foi construída majoritariamente sobre algoritmos
+convencionais, o objetivo desta revisão é verificar se essa evidência se aplica ao
+recorte LWC.
+
+
+--------------------------------------------------------------------------------
+2 MÉTODO
+--------------------------------------------------------------------------------
+
+2.1 Perguntas de pesquisa
+
+RQ1. É possível distinguir algoritmos de criptografia leve utilizando aprendizado
+de máquina a partir de ciphertexts?
+
+RQ2. O que a literatura apresenta sobre a identificação de algoritmos
+criptográficos utilizando aprendizado de máquina?
+
+RQ3. Quais técnicas apresentam melhor desempenho nessa distinção?
+
+RQ4. Quais protocolos experimentais são utilizados nesses estudos?
+
+RQ5. Quais representações são utilizadas para caracterizar ciphertexts?
+
+2.2 Estratégia de busca
+
+A busca foi organizada em três blocos conceituais, executados como consultas
+independentes em cada base para não perder recall por excesso de conjunção. O
+bloco A cobre a tarefa ("cipher identification", "cipher classification",
+"algorithm identification", "cryptographic algorithm identification",
+"cryptographic algorithm classification", "algorithm fingerprinting"). O bloco B
+cobre o domínio ("lightweight cryptography", "lightweight cipher", "NIST
+lightweight cryptography"). O bloco C nomeia primitivas (ASCON, "PRESENT cipher",
+"GIFT cipher", "GIFT-COFB", SPECK, SIMON, SKINNY). Cada bloco foi combinado com
+("machine learning" OR "deep learning") e, nos blocos B e C, com (classification
+OR identification OR recognition OR fingerprinting).
+
+  Base            | Bloco A | Bloco B | Bloco C
+  ----------------|---------|---------|--------
+  Scopus          |      85 |      38 |      74
+  SpringerLink    |      28 |     420 |  13.104
+  ACM DL          |       8 |     106 |  42.408
+  Web of Science  |      12 |      12 |      54
+  IEEE Xplore     |      22 |      16 |   1.174
+
+O bloco C na SpringerLink e na ACM retornou volume incompatível com precisão
+aceitável, porque termos como SIMON e PRESENT são palavras comuns em inglês e as
+duas bases aplicam busca em texto completo por padrão. Para essas duas
+combinações, apenas o subconjunto restrito a título e resumo foi exportado. Ao
+aplicar a restrição de busca por resumo no ACM, a terceira consulta cai para 330
+registros. Na Scopus, o bloco C foi restrito às áreas COMP, ENGI e MATH e ao
+período de 2015 a 2027.
+
+2.3 Critérios de inclusão e exclusão
+
+Foram incluídos estudos que empregam aprendizado de máquina ou aprendizado
+profundo para identificar, classificar ou caracterizar algoritmos criptográficos,
+que apresentam resultados experimentais e que estão publicados em inglês em
+veículo científico. Foram excluídos estudos sem aprendizado de máquina, com objeto
+não criptográfico, com aprendizado de máquina aplicado a outra finalidade de
+segurança, sem resultados relevantes para a tarefa, de tipo inadequado como
+editorial ou patente, e revisões sem contribuição experimental própria.
+
+A presença de algoritmos LWC não foi usada como critério de inclusão. Se fosse, a
+revisão terminaria com quatro estudos e sem base metodológica para interpretá-los.
+A marcação LWC foi feita depois, na extração, como variável de análise, e reflete
+o que cada artigo declara em vez do que a literatura externa reconhece.
+
+2.4 Seleção dos estudos
+
+  Registros únicos após deduplicação ............................... 864
+  Excluídos na triagem por título e resumo ......................... 809
+  Retidos (44 incluir + 11 em dúvida) ............................... 55
+  Elegíveis após resolução das dúvidas .............................. 51
+  Excluídos na leitura de texto completo ............................. 4
+  Não recuperados por falta de acesso institucional ................... 6
+  Retirados por não atenderem ao cenário ciphertext-only .............. 2
+  Estudos incluídos na análise .................................... 21
+
+A triagem foi feita no Rayyan, com decisão ternária de incluir, excluir ou
+dúvida. A função de ordenação por relevância foi usada apenas para priorizar a
+ordem de leitura. Os quatro estudos excluídos na leitura completa foram um survey,
+um trabalho de recuperação de informação sem relação com o problema, um benchmark
+de frameworks de CNN e uma análise bibliométrica sem experimento primário. Os dois
+estudos retirados por não atenderem ao cenário ciphertext-only foram extraídos
+antes da decisão: um usa a chave de cifragem como entrada do modelo, e o outro
+trata apenas de cifras clássicas.
+
+2.5 Extração e síntese
+
+Cada artigo foi analisado de forma isolada, sem usar referências cruzadas entre
+estudos do corpus para completar campos. O formulário cobriu identificação
+bibliográfica, objetivo, algoritmos avaliados, entrada do modelo, modelos de
+aprendizado de máquina, representação, dataset, protocolo, métricas, resultados e
+limitações. As limitações foram registradas em dois campos separados, um para o
+que os autores reconhecem no texto e outro para observações do revisor.
+
+Não foi feita meta-análise. Os estudos usam datasets próprios, conjuntos de
+algoritmos diferentes e definições de classe diferentes, o que torna a agregação
+de acurácias uma operação sem significado interpretável. Toda acurácia relatada
+aparece acompanhada das condições que a produziram.
+
+
+--------------------------------------------------------------------------------
+3 RESULTADOS
+--------------------------------------------------------------------------------
+
+3.1 Caracterização do corpus
+
+Os 21 estudos cobrem o período de 2016 a 2026. Onze foram publicados em 2025 ou
+2026, e dez desses onze são artigos de conferência. A área acelerou nos dois
+últimos anos. No conjunto, oito são artigos de periódico e treze são de
+conferência.
+
+Quatro estudos compartilham autoria com o grupo de Ke Yuan e Chunfu Jia, e dois
+com o grupo de F. L. de Mello. Isso importa para a leitura da evidência sobre LWC,
+porque o único estudo com conjunto integralmente leve e aprendizado profundo vem
+do primeiro desses grupos, com pipeline semelhante ao dos outros três.
+
+Os 21 estudos operam em cenário ciphertext-only na tarefa de identificação. AES
+aparece em 17 deles, DES ou 3DES em 15, Blowfish em 12 e RSA em 8.
+
+3.2 Quadro de síntese
+
+Legenda: Alg = número de algoritmos avaliados; LWC = quantos são criptografia
+leve; NR = não reportado. Nas colunas de resultado, quando há dois valores, o
+primeiro corresponde à tarefa mais ampla ou à condição mais favorável.
+
+ID  Estudo               Ano  Alg LWC Modo     Chave       Modelo        Representação      Melhor resultado
+--- -------------------- ---- --- --- -------- ----------- ------------- ------------------ ------------------
+E01 de Mello e Xexéo     2016   7   0 ECB      distinta    Compl. NB     histograma de bits ~100% (7 classes)
+E02 Tan e Ji             2016   5   0 ECB      fixa/dist.  SVM           NR                 100% / 22-39%
+E03 Barbosa et al.       2017   4   0 NR       NR          Compl. NB     histograma de bits 97% (4 classes)
+E04 Yuan                 2021   4   0 NR       NR          RF            convolução fixa    92,3% / 70,7%
+E05 Mishra et al.        2021   3   3 ECB      fixa/aleat. CNN           imagem cifrada     98,78% / 31,1%
+E06 Yuan et al.          2022   5   0 ECB      fixa        HKNNRF        NIST (10 testes)   72,5% / 34%
+E07 Zhao et al.          2023  10   0 ECB      fixa        XGB-LGBM      Hamming weight     90,5% (8 classes)
+E08 Ithape e Purush.     2023   2   0 4 modos  NR          DNN           TF-IDF             72% (8 classes)
+E09 Rachini et al.       2023   3   0 NR       NR          RF            NR                 99% RF / 34% KNN
+E10 Jeong et al.         2024   8   1 4 modos  NR          RNN híbrida   embedding          99,4% (8 classes)
+E11 Li e Chen            2025   2   0 ECB/CBC  fixa        CNN, atenção  NIST como mapa     88,9%
+E12 Bhagat e Mishra      2025   4   0 ECB/CBC  única       dual-input    NIST + embedding   33% (4 classes)
+E13 Zhou                 2025  10   0 ECB      fixa        SVM, RF       fusão SIL (405)    66% / 45%
+E14 Li et al.            2025  10   0 ECB      fixa        HRFLR         NIST + entropia    80,25% / 38,80%
+E15 Yuan et al.          2025   5   0 ECB      fixa        MLP           NIST (40 para 10)  76,5% / 36,2%
+E16 Dhawade et al.       2025   3   0 NR       NR          RF            freq. caracteres   85% (3 classes)
+E17 Simhadri et al.      2025   4   0 CBC      NR          BiLSTM        tokens em Base64   87,91% (4 classes)
+E18 Jha et al.           2025   4   0 NR       NR          um por alg.   n-gramas, entropia 98% a 99% por modelo
+E19 Yao et al.           2025  17   0 ECB/CBC  consistente RFLR          NIST (15 para 10)  não tabulado
+E20 Yuan et al.          2026   6   6 ECB      fixa/aleat. Transformer   NIST + entropia    99,7% / 58-60%
+E21 Ananthi et al.       2026   5   0 CBC/CTR  dinâmica    ensemble meta estat., estrutural 90,4% a 94,2%
+
+Observações sobre o quadro. E13 inclui seis algoritmos que a literatura reconhece
+como leves, mas o artigo não usa o termo em nenhuma passagem e apresenta o
+conjunto apenas por estrutura, razão pela qual a coluna LWC registra zero. Em E18,
+cada algoritmo tem um modelo dedicado, e as acurácias são por modelo, não uma
+matriz de confusão multiclasse, o que as torna incomparáveis com as demais linhas.
+E19 apresenta resultados apenas em gráficos. Em E17, E18 e E21, a tarefa de
+identificação de cifra aparece combinada com uma segunda tarefa, respectivamente
+reconstrução de plaintext, identificação de hash e classificação de funções hash,
+e os valores da tabela referem-se apenas à parte de identificação de cifra.
+
+3.3 Cobertura de criptografia leve
+
+Quatro estudos incluem algoritmos leves, e eles diferem quanto a assumir esse
+enquadramento. Mishra et al. (2021) e Yuan et al. (2026) declaram o enquadramento
+e trabalham com conjuntos integralmente leves, o primeiro com três algoritmos e o
+segundo com seis. Jeong et al. (2024) descrevem SPECK como uma cifra leve, mas ele
+é o único do gênero entre oito classes e seu desempenho não é isolado. Zhou (2025)
+avalia seis primitivas leves sem as enquadrar assim.
+
+As primitivas presentes no corpus são PRESENT e SPECK, em três estudos cada, SIMON,
+SKINNY e Midori, em dois cada, e LBlock, TWINE, CLEFIA e KASUMI, em um cada. Ascon,
+GIFT e as demais finalistas do processo do NIST não aparecem em nenhum estudo. Yao
+et al. (2025) e Ananthi et al. (2026) citam criptografia leve apenas como trabalho
+futuro.
+
+3.4 Técnicas e representações
+
+Random Forest aparece em 12 estudos e SVM em 10, seguidos de KNN, regressão
+logística e Naive Bayes. Do lado do aprendizado profundo, MLP ou redes densas
+aparecem em seis estudos, CNN em cinco, arquiteturas recorrentes em três e modelos
+com atenção em dois. Oito estudos propõem modelos compostos, entre eles o stacking
+HKNNRF, o XGB-LGBM, o HRFLR e o esquema hierárquico baseado em Transformer.
+
+As representações se organizam em algumas famílias. Os testes de aleatoriedade do
+NIST SP 800-22 dominam, presentes em oito estudos. Histogramas de blocos de bits e
+distribuição de peso de Hamming formam a segunda família. Três estudos usam
+representações emprestadas de processamento de linguagem natural, como TF-IDF e
+n-gramas de caracteres. Quatro alimentam os modelos diretamente com o ciphertext,
+por embedding ou tratando-o como imagem. Dois combinam features estatísticas com
+representações aprendidas. Um estudo isola features estruturais explícitas, como
+tamanho de bloco, padding e repetição de sequências, o que se conecta ao achado da
+seção 5.1.
+
+Há uma tensão nessa escolha dominante que a área não discute. A suíte NIST foi
+projetada para verificar se uma sequência se comporta como aleatória. Usá-la para
+identificar o algoritmo equivale a apostar que cada cifra falha nos testes de
+aleatoriedade de um jeito ligeiramente diferente e reprodutível.
+
+3.5 Protocolos experimentais
+
+A configuração modal do corpus é chave fixa, modo ECB e partição única de 80/20,
+com features estatísticas extraídas do ciphertext.
+
+Nove estudos usam apenas o modo ECB e sete avaliam algum modo além dele. Nenhum
+avalia modos de criptografia autenticada, que é como os padrões LWC operam na
+prática.
+
+Sobre as chaves, três estudos tratam a condição como variável experimental e
+reportam os dois cenários. Dois geram chave distinta ou dinâmica por amostra sem
+comparar. Oito usam chave fixa sem separação entre treino e teste, e outros oito
+não informam o tratamento. Nenhum descreve um particionamento formal por chave com
+verificação de disjunção.
+
+Sete estudos usam validação cruzada ou reamostragem repetida, e os demais usam
+partição única. Apenas Yuan et al. (2026) aplicam testes de significância
+estatística, com Friedman, Nemenyi e Wilcoxon. Tan e Ji (2016) reportam desvio
+padrão entre nove execuções, a única outra medida de dispersão do corpus. Dois
+estudos disponibilizam dados.
+
+
+--------------------------------------------------------------------------------
+4 RESPOSTAS ÀS PERGUNTAS DE PESQUISA
+--------------------------------------------------------------------------------
+
+4.1 RQ1. É possível distinguir algoritmos LWC?
+
+Sim, dentro das condições testadas, com desempenho que varia de equivalente ao
+acaso a 99,7% conforme a configuração experimental.
+
+Yuan et al. (2026) é o estudo mais completo sobre a pergunta. Seis cifras leves,
+cenário ciphertext-only, 76 features candidatas reduzidas a oito, Transformer
+comparado a cinco modelos clássicos com validação estatística. Sob chave fixa, a
+distinção binária em 512 KB chega a 99,7%, contra 88,7% do Random Forest. Sob
+chave aleatória, cai para a faixa de 58,3% a 60,5%, e a vantagem estatística sobre
+os modelos clássicos permanece em apenas duas das cinco comparações. Em ciphertexts
+de 1 KB, a acurácia é de 56,3% mesmo com chave fixa. O esquema hierárquico atinge
+70,2% na identificação da estrutura e 54,2% na classificação direta em seis
+classes, contra 16,7% de acaso.
+
+Mishra et al. (2021) avaliam três cifras leves com a imagem cifrada fornecida
+diretamente a CNN e DenseNet. Sob chave fixa, a CNN atinge 98,78% no MNIST e
+64,50% no Fashion-MNIST. Sob chave aleatória por imagem, cai para 31,11%, com
+acaso em 33,3%. Os autores concluem que os modelos não capturam características
+distintivas nessa condição.
+
+Zhou (2025) obtém 66,0% na separação entre estruturas SPN e Feistel e 45,0% na
+classificação de cinco algoritmos dentro do grupo SPN, contra 20% de acaso. Jeong
+et al. (2024) atingem até 99,4%, mas com SPECK diluído entre oito classes muito
+heterogêneas, o que torna sua contribuição indireta.
+
+Três qualificações se impõem. Nenhum dos quatro estudos reporta um valor único de
+desempenho, e as faixas dependem de tamanho do ciphertext, número de classes e
+condição da chave. Distinguir a estrutura de projeto é sistematicamente mais fácil
+que identificar o algoritmo. E a resposta cobre nove primitivas leves, todas
+cifras de bloco em modos sem autenticação, sem incluir Ascon nem GIFT.
+
+4.2 RQ2. O que a literatura apresenta?
+
+O corpus mostra uma trajetória com fases razoavelmente nítidas.
+
+Entre 2016 e 2017, de Mello e Xexéo e Barbosa et al. estabelecem o formato:
+extrair histogramas de blocos de bits do criptograma e alimentar classificadores
+de mineração de dados. O primeiro opera sobre corpora em sete idiomas, com chave
+distinta por arquivo, e reporta identificação praticamente total de sete
+algoritmos a partir de blocos de 21 bits. Também testa a influência do idioma e
+conclui que ela não é significativa, com desvio médio de 5,28%.
+
+No mesmo ano, Tan e Ji fazem algo diferente e menos citado. Em vez de propor um
+método, fixam um SVM e variam a condição experimental, comparando treino e teste
+com a mesma chave contra chaves distintas. Os resultados estão na seção 5.1.
+
+Entre 2021 e 2023, a suíte NIST se torna o extrator dominante, acompanhada de
+ensembles de stacking. Zhao et al. propõem a distribuição de peso de Hamming como
+representação mais compacta e atingem 90,5% em oito classes.
+
+De 2024 em diante, aparecem representações aprendidas e arquiteturas profundas,
+com embedding, mapas de p-values tratados como imagem, fusão de ramos estatístico
+e neural, e Transformer. Em paralelo, o cohort recente traz esquemas hierárquicos,
+que classificam primeiro a categoria ampla e depois o algoritmo específico, e
+arquiteturas de sistema, como distribuição de modelos por nós de blockchain e
+meta-aprendizado.
+
+Alguns autores reconhecem limitações relevantes. Bhagat e Mishra declaram a chave
+e o IV únicos como limitação central e interpretam seu desempenho de 33% como
+consistente com a indistinguibilidade esperada em cenário ciphertext-only. de
+Mello e Xexéo atribuem o próprio desempenho ao problema conhecido de repetição de
+padrões no modo ECB. Há também uma tensão interna: Li e Chen criticam o uso de
+chave fixa por outros estudos e depois adotam chave fixa no próprio experimento,
+sem comentar a diferença.
+
+4.3 RQ3. Quais técnicas apresentam melhor desempenho?
+
+Não é possível produzir um ranking válido entre estudos. Os datasets, os conjuntos
+de algoritmos, os tamanhos de ciphertext e as condições de chave são diferentes, e
+a diferença de acurácia entre dois trabalhos não é atribuível ao modelo.
+
+Dentro de cada estudo, três padrões aparecem. Modelos compostos vencem seus
+componentes isolados sempre que são testados contra eles, o que vale para HKNNRF,
+XGB-LGBM, HRFLR, RFLR e o esquema hierárquico. Aprendizado profundo vence em
+datasets grandes e ciphertexts longos, e Yuan et al. (2026) documentam que a
+vantagem do Transformer cresce com o tamanho do ciphertext e diminui sob chave
+aleatória. E modelos simples vencem em dois casos: em de Mello e Xexéo e em
+Barbosa et al., o Complement Naive Bayes supera o MLP, com tempo de execução
+ordens de grandeza menor, 512 segundos contra 739 horas no segundo estudo.
+
+Como apenas um estudo aplica teste de significância, as demais comparações são
+diferenças de ponto sem intervalo de confiança. Diferenças de menos de um ponto
+percentual, apresentadas como resultado em pelo menos dois trabalhos, não são
+distinguíveis de ruído amostral com a informação reportada.
+
+4.4 RQ4. Quais protocolos são utilizados?
+
+O protocolo modal está descrito na seção 3.5. Os desvios dele são poucos e valem
+ser nomeados, porque definem o teto de rigor da área.
+
+Tan e Ji (2016) têm o desenho mais informativo. O estudo fixa o classificador e
+varia três eixos: condição da chave, tamanho do ciphertext e composição do
+conjunto de algoritmos. Usa 220 plaintexts distintos por algoritmo, 40 para treino
+e 180 divididos em nove grupos de teste, o que permite reportar desvio padrão.
+
+de Mello e Xexéo (2016) geram uma chave de 128 bits distinta para cada arquivo, e
+declaram a escolha como salvaguarda contra viés no processo de mineração. Mishra
+et al. (2021) tratam a condição da chave como fator experimental. Zhao et al.
+(2023) aplicam validação cruzada de 10 folds. Bhagat e Mishra (2025) controlam a
+fronteira dos chunks de plaintext entre partições para evitar quase-duplicatas.
+Li et al. (2025) organizam a divisão como separação institucional simulada, com
+dois servidores distintos.
+
+O corpus inteiro não contém particionamento declarado por chave, controle negativo
+por permutação de rótulos, avaliação em modos AEAD nem reporte de intervalo de
+confiança.
+
+4.5 RQ5. Quais representações são utilizadas?
+
+As famílias estão descritas na seção 3.4. Vale acrescentar três observações.
+
+A seleção de features aparece em seis estudos, com estratégias que vão de
+filtragem por variância e correlação a pipelines de dois estágios com filtro
+estatístico seguido de wrapper. Nos seis casos, a seleção melhora o desempenho
+reportado.
+
+Dois resultados negativos merecem registro. Bhagat e Mishra relatam que aumentar a
+complexidade da representação, com features enriquecidas e janelas maiores, não
+melhorou o macro-F1. Zhou relata que, em algumas combinações, a fusão multimodal
+proposta não supera o baseline de feature única, e atribui isso a interferência de
+features redundantes. Os dois casos sugerem que o teto pode ser imposto pelo sinal
+disponível no dado.
+
+A família dominante tem uma restrição prática declarada por Yuan et al. (2025):
+vários testes NIST exigem sequências longas, e o teste universal de Maurer requer
+pelo menos 387.840 bits. Isso limita a aplicabilidade dessa família a ciphertexts
+curtos, que é justamente a faixa de payload de dispositivos restritos.
+
+
+--------------------------------------------------------------------------------
+5 DISCUSSÃO
+--------------------------------------------------------------------------------
+
+5.1 Granularidade da tarefa e comprimento de bloco
+
+O padrão mais bem sustentado do corpus é a degradação do desempenho conforme a
+tarefa fica mais específica. Oito estudos comparam níveis de granularidade dentro
+do próprio protocolo, e todos encontram a mesma direção.
+
+  Nível de granularidade                       Acurácia    Acaso   Estudo
+  -------------------------------------------  ----------  ------  ------
+  Simétrico contra assimétrico                     80,25%     50%   E14
+  Estrutura SPN contra Feistel                     70,20%     50%   E20
+  Estrutura SPN contra Feistel                     66,00%     50%   E13
+  Stream contra bloco                              61,43%     50%   E14
+  Algoritmo específico, 6 classes leves            54,20%   16,7%   E20
+  Algoritmo específico, 5 classes SPN              45,00%     20%   E13
+  Algoritmo específico, 4 classes de bloco         38,80%     25%   E14
+  Algoritmo específico, 5 classes de bloco         36,20%     20%   E15
+  Algoritmo específico, 5 classes de bloco         34,00%     20%   E06
+
+Li et al. (2025) fornecem a demonstração mais limpa em um único pipeline, com
+80,25% para simétrico contra assimétrico, 61,43% para stream contra bloco e depois
+38,80% para o algoritmo específico entre quatro cifras de bloco. A queda acompanha
+a especificidade e não a quantidade de classes.
+
+O estudo mais antigo do corpus sugere um mecanismo. Tan e Ji (2016) executam,
+sob chaves distintas entre treino e teste, todas as dez comparações um contra um
+entre AES, Blowfish, 3DES, RC5 e DES. Os quatro pares que envolvem AES ficam entre
+88% e 94% a partir de 20 KB. Os seis pares formados entre as outras quatro cifras
+ficam entre 41,67% e 54,72% em todos os tamanhos testados, de 0,8 KB a 500 KB, sem
+tendência de melhora com o aumento do ciphertext. AES opera com bloco de 128 bits
+e as outras quatro com bloco de 64 bits. Os autores concluem que o comprimento de
+bloco exerce influência significativa sobre os resultados.
+
+O mesmo estudo mostra o efeito na classificação multiclasse. Sob chaves distintas,
+identificar as cinco cifras rende de 35,89% a 39,11%, acima do acaso de 20%.
+Retirar AES e identificar apenas as quatro cifras de 64 bits rende de 21,94% a
+24,86%, ao redor ou abaixo do acaso de 25%. Reduzir o número de classes piorou o
+resultado, o que os autores registram como contrário à intuição.
+
+Zhao et al. (2023) chegam à mesma associação por outro caminho, sem manipular a
+chave: as cifras de 64 bits de seu conjunto são identificadas com acurácia bem
+maior que as de 128 bits. Ananthi et al. (2026) incorporam a propriedade como
+categoria explícita de features.
+
+A leitura compatível com esses dados é que o que se separa de forma estável é uma
+propriedade estrutural grosseira do criptograma, e não a identidade do algoritmo.
+Isso tem consequência direta para a criptografia leve, porque cifras leves
+compartilham comprimento de bloco entre si com frequência. LBlock, PRESENT e
+SPECK64, os três algoritmos de Mishra et al. (2021), têm bloco de 64 bits, e é
+justamente esse o estudo em que a acurácia cai ao acaso sob chave aleatória.
+
+Há um contraponto parcial. No esquema hierárquico de Yuan et al. (2026), o cluster
+Feistel sai a 92,8% e o cluster SP a 70,0%, com o mesmo número de classes, o que
+indica que a estrutura de projeto também influencia.
+
+5.2 Condição da chave e tamanho do ciphertext
+
+Três estudos tratam a chave como variável experimental. Tan e Ji (2016) vão de 98%
+para 37,67% com cinco algoritmos, e de 100% para 22,92% com quatro. Mishra et al.
+(2021) vão de 98,78% para 31,11%. Yuan et al. (2026) vão de 99,7% para a faixa de
+58% a 60%. Os três encontram queda, com magnitudes bem diferentes.
+
+de Mello e Xexéo (2016) são o contraponto necessário. O estudo usa chave distinta
+por arquivo e ainda assim reporta precisão praticamente total para sete
+algoritmos. Variar a chave, nesse protocolo, não derrubou o desempenho. A
+comparação com Tan e Ji é instrutiva porque os dois são de 2016 e ambos usam ECB
+com chaves variando: um obtém quase 100% e o outro obtém 22% a 39%. A diferença
+está no conjunto de classes. de Mello e Xexéo avaliam sete algoritmos de
+categorias distintas, incluindo uma cifra de fluxo e um assimétrico, enquanto Tan
+e Ji avaliam cinco cifras de bloco, quatro delas com o mesmo comprimento de bloco.
+
+O tamanho do ciphertext é variado sistematicamente em cinco estudos, sempre na
+mesma direção. Yuan et al. (2026) vão de 56,3% em 1 KB para 99,7% em 512 KB. Tan e
+Ji mostram um limiar abrupto: com quatro algoritmos e mesma chave, a acurácia é de
+100% em 500 KB e 100 KB, 98,33% em 4 KB, e despenca para 28,33% em 0,8 KB. Aumentar
+o ciphertext, porém, não recupera informação que não está lá: sob chaves
+distintas, os pares entre cifras de 64 bits permanecem no acaso em qualquer
+tamanho.
+
+5.3 Limites da comparação entre estudos
+
+Os fatores discutidos covariam entre si ao longo do corpus. Os estudos que usam
+plaintext aleatório também tendem a usar chave fixa e modo ECB. Os que trabalham
+com conjuntos heterogêneos concentram acurácias altas nas camadas mais amplas. Os
+que usam ciphertexts grandes concentram os melhores resultados.
+
+Tan e Ji (2016) é o trabalho que mais se aproxima de um desenho fatorial, com três
+fatores variados e o classificador, o modo e o tipo de plaintext mantidos fixos.
+Yuan et al. (2026) variam três fatores diferentes. Nenhum outro estudo varia mais
+de dois.
+
+A consequência é direta. Quando dois estudos reportam acurácias muito diferentes,
+não é possível dizer qual fator responde pela diferença, porque eles mudam juntos.
+Uma comparação entre estudos nesta área compara protocolos inteiros, não modelos
+nem representações. Isso vale também na direção positiva: o resultado de 99,7% de
+Yuan et al. e o de 31,11% de Mishra et al. não se contradizem, porque foram
+obtidos sob configurações que diferem em várias dimensões.
+
+Uma associação adicional merece registro, com a mesma cautela. Os estudos que
+reportam as acurácias mais altas tendem a ser os que menos documentam o protocolo.
+Rachini et al. reportam 99% sem descrever como o ciphertext é convertido em vetor
+de features. Yao et al. descrevem o desempenho como quase perfeito sem tabular
+valores. Em contraste, os estudos que declaram chave fixa, usam plaintext
+aleatório e informam a linha de base do acaso ficam entre 33% e 45% em tarefas
+multiclasse.
+
+
+--------------------------------------------------------------------------------
+6 LIMITAÇÕES DA REVISÃO
+--------------------------------------------------------------------------------
+
+A triagem foi conduzida por um único revisor, sem segunda avaliação independente
+nem cálculo de concordância. Decisões em casos limítrofes, sobretudo na fronteira
+entre identificação de algoritmo e criptanálise diferencial, dependem de
+julgamento.
+
+Seis estudos elegíveis não foram obtidos por ausência de acesso institucional. A
+perda não é aleatória, porque depende da política de acesso das editoras. Um deles
+havia recebido rótulo LWC na triagem, e sua ausência afeta diretamente a base da
+RQ1. Dois outros propõem representações que não aparecem em nenhum estudo
+incluído, o que significa que a taxonomia da RQ5 pode estar incompleta.
+
+A busca cobriu cinco bases e não incluiu literatura cinzenta, teses nem
+repositórios de preprint. O critério de idioma restringiu a publicações em inglês,
+o que pode excluir trabalhos em chinês, dado que parte substancial desta linha vem
+de grupos chineses.
+
+Na maioria dos estudos que propõem um método novo, o método proposto vence os
+baselines. Resultados baixos aparecem em poucos casos, e quase sempre acompanhados
+de um achado metodológico que o próprio estudo destaca. É plausível que existam
+experimentos com resultado negativo que nunca foram submetidos.
+
+Por fim, a seção 5 identifica fatores associados à variação de desempenho sem
+estabelecer causalidade. Essa limitação é imposta pelos dados, conforme discutido
+em 5.3, e não por escolha metodológica desta revisão.
+
+
+--------------------------------------------------------------------------------
+7 LACUNAS E TRABALHOS FUTUROS
+--------------------------------------------------------------------------------
+
+Cada estudo constrói o próprio dataset, com plaintext, chaves, modos e conjuntos
+de algoritmos diferentes, e apenas dois disponibilizam dados. Sem base comum, as
+comparações entre trabalhos comparam protocolos inteiros. Um benchmark público com
+geração documentada, especificando plaintext, chaves, nonces, modos, tamanhos e
+partições, permitiria que estudos diferentes variassem um fator de cada vez.
+
+Ascon, GIFT e as demais primitivas do processo de padronização do NIST não
+aparecem em nenhum estudo do corpus, apesar de serem os algoritmos efetivamente
+adotados para dispositivos restritos. Estendê-los à avaliação, em modo AEAD com
+nonce por mensagem, é a lacuna de cobertura mais direta, e as implementações de
+referência são públicas.
+
+O desenho fatorial de Tan e Ji (2016) continua sem replicação dez anos depois.
+Aplicá-lo a cifras leves de mesmo comprimento de bloco responderia à RQ1 sob
+condições realistas. Na mesma direção, a hipótese do comprimento de bloco é
+testável: bastaria montar conjuntos em que ele varia enquanto o algoritmo é
+mantido, e vice-versa.
+
+Os melhores resultados do corpus concentram-se em ciphertexts de 512 KB, e o
+menor tamanho testado de forma sistemática é 1 KB. Como Tan e Ji localizam o
+colapso do método entre 0,8 KB e 4 KB, e como essa é a faixa de payload de
+dispositivos restritos, caracterizá-la seria informativo em qualquer direção.
+
+Por fim, o reporte estatístico mínimo praticado por Yuan et al. (2026), com
+reamostragem repetida, teste de Friedman e post-hoc de Nemenyi, é viável neste
+tipo de experimento e deveria ser adotado com mais frequência.
+
+
+--------------------------------------------------------------------------------
+8 CONCLUSÃO
+--------------------------------------------------------------------------------
+
+Esta revisão partiu de 864 registros únicos e chegou a 21 estudos publicados entre
+2016 e 2026 sobre identificação de algoritmos criptográficos por aprendizado de
+máquina em cenário ciphertext-only.
+
+A resposta à pergunta central é positiva dentro das condições testadas. Quatro
+estudos avaliam algoritmos leves e demonstram separabilidade acima do acaso em
+várias configurações, com desempenho que vai de equivalente ao acaso a 99,7%
+conforme o protocolo. A base é de nove primitivas leves, todas cifras de bloco em
+modos sem autenticação, e não inclui os padrões selecionados pelo NIST.
+
+O achado transversal mais bem sustentado é a degradação por granularidade,
+observada dentro do protocolo de oito estudos independentes, e o corpus sugere um
+mecanismo para ela. Tan e Ji (2016) mostram que, sob chaves distintas entre treino
+e teste, AES é separável de cada uma de quatro cifras de 64 bits com 88% a 94% de
+acurácia, enquanto os pares formados entre essas quatro cifras ficam no acaso em
+qualquer tamanho de ciphertext, e atribuem o resultado ao comprimento de bloco.
+Zhao et al. (2023) chegam à mesma associação por outro caminho.
+
+Se essa leitura estiver correta, o que os modelos separam de forma estável é a
+granularidade estrutural do criptograma, e não a identidade do algoritmo que o
+produziu. Para criptografia leve, isso situa a tarefa no caso desfavorável, porque
+cifras leves compartilham comprimento de bloco entre si com frequência.
+
+Outros fatores covariam com o desempenho relatado, entre eles o tamanho do
+ciphertext, a condição da chave e a composição do conjunto de classes. Como
+nenhum estudo varia mais de três fatores de forma controlada, e como eles se movem
+juntos ao longo da literatura, a evidência disponível não permite ordenar suas
+contribuições.
+
+
+--------------------------------------------------------------------------------
+REFERÊNCIAS
+--------------------------------------------------------------------------------
+
+ANANTHI, S. et al. AI-Driven Cryptanalysis: A Novel Framework for Heterogeneous
+Encryption Algorithms Identification and Evaluation. In: ICCNCT, 2026.
+DOI: 10.1109/ICCNCT68477.2026.11590696.
+
+BARBOSA, F. M.; VIDAL, A. R. S. F.; ALMEIDA, H. L. S.; MELLO, F. L. de. Machine
+Learning Applied to the Recognition of Cryptographic Algorithms Used for Multimedia
+Encryption. IEEE Latin America Transactions, v. 15, n. 7, 2017.
+DOI: 10.1109/TLA.2017.7959350.
+
+BHAGAT, A. G.; MISHRA, A. Deep Learning based Identification of Encryption
+Algorithms for Cryptanalysis. In: ICAFT, 2025.
+DOI: 10.1109/ICAFT66710.2025.11453279.
+
+DHAWADE, G.; KALE, A.; GUPTA, A.; SAYYAD, I.; WAGH, K. S. Encryption Algorithm
+Identification through ML with Character Frequency Approach. In: CONIT, 2025.
+DOI: 10.1109/CONIT65521.2025.11167658.
+
+ITHAPE, S.; PURUSHOTHAMA, B. R. Identification of Encryption Method for Block
+Ciphers using Machine Learning Methods. In: INDICON, 2023.
+DOI: 10.1109/INDICON59947.2023.10440785.
+
+JEONG, O.; MARTIN, A. D.; AHAMADZADEH, E.; MOON, I. Robust Cryptosystem
+Identification under Various Operation Modes using Deep Recurrent Neural Networks.
+In: ICEIB, 2024. DOI: 10.1109/ICEIB61477.2024.10602570.
+
+JHA, P. K.; AHMED, S.; NANTHINI, N. A Blockchain Integrated Machine Learning
+Framework for Cryptographic Algorithm Identification. In: CISES, 2025.
+DOI: 10.1109/CISES66934.2025.11264967.
+
+LI, J.; SUN, H.; DU, Z.; WANG, Y.; YUAN, K.; JIA, C. A generic cryptographic
+algorithm identification scheme based on ciphertext features. Journal of
+Information Security and Applications, v. 89, art. 103984, 2025.
+DOI: 10.1016/j.jisa.2025.103984.
+
+LI, L.; CHEN, J. Research on identification of domestic commercial block cipher
+algorithms based on deep learning. In: Proceedings of SPIE, v. 13486, CVAA 2024,
+2025. DOI: 10.1117/12.3055806.
+
+MELLO, F. L. de; XEXÉO, J. A. M. Cryptographic Algorithm Identification Using
+Machine Learning and Massive Processing. IEEE Latin America Transactions, v. 14,
+n. 11, 2016. DOI: 10.1109/TLA.2016.7795833.
+
+MISHRA, G.; PAL, S. K.; MURTHY, S. V. S. S. N. V. G. K.; VATS, K.; RAINA, R.
+Distinguishing Lightweight Block Ciphers in Encrypted Images. Defence Science
+Journal, v. 71, n. 5, 2021. DOI: 10.14429/dsj.71.16843.
+
+RACHINI, A.; ABI ASSAF, M.; FARES, C.; KHATOUN, R. Cryptographic Algorithm
+Identification through Machine Learning for Enhanced Data Security. In: EICEEAI,
+2023. DOI: 10.1109/EICEEAI60672.2023.10590185.
+
+SIMHADRI, S.; RAGHAVENDRA; PURUSHOTHAMA, B. R. AI-Powered Cryptanalysis:
+Identifying Encryption Algorithms and Recovering Plaintext. In: NETCRYPT, 2025.
+DOI: 10.1109/NETCRYPT65877.2025.11102567.
+
+TAN, C.; JI, Q. An Approach to Identifying Cryptographic Algorithm from Ciphertext.
+In: 8th IEEE International Conference on Communication Software and Networks
+(ICCSN), 2016.
+
+YAO, T.; WANG, P.; BAI, J.; ZHU, H. Optimizing Cryptographic Algorithm
+Identification in Power Grids Using Machine Learning. In: BDPC, 2025.
+DOI: 10.1109/BDPC63545.2025.11135530.
+
+YUAN, C. Cryptosystem Recognition Scheme Based on Convolution Features. In:
+CAIBDA, 2021. DOI: 10.1109/CAIBDA53561.2021.00055.
+
+YUAN, K.; YU, D.; FENG, J.; YANG, L.; JIA, C.; HUANG, Y. A block cipher algorithm
+identification scheme based on hybrid k-nearest neighbor and random forest
+algorithm. PeerJ Computer Science, v. 8, e1110, 2022. DOI: 10.7717/peerj-cs.1110.
+
+YUAN, K.; YU, D.; YANG, W.; DU, Z.; SHEN, L.; LI, Z. Identification of block cipher
+algorithms using multi-layer perception algorithm. Soft Computing, v. 29,
+p. 3823-3834, 2025. DOI: 10.1007/s00500-025-10595-y.
+
+YUAN, K.; ZHAO, C.; SUN, H.; ZHOU, Y.; FAN, G.; JIA, C. Lightweight block cipher
+algorithm identification scheme based on transformer. Evolving Systems, v. 17,
+art. 36, 2026. DOI: 10.1007/s12530-026-09802-4.
+
+ZHAO, L.; CHI, Y.; XU, Z.; YUE, Z. Block Cipher Identification Scheme Based on
+Hamming Weight Distribution. IEEE Access, v. 11, 2023.
+DOI: 10.1109/ACCESS.2023.3249753.
+
+ZHOU, H. Block Cipher Algorithm Identification Scheme Based on Multi-Modal Feature
+Fusion. In: ICCASIT, 2025. DOI: 10.1109/ICCASIT66611.2025.11348899.
+
+Referências metodológicas
+
+KITCHENHAM, B.; CHARTERS, S. Guidelines for performing Systematic Literature
+Reviews in Software Engineering. EBSE Technical Report EBSE-2007-01. Keele
+University e University of Durham, 2007.
+
+OUZZANI, M.; HAMMADY, H.; FEDOROWICZ, Z.; ELMAGARMID, A. Rayyan: a web and mobile
+app for systematic reviews. Systematic Reviews, v. 5, art. 210, 2016.
+
+PAGE, M. J. et al. The PRISMA 2020 statement: an updated guideline for reporting
+systematic reviews. BMJ, v. 372, n. 71, 2021.
+
+RUKHIN, A. et al. A Statistical Test Suite for Random and Pseudorandom Number
+Generators for Cryptographic Applications. NIST Special Publication 800-22
+Revision 1a, 2010.
+
+================================================================================
+FIM
+================================================================================
