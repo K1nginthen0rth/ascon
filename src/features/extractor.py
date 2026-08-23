@@ -50,8 +50,9 @@ _METADATA_COLS = ("sample_id", "algorithm", "key_id", "len_pt", "len_ct")
 class CiphertextFeatureExtractor:
     """Extrai vetores de features numéricas de ciphertexts para modelos ML.
 
-    Combina 12 famílias de features (v2 — ~380-420 dimensões no total,
-    número exato depende dos blocos de bits agregados; v1 tinha 6/307D):
+    Combina 12 famílias de features (v2 — 641 dimensões no total, medido;
+    a estimativa inicial de projeto era ~380-420, revisada para cima ao
+    fechar `bitblock`/`nist_sts`; v1 tinha 6 famílias/307D):
       - histogram (256): distribuição empírica de bytes
       - entropy (4): Shannon + chi² contra uniforme
       - ngrams (15): estatísticas de bigramas, trigramas e 4-gramas

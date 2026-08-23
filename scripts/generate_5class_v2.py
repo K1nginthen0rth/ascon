@@ -455,7 +455,15 @@ def build_manifest(
         "generation_stats": generation_stats,
         "statistics": agg_stats,
         "keys_stored_separately": "data/interim/keyholdout_5class_v2_keys.json (NUNCA no parquet público)",
-        "sanity_checks": "pending - run scripts/validate_5class_v2.py",
+        # Aponta para o arquivo real de validação, não um texto estático
+        # "pending" que nunca é atualizado (achado na verificação de
+        # aderência): o validador escreve seu próprio JSON separado, e
+        # deixar este campo congelado em "pending" mesmo depois da
+        # validação rodar (com veredicto PASS) é enganoso para quem lê só
+        # o manifesto. O nome do arquivo é fixo e previsível
+        # (`validate_5class_v2.py` usa `{dataset_id}_validation.json`).
+        "sanity_checks": f"ver {cfg.dataset_id}_validation.json "
+                         f"(gerado por scripts/validate_5class_v2.py)",
     }
 
 

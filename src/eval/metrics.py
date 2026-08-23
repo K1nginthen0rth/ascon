@@ -330,11 +330,24 @@ def expected_calibration_error(
     if y_proba.ndim != 2:
         raise ValueError("y_proba deve ser 2D (n_samples, n_classes)")
 
+    # Premissa não-óbvia (achada na verificação de aderência): `y_true`
+    # precisa ser inteiro 0..K-1 alinhado à ORDEM DAS COLUNAS de
+    # `y_proba` — não checado antes, então um y_true fora dessa convenção
+    # (ex.: rótulos string, ou índices que pulam um valor) dava um ECE
+    # silenciosamente errado em vez de um erro. Vale hoje porque todo
+    # chamador do projeto usa `label_map` contíguo, mas o assert é barato
+    # e evita que essa premissa se rompa em silêncio no futuro.
+    y_true_int = y_true.astype(np.int64)
+    n_classes = y_proba.shape[1]
+    if y_true_int.min() < 0 or y_true_int.max() >= n_classes:
+        raise ValueError(
+            f"y_true deve ser inteiro 0..{n_classes - 1} alinhado às colunas "
+            f"de y_proba; encontrado range [{y_true_int.min()}, {y_true_int.max()}]"
+        )
+
     confidences = y_proba.max(axis=1)
     predictions = y_proba.argmax(axis=1)
-    # Mapear y_true para mesma ordem dos índices das colunas (assume sorted)
-    # Para classes int 0..K-1 contiguas:
-    correct = (predictions == y_true).astype(float)
+    correct = (predictions == y_true_int).astype(float)
 
     bin_edges = np.linspace(0.0, 1.0, n_bins + 1)
     ece = 0.0
