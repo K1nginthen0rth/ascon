@@ -106,7 +106,7 @@ dataset secundário de 1KB.
   (não autogerado). Commit `e6be72c`.
 - **Aceite:** KAT 100% ✅; testes verdes ✅.
 
-**Aceite da fase:** `pytest tests/ -v` inteiro verde — **182/182 passando**. ✅
+**Aceite da fase:** `pytest tests/ -v` inteiro verde — **182/182 passando** (contagem à época da Fase 1; hoje o projeto tem 242 testes). ✅
 
 ## FASE 2 — Features novas ✅ CONCLUÍDA (todas as sub-fases)
 
@@ -187,9 +187,11 @@ dataset secundário de 1KB.
 ### 2.4 Benchmark de extração — **GATE da Fase 4** ✅ CONCLUÍDA E OTIMIZADA (2026-08-22)
 
 **Estado final, pós-otimização (medido em dados reais, não estimado):**
-extração completa = **1,69 s/amostra** (era 5,9 s/amostra na primeira
-rodada, tabela abaixo) — **~121h de CPU serial** para as 180k amostras,
-ou **~20h com 6 processos paralelos** (ver `scripts/extract_features_v2.py`
+extração completa = **~2,2 s/amostra em dados reais** (era 5,9 s/amostra
+na primeira rodada, tabela abaixo) — **~110h de CPU serial** para as 180k
+amostras, ou **~18-20h com 6 processos paralelos**. (Medição isolada de
+uma amostra quente dá 1,69 s, só CPU das famílias; 2,21 s é a média no
+laço real, com leitura do parquet — use esta para planejar.) (ver `scripts/extract_features_v2.py`
 e `07_runbook_execucao.md` Etapa 3). Bem abaixo do teto de 48h
 paralelizado do critério de aceite original.
 
@@ -227,8 +229,10 @@ pontos específicos que a tabela por família escondia:
 
 Detalhe completo: commit `603233a`.
 
-**Aceite:** ✅ custo real medido — 1,69s/amostra, ~121h serial / ~20h com
-6 processos paralelos, abaixo do teto de 48h.
+**Aceite:** ✅ custo real medido — ~2,2s/amostra, ~110h serial / ~18-20h
+com 6 processos paralelos, abaixo do teto de 48h. O artefato
+`reports/v2/benchmark_extracao.md` é PRÉ-otimização e está obsoleto
+(gitignored; regerável por `scripts/benchmark_extraction_v2.py`).
 
 ## FASE 3 — Seletor v2 ✅ CONCLUÍDA (2026-08-21)
 

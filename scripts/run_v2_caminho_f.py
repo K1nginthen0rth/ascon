@@ -69,11 +69,29 @@ CAMINHO_DIRS = {
     "D": "caminho_d", "E": "caminho_e",
 }
 
-# Tags de fold que contam como "final" (trainval completo -> teste). B/C/E
-# rodam 3 seeds no braço controlado (ver run_v2_caminhos_bce.py); o F usa
-# só a seed principal (7), a mesma usada em todo o resto do projeto — as
-# outras duas seeds são o robustez-check DAQUELE caminho, não insumo do F.
-FINAL_FOLD_TAGS = {"final", "final_seed7"}
+# Tags de fold que ALIMENTAM o F como "final" (trainval completo -> teste).
+# B/C/E rodam 3 seeds no braço controlado (`FINAL_SEEDS = [7, 107, 207]` em
+# run_v2_caminhos_bce.py); o F usa só a seed principal (7), a mesma do resto
+# do projeto — as outras duas são o robustez-check DAQUELE caminho, não
+# insumo do meta-modelo (usá-las daria várias predições da mesma fonte para
+# o mesmo `sample_id`, resolvidas por um `drop_duplicates` arbitrário).
+FINAL_SOURCE_TAGS = {"final", "final_seed7"}
+
+
+def _is_final_fold(fold_series: pd.Series) -> pd.Series:
+    """
+    Máscara de QUALQUER rodada de modelo final (trainval completo -> teste).
+
+    Distinta de `FINAL_SOURCE_TAGS` de propósito, e a distinção é um
+    bloqueador real corrigido em 2026-08-23: a versão anterior usava o
+    mesmo conjunto fixo para os dois lados, então `final_seed107` e
+    `final_seed207` — que NÃO estão no conjunto — caíam no lado
+    out-of-fold. Como são predições sobre chaves de TESTE, o assert de
+    vazamento derrubava o script inteiro assim que B/C/E rodassem as 3
+    seeds no braço controlado. Exclusão (OOF) usa este predicado amplo;
+    inclusão (fonte do F) usa `FINAL_SOURCE_TAGS`.
+    """
+    return fold_series.astype(str).str.startswith("final")
 
 
 def _collect(branch: str, run_id: str, want_final: bool) -> pd.DataFrame:
@@ -82,7 +100,7 @@ def _collect(branch: str, run_id: str, want_final: bool) -> pd.DataFrame:
 
     `want_final=False`: só linhas de fold de CV (out-of-fold) — treino do
     meta-modelo e dos calibradores.
-    `want_final=True`: só linhas de `FINAL_FOLD_TAGS` — avaliação do F no
+    `want_final=True`: só linhas de `FINAL_SOURCE_TAGS` — avaliação do F no
     teste canônico, com modelos-base treinados no trainval completo.
     """
     frames: list[pd.DataFrame] = []
@@ -94,8 +112,14 @@ def _collect(branch: str, run_id: str, want_final: bool) -> pd.DataFrame:
             df = pd.read_parquet(pq_file)
             if df.empty or "y_proba" not in df.columns:
                 continue
-            is_final = df["fold"].astype(str).isin(FINAL_FOLD_TAGS)
-            df = df[is_final] if want_final else df[~is_final]
+            # Assimétrico de propósito — ver `_is_final_fold`. Inclusão usa
+            # o conjunto estrito (só a seed principal alimenta o F);
+            # exclusão usa o predicado amplo (NENHUMA rodada final pode
+            # vazar para o lado out-of-fold, seja qual for a seed).
+            if want_final:
+                df = df[df["fold"].astype(str).isin(FINAL_SOURCE_TAGS)]
+            else:
+                df = df[~_is_final_fold(df["fold"])]
             if df.empty:
                 continue
             frames.append(df)

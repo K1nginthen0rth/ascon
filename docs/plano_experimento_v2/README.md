@@ -62,7 +62,7 @@ e em `docs/analise_critica_plano_v2.md`.
 
 ## Estado atual (2026-08-22) — todo o código está implementado
 
-**Fases 0–11 têm código completo e testado (232/232 testes).** O gargalo
+**Fases 0–11 têm código completo e testado (242/242 testes).** O gargalo
 agora é rodar, não escrever: a extração de features nas 180k amostras
 reais leva ~20h por braço (`controlado`/`cru`/`shuffled`), e os Caminhos
 B/C/E dependem de sessão de GPU (Kaggle/Colab). Sequência exata de

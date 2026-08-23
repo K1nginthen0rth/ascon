@@ -525,16 +525,25 @@ def run_final(path: str, branch: str, device: str, out_dir: Path,
 
 
 def run_hpsearch(path: str, branch: str, device: str, out_dir: Path,
-                 epochs: int, batch_size: int, n_configs: int) -> None:
+                 epochs: int, batch_size: int, n_configs: int,
+                 cond: str = "sum1") -> None:
     """8-12 configs aleatórias x 1 fold (decisão C3 do planejamento).
-    Registra todas; a vencedora por F1 de validação vai para a CV."""
+    Registra todas; a vencedora por F1 de validação vai para a CV.
+
+    `cond` precisa ser o MESMO da CV que virá depois (bug real corrigido em
+    2026-08-23: a versão anterior não repassava a variante, então a busca do
+    Caminho C rodava sempre em `sum1` mesmo quando o smoke elegia `log1p` —
+    os hiperparâmetros seriam escolhidos sob uma escala de entrada e usados
+    sob outra)."""
     rng = np.random.default_rng(SEED_MODEL)
     folds = load_folds()
     fold_spec = folds["folds"][0]
     cts_tr, y_tr, _, _ = load_cts(set(fold_spec["train_keys"]), REAL_ALGORITHMS, branch)
     cts_va, y_va, sid_va, kid_va = load_cts(set(fold_spec["val_keys"]), REAL_ALGORITHMS, branch)
-    tr_ds = make_dataset(path, cts_tr, y_tr, branch)
-    va_ds = make_dataset(path, cts_va, y_va, branch)
+    cond_stats = (fit_standardization_stats(cts_tr)
+                 if (path == "C" and cond == "standardized") else (0.0, 1.0))
+    tr_ds = make_dataset(path, cts_tr, y_tr, branch, cond=cond, cond_stats=cond_stats)
+    va_ds = make_dataset(path, cts_va, y_va, branch, cond=cond, cond_stats=cond_stats)
 
     for ci in range(n_configs):
         if path == "B":
@@ -568,7 +577,7 @@ def run_hpsearch(path: str, branch: str, device: str, out_dir: Path,
             sample_ids=sid_va, key_ids=kid_va,
             class_names=REAL_ALGORITHMS, labels=list(range(len(REAL_ALGORITHMS))),
             out_dir=out_dir, n_bootstrap=200,
-            extra={"hp": hp, "lr": lr, "best_epoch": best_ep,
+            extra={"hp": hp, "lr": lr, "best_epoch": best_ep, "cond": cond,
                    "n_params": sum(p.numel() for p in model.parameters())},
         )
 
@@ -737,7 +746,7 @@ def main() -> None:
                   args.smoke_samples, epochs, args.batch_size, cond=args.cond)
     elif args.mode == "hpsearch":
         run_hpsearch(args.path, args.branch, args.device, out_dir,
-                     epochs, args.batch_size, args.n_configs)
+                     epochs, args.batch_size, args.n_configs, cond=args.cond)
     elif args.mode == "cv":
         run_cv(args.path, args.branch, args.device, out_dir, epochs,
                args.batch_size, hp, max_train=args.max_train_samples, cond=args.cond)

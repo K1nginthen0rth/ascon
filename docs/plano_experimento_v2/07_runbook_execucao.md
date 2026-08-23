@@ -17,7 +17,7 @@ estimados, exceto onde marcado.
 ```bash
 # extensões C (MSVC): Ascon, GIFT-COFB, Grain, Schwaemm
 build_cffi.bat && build_gift_cofb.bat && build_grain.bat && build_sparkle.bat
-pytest tests/ -q          # esperado: 229 passed
+pytest tests/ -q          # esperado: 242 passed
 ```
 
 Repos de referência C (`ascon-c/`, `gift-cofb/`, `grain-128aead/`,
@@ -53,9 +53,17 @@ Resultado registrado: MDE de **+1,02 p.p.** (4 classes, n=24.000) e
 
 ## Etapa 3 — Extração de features (local, ~20h com 6 shards)
 
-**Este é o gargalo.** 2,43 s/amostra medidos; 180k amostras = ~121h
-serial. Rode em shards paralelos — processos independentes, retomáveis
-(um chunk pronto é pulado na retomada).
+**Este é o gargalo.** **~2,2 s/amostra** medidos em ciphertexts reais do
+v2; 180k amostras = **~110h serial**, ou **~18-20h com 6 shards**. Rode em
+shards paralelos — processos independentes, retomáveis (um chunk pronto é
+pulado na retomada).
+
+> Sobre o número: medições isoladas de uma amostra "quente" dão 1,69 s
+> (só o custo de CPU das famílias); no laço real, com leitura do parquet,
+> a média em CTs do v2 é 2,21 s. Use **2,2 s** para planejar — é a que
+> inclui I/O. O relatório `reports/v2/benchmark_extracao.md` é
+> PRÉ-otimização (249,5h) e está obsoleto; regere com
+> `scripts/benchmark_extraction_v2.py` se precisar dele.
 
 ```bash
 # braço primário
@@ -175,8 +183,11 @@ limitar — o valor usado fica registrado no relatório.
 de fechar a sessão**. Os artefatos dos Caminhos B/C do v1 foram perdidos
 exatamente assim.
 
-O braço `cru` só é necessário para B (o truncamento afeta o padding
-posicional da CNN1D); C e E podem ficar só no `controlado`.
+O braço `cru` só é necessário para **B** (o truncamento afeta o padding
+posicional da CNN1D). **C** pode ficar só no `controlado`. **E é idêntico
+nos dois braços** — o Transformer trunca para 65.536 em qualquer caso
+(`max_len` default), então `--branch cru` para E não gera informação nova;
+não rode.
 
 ---
 
@@ -196,7 +207,7 @@ representação em vez de falhar.
 
 ## Etapa 7 — Caminho F (meta-classificador)
 
-Depende das predições out-of-fold de A–E (modo `cv` de cada um).
+Depende de **duas** coisas de A–E: as predições out-of-fold (modo `cv`, que treinam o meta-modelo) **e** as predições `final` (modo `final`, trainval→teste, onde o F é avaliado). Sem as duas ele para com erro explícito dizendo qual falta.
 
 ```bash
 python scripts/run_v2_caminho_f.py --branch controlado

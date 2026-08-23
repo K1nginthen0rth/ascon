@@ -165,7 +165,21 @@ def _save_ckpt(
     optimizer:  torch.optim.Optimizer,
     best_val:   float,
     best_epoch: int,
+    best_state: Optional[dict] = None,
 ) -> None:
+    """
+    Checkpoint por época.
+
+    **`best_state` é obrigatório para a retomada ser correta** (bug real
+    corrigido em 2026-08-23): a versão anterior gravava `model_state` (a
+    época CORRENTE), `best_val_loss` e `best_epoch`, mas não os PESOS da
+    melhor época. Ao retomar, `best_state` voltava a `None`; se nenhuma
+    época seguinte batesse o `best_val` herdado, o `if best_state is not
+    None` no fim de `train_cnn` era pulado e o modelo devolvido era o da
+    ÚLTIMA época — enquanto o `best_epoch` reportado no JSON apontava
+    outra. Kaggle/Colab dependem de retomada por limite de sessão, então
+    isso atingiria em cheio os Caminhos B, C e E.
+    """
     torch.save({
         "epoch":          epoch,
         "fold":           fold_id,
@@ -173,6 +187,7 @@ def _save_ckpt(
         "optimizer_state": optimizer.state_dict(),
         "best_val_loss":  best_val,
         "best_epoch":     best_epoch,
+        "best_state":     best_state,
         "rng_state":      torch.get_rng_state(),
     }, path)
 
@@ -182,8 +197,13 @@ def _load_ckpt(
     model:     nn.Module,
     optimizer: torch.optim.Optimizer,
     device:    str,
-) -> tuple[int, float, int]:
-    """Carrega checkpoint. Retorna (start_epoch, best_val, best_epoch)."""
+) -> tuple[int, float, int, Optional[dict]]:
+    """Carrega checkpoint. Retorna (start_epoch, best_val, best_epoch, best_state).
+
+    `best_state` volta `None` em checkpoints gravados antes da correção de
+    2026-08-23 (`.get`, não indexação) — nesse caso a retomada degrada para
+    o comportamento antigo em vez de quebrar, mas o aviso é impresso por
+    `train_cnn`."""
     ckpt = torch.load(path, map_location=device)
     model.load_state_dict(ckpt["model_state"])
     optimizer.load_state_dict(ckpt["optimizer_state"])
@@ -191,7 +211,8 @@ def _load_ckpt(
     if not isinstance(rng, torch.ByteTensor):
         rng = rng.cpu().to(torch.uint8)
     torch.set_rng_state(rng)
-    return ckpt["epoch"] + 1, ckpt["best_val_loss"], ckpt["best_epoch"]
+    return (ckpt["epoch"] + 1, ckpt["best_val_loss"], ckpt["best_epoch"],
+            ckpt.get("best_state"))
 
 
 # ---------------------------------------------------------------------------
@@ -232,9 +253,15 @@ def train_cnn(
 
     ckpt = _ckpt_path(ckpt_dir, fold_id, cnn_id)
     if resume and ckpt and ckpt.exists():
-        start_ep, best_val, best_ep = _load_ckpt(ckpt, model, optim, device)
+        start_ep, best_val, best_ep, best_state = _load_ckpt(ckpt, model, optim, device)
         no_imp = 0
         print(f"  Resumindo do fold {fold_id} {cnn_id} epoch {start_ep - 1}")
+        if best_state is None and best_ep > 0:
+            print(f"  [AVISO] checkpoint sem `best_state` (formato antigo, "
+                  f"pré-2026-08-23): se nenhuma época seguinte bater "
+                  f"val_loss={best_val:.4f}, o modelo devolvido será o da "
+                  f"última época, não o da época {best_ep}. Apague o "
+                  f"checkpoint para treinar do zero se isso importar.")
     elif verbose:
         print(f"  Iniciando do zero (fold {fold_id} {cnn_id})")
 
@@ -279,23 +306,27 @@ def train_cnn(
         if verbose:
             print(f"    ep {ep:2d}  train={tloss:.4f}  val={vloss:.4f}  f1={vf1:.4f}")
 
-        # Checkpoint por epoch
-        if ckpt:
-            ckpt_dir.mkdir(parents=True, exist_ok=True)
-            _save_ckpt(ckpt, ep, fold_id, model, optim, best_val, best_ep)
-
-        # Early stopping
-        if vloss < best_val - 1e-4:
+        # Early stopping — atualiza best_* ANTES de gravar o checkpoint,
+        # senão o checkpoint da época `ep` carregaria o melhor estado de
+        # `ep-1` e uma queda logo após a melhor época a perderia.
+        improved = vloss < best_val - 1e-4
+        if improved:
             best_val   = vloss
             best_state = {k: v.clone().cpu() for k, v in model.state_dict().items()}
             best_ep    = ep
             no_imp     = 0
         else:
             no_imp += 1
-            if no_imp >= patience:
-                if verbose:
-                    print(f"    early stop @ ep {ep} (best {best_ep})")
-                break
+
+        # Checkpoint por epoch (inclui best_state — ver `_save_ckpt`)
+        if ckpt:
+            ckpt_dir.mkdir(parents=True, exist_ok=True)
+            _save_ckpt(ckpt, ep, fold_id, model, optim, best_val, best_ep, best_state)
+
+        if not improved and no_imp >= patience:
+            if verbose:
+                print(f"    early stop @ ep {ep} (best {best_ep})")
+            break
 
     if best_state is not None:
         model.load_state_dict(best_state)

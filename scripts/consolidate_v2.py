@@ -58,7 +58,20 @@ def chance_level(n_classes: int) -> float:
     return 1.0 / max(n_classes, 1)
 
 
-def load_all_metrics() -> pd.DataFrame:
+# Braços que NUNCA podem entrar numa tabela de resultado. `sintetico` é o
+# parquet de features aleatórias usado para validar encanamento (folds,
+# seletor, modelos, relato) sem esperar as ~20h da extração real — por
+# construção não contém sinal nenhum, mas os `.jsonl` são append-only e o
+# `rglob` não distingue braço. Sem este filtro, uma rodada de validação
+# entra na tabela exploratória E no denominador do BH-FDR (demonstrado na
+# auditoria de 2026-08-23: o HKNNRF saiu com p bruto de 0,0296 sobre ruído
+# puro). O runbook manda limpar `reports/v2/` antes de rodada oficial, o
+# que mitiga — mas depender só de disciplina de operador para não
+# contaminar a estatística é frágil demais.
+_NON_OFFICIAL_BRANCHES = {"sintetico"}
+
+
+def load_all_metrics(drop_non_official: bool = True) -> pd.DataFrame:
     """Varre recursivamente os .jsonl de métricas de todos os caminhos."""
     rows: list[dict] = []
     for jsonl in sorted(REPORTS.rglob("*_metrics.jsonl")):
@@ -102,6 +115,16 @@ def load_all_metrics() -> pd.DataFrame:
     # consolidação misturaria resultado velho e novo da mesma célula.
     # Mantemos o registro MAIS RECENTE de cada
     # (run_id, caminho, modelo, braço, fold).
+    if drop_non_official:
+        # Casa por prefixo: os braços da ablação viram `sintetico_...`
+        # (ex.: `sintetico_sem_keyholdout`, `sintetico_familia_NIST`).
+        mask = df["braco"].astype(str).str.split("_").str[0].isin(_NON_OFFICIAL_BRANCHES)
+        if mask.any():
+            print(f"[filtro] {int(mask.sum())} registro(s) de braço não-oficial "
+                  f"descartado(s) ({sorted(df.loc[mask, 'braco'].unique())}) — "
+                  f"validação de encanamento não entra em tabela de resultado")
+            df = df[~mask].reset_index(drop=True)
+
     key = ["run_id", "caminho", "modelo", "braco", "fold"]
     n_before = len(df)
     df = (df.sort_values("timestamp")
@@ -381,10 +404,12 @@ def main() -> None:
                 "teste único pré-especificado antes de ser reportado como "
                 "achado — protocolo definido no planejamento.\n")
         f.write("- Um nulo aqui deve ser lido junto do poder a priori "
-                "(`power_analysis.md`): o desenho detecta ~1 p.p. acima do "
-                "acaso no teste 4-classes e ~1,3 p.p. no par binário, com 80% "
-                "de poder. Efeitos menores que isso não são detectáveis nesta "
-                "escala — limitação declarada, não prova de ausência.\n")
+                "(`power_analysis.md`): o desenho detecta **+1,02 p.p.** acima "
+                "do acaso no teste 4-classes (poder empírico MEDIDO: 96%) e "
+                "**+1,27 p.p.** no par binário (78%) — 80% era o alvo de "
+                "projeto, não o valor obtido. Efeitos menores que isso não "
+                "são detectáveis nesta escala — limitação declarada, não "
+                "prova de ausência.\n")
 
         f.write("\n## 4. McNemar pareado entre modelos (família primária, "
                 "Bonferroni)\n\n")

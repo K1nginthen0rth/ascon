@@ -23,7 +23,12 @@ import torch.nn as nn
 
 
 class CiphertextCNN2D(nn.Module):
-    """CNN 2D simples (treino do zero) para imagens 32x32 de criptogramas.
+    """CNN 2D simples (treino do zero) para representações 2D de criptogramas.
+
+    Totalmente convolucional até o `GlobalAvgPool`, então **não depende do
+    tamanho da entrada**: o v1 usava 32x32 (reshape linear legado); o v2
+    usa 256x256 — mapa de co-ocorrência de bigramas no Caminho C, e
+    reshape do payload na réplica E05.
 
     Args:
         n_classes: número de classes (default 2).

@@ -101,7 +101,7 @@ wrapper para a versão exploratória; janela fixa de 8 para a principal.
 | Mapa de p-values NIST como imagem (E11, Li & Chen) | ideia registrada como variação possível dos Caminhos C/E — não adotada nesta rodada |
 | Deriva posicional (segmentos) | proposta de primeiros princípios rejeitada pelo Nycolas |
 
-**Total estimado: ~380–420 features** (o número exato depende de decisões de
+**Total estimado: 641 (medido; a estimativa de projeto era ~380–420) features** (o número exato depende de decisões de
 agregação nos templates e blocos de bits — fixar na implementação).
 
 ## 2.2 Redesenho do seletor ✅ IMPLEMENTADO (2026-08-21)

@@ -28,14 +28,15 @@ comprometer GPU.
 
 - **Geração do dataset:** 2.461,6s (~41 min) para 180.000 amostras,
   11,80 GB. Memória estável em ~1,2 GB (escrita incremental).
-- **Extração de features: 2,43 s/amostra medidos em dados reais** (1,69 s
-  no benchmark isolado; a diferença é o custo de leitura/streaming).
-  180k amostras = **~121h de CPU serial por braço**, ou **~20h com 6
-  shards** paralelos. Bem abaixo do teto de 48h paralelizado.
+- **Extração de features: ~2,2 s/amostra medidos em dados reais** (2,21 s
+  em CTs do v2 no laço real; 1,69 s numa medição isolada de amostra
+  quente — a diferença é o custo de leitura/streaming, então use 2,2 s
+  para planejar). 180k amostras = **~110h de CPU serial por braço**, ou
+  **~18-20h com 6 shards** paralelos. Bem abaixo do teto de 48h.
   - Custo residual concentrado em: `complexity`/LZ76 (0,56 s — maior
     item isolado, O(n²), numba testado e REJEITADO por ser mais lento
     que o `memmem` em C) e `nist_sts` (0,80 s, já otimizado 5,2x).
-  - Histórico: a estimativa inicial era 249,5h serial; caiu para ~121h
+  - Histórico: a estimativa inicial era 249,5h serial; caiu para ~110h
     após otimizar os dois gargalos reais medidos (ver 5.6).
 - **SVM (dado real do v1):** busca em grade nos 5 folds = 8.365s (~139 min) a
   38.400 amostras/fold. Com a correção por subamostra + CV interna

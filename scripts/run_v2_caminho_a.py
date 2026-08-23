@@ -375,50 +375,67 @@ def _e20_columns(df: pd.DataFrame) -> list[str]:
     return nist_cols + entropy_cols
 
 
+# Nomes reportáveis das rodadas de `run_literature_replicas` — usados para
+# que `--models` filtre também estas (antes ele só filtrava `build_models()`,
+# então `--models RandomForest` ainda rodava as 5 rodadas de réplica).
+REPLICA_MODEL_NAMES = [
+    "Stacking", "HKNNRF_replica",
+    "XGB_LGBM_hamming_replica", "Transformer_E20_replica",
+]
+
+
 def run_literature_replicas(
     tr: pd.DataFrame, va: pd.DataFrame, y_tr: np.ndarray, y_va: np.ndarray,
     X_tr: np.ndarray, X_va: np.ndarray, run_id: str, braco: str, fold_tag,
     classes: list[str], out_dir, n_bootstrap: int, seed: int = SEED_MODEL,
+    models_subset: list[str] | None = None,
 ) -> None:
     """
     Roda o Stacking próprio + as 3 réplicas nomeadas sobre um fold já
     preparado (mesmos X_tr/X_va — features selecionadas — do restante do
     Caminho A). Chamado uma vez por fold de CV e uma vez no modelo final.
+
+    `models_subset` filtra quais rodam (ver `REPLICA_MODEL_NAMES`).
     """
+    def _want(name: str) -> bool:
+        return models_subset is None or name in models_subset
+
     groups_tr = tr["key_id"].to_numpy()
     labels = list(range(len(classes)))
 
     # --- Stacking próprio ---
-    t0 = time.perf_counter()
-    stack = build_stacking_model(seed, groups_tr)
-    stack.fit(X_tr, y_tr)
-    report_eval(
-        run_id=run_id, caminho="A", modelo="Stacking",
-        braco=braco, fold=fold_tag,
-        y_true=y_va, y_pred=stack.predict(X_va), y_proba=get_proba(stack, X_va),
-        sample_ids=va["sample_id"].tolist(), key_ids=va["key_id"].tolist(),
-        class_names=classes, labels=labels, out_dir=out_dir, n_bootstrap=n_bootstrap,
-        extra={"train_time_s": round(time.perf_counter() - t0, 1),
-               "base_estimators": [e[0] for e in stack.estimators]},
-    )
+    if _want("Stacking"):
+        t0 = time.perf_counter()
+        stack = build_stacking_model(seed, groups_tr)
+        stack.fit(X_tr, y_tr)
+        report_eval(
+            run_id=run_id, caminho="A", modelo="Stacking",
+            braco=braco, fold=fold_tag,
+            y_true=y_va, y_pred=stack.predict(X_va), y_proba=get_proba(stack, X_va),
+            sample_ids=va["sample_id"].tolist(), key_ids=va["key_id"].tolist(),
+            class_names=classes, labels=labels, out_dir=out_dir, n_bootstrap=n_bootstrap,
+            extra={"train_time_s": round(time.perf_counter() - t0, 1),
+                   "base_estimators": [e[0] for e in stack.estimators]},
+        )
 
     # --- HKNNRF (Yuan et al. 2022) ---
-    t0 = time.perf_counter()
-    hknnrf = build_hknnrf_model(seed, groups_tr)
-    hknnrf.fit(X_tr, y_tr)
-    report_eval(
-        run_id=run_id, caminho="A", modelo="HKNNRF_replica",
-        braco=braco, fold=fold_tag,
-        y_true=y_va, y_pred=hknnrf.predict(X_va), y_proba=get_proba(hknnrf, X_va),
-        sample_ids=va["sample_id"].tolist(), key_ids=va["key_id"].tolist(),
-        class_names=classes, labels=labels, out_dir=out_dir, n_bootstrap=n_bootstrap,
-        extra={"train_time_s": round(time.perf_counter() - t0, 1),
-               "referencia": "Yuan et al. 2022, PeerJ CS",
-               "operacionalizacao": "StackingClassifier(KNN, RF) + LR"},
-    )
+    if _want("HKNNRF_replica"):
+        t0 = time.perf_counter()
+        hknnrf = build_hknnrf_model(seed, groups_tr)
+        hknnrf.fit(X_tr, y_tr)
+        report_eval(
+            run_id=run_id, caminho="A", modelo="HKNNRF_replica",
+            braco=braco, fold=fold_tag,
+            y_true=y_va, y_pred=hknnrf.predict(X_va), y_proba=get_proba(hknnrf, X_va),
+            sample_ids=va["sample_id"].tolist(), key_ids=va["key_id"].tolist(),
+            class_names=classes, labels=labels, out_dir=out_dir, n_bootstrap=n_bootstrap,
+            extra={"train_time_s": round(time.perf_counter() - t0, 1),
+                   "referencia": "Yuan et al. 2022, PeerJ CS",
+                   "operacionalizacao": "StackingClassifier(KNN, RF) + LR"},
+        )
 
     # --- XGB-LGBM sobre peso de Hamming (Zhao et al. 2023) ---
-    ham_cols = _hamming_columns(tr)
+    ham_cols = _hamming_columns(tr) if _want("XGB_LGBM_hamming_replica") else []
     if ham_cols:
         X_tr_h = tr[ham_cols].to_numpy(np.float64)
         X_va_h = va[ham_cols].to_numpy(np.float64)
@@ -435,11 +452,11 @@ def run_literature_replicas(
                    "referencia": "Zhao et al. 2023, IEEE Access",
                    "representacao": ham_cols, "n_features": len(ham_cols)},
         )
-    else:
+    elif _want("XGB_LGBM_hamming_replica"):
         print("  [aviso] colunas de peso de Hamming ausentes — pulando réplica XGB-LGBM")
 
     # --- Transformer sobre features NIST (réplica fiel do E20) ---
-    e20_cols = _e20_columns(tr)
+    e20_cols = _e20_columns(tr) if _want("Transformer_E20_replica") else []
     if len(e20_cols) >= 8:
         X_tr_n = tr[e20_cols].to_numpy(np.float64)
         X_va_n = va[e20_cols].to_numpy(np.float64)
@@ -468,7 +485,7 @@ def run_literature_replicas(
                    "features_selecionadas": e20_filter.selected_names_,
                    "n_params": e20_model.model_.count_parameters()},
         )
-    else:
+    elif _want("Transformer_E20_replica"):
         print(f"  [aviso] só {len(e20_cols)} colunas NIST+entropia disponíveis "
               f"(<8) — pulando réplica Transformer-E20")
 
@@ -638,6 +655,7 @@ def run_analysis(
                 tr, va, y_tr, y_va, X_tr, X_va,
                 run_id=f"{DATASET_ID}_{analysis_name}", braco=braco, fold_tag=fold_idx,
                 classes=classes, out_dir=out_dir, n_bootstrap=n_bootstrap,
+                models_subset=models_subset,
             )
 
     # ---------------- Modelo final: trainval completo -> teste ----------------
@@ -692,6 +710,7 @@ def run_analysis(
             trainval_df, test_df, y_tv, y_te, X_tv, X_te,
             run_id=f"{DATASET_ID}_{analysis_name}", braco=braco, fold_tag="final",
             classes=classes, out_dir=out_dir, n_bootstrap=n_bootstrap,
+            models_subset=models_subset,
         )
 
 
@@ -731,6 +750,13 @@ def analysis_sanity_lenct(df, folds, branch, out_dir, **kw) -> None:
     """Sanity de encanamento: inclui `len_ct` DE PROPÓSITO. Pares com
     Grain (len_ct 65.544 vs 65.552) devem dar F1 > 0,95 — se não derem,
     há bug no pipeline. Rodada fora das tabelas de resultado."""
+    if branch != "cru":
+        print(f"  [AVISO] 06 §6.7 especifica o braço `cru` para o sanity de "
+              f"`len_ct`; rodando em `{branch}`. Funciona (a coluna `len_ct` do "
+              f"parquet de features é o comprimento ORIGINAL, herdado do CT "
+              f"cru, em qualquer braço), mas nesse caso ela não corresponde ao "
+              f"comprimento dos CTs efetivamente usados — rode com "
+              f"`--branch cru` para o sanity canônico.")
     kw = {**kw, "include_len_ct": True, "models_subset": ["RandomForest"], "run_replicas": False}
     run_analysis(df, folds, "sanity_lenct_grain_vs_ascon",
                  ["Grain-128AEAD", "Ascon-AEAD128"], branch, out_dir, **kw)
@@ -922,12 +948,23 @@ def _shuffle_within_key(rng: np.random.Generator, groups: np.ndarray, y: np.ndar
     return y_shuf
 
 
-def analysis_permutation(df, folds, branch, out_dir, classes=None, **_ignored) -> None:
+def analysis_permutation(df, folds, branch, out_dir, classes=None,
+                        keyholdout=True, **_ignored) -> None:
     """
     Distribuição nula empírica do F1 (20 repetições, esquemas `by_key` e
     `within_key`) — 06 Fase 6.8. Sobre o braço primário, cenário
     4-classes por default. LR + XGBoost, mesmo par de modelos do v1.
+
+    Sempre roda COM key-holdout: os dois esquemas de permutação são
+    definidos em termos de `key_id` (`by_key` sorteia rótulo por chave,
+    `within_key` permuta dentro da chave), então "nulo empírico sem
+    key-holdout" não é uma coisa que exista neste desenho. `--no-keyholdout`
+    é avisado e ignorado, em vez de silenciosamente ignorado.
     """
+    if not keyholdout:
+        print("  [AVISO] `--no-keyholdout` não se aplica ao teste de permutação "
+              "(os dois esquemas são definidos por `key_id`) — rodando COM "
+              "key-holdout.")
     classes = classes or REAL_ALGORITHMS
     sub = df[df["algorithm"].isin(classes)].copy()
     label_map = {c: i for i, c in enumerate(classes)}

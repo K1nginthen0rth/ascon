@@ -13,10 +13,14 @@ docs/plano_experimento_v2/06_implementacao_passo_a_passo.md Fase 2/6.
                     `sample_id`), destrói estrutura sequencial e preserva
                     o histograma.
 
-**Regra dura:** as features de tag (`tag_region`) são SEMPRE calculadas
-sobre o CT **cru**, em qualquer braço — cortar os últimos bytes removeria
-metade da tag dos algoritmos com ABYTES=16 e a extração passaria a contar
-bytes de payload como tag, silenciosamente. Ver `02_features_e_selecao.md`.
+**Regra das features de tag (`tag_region`):** calculadas sobre o CT **cru**
+nos braços `cru` e `controlado` — cortar os últimos bytes removeria metade
+da tag dos algoritmos com ABYTES=16 e a extração passaria a contar bytes de
+payload como tag, silenciosamente. **Exceção: no braço `shuffled` a tag sai
+do CT embaralhado**, porque ali não há truncamento (a regra não se aplica) e
+usar o cru deixaria 8 das 641 features do controle negativo com a estrutura
+sequencial intacta — justamente o que o controle existe para destruir. Ver
+`02_features_e_selecao.md` e a nota em `_extract_row`.
 
 **Memória (ver feedback de sessão):** o parquet de entrada tem 11,8GB; este
 script NUNCA o carrega inteiro — lê row group por row group
@@ -118,8 +122,22 @@ def _extract_row(row: dict, branch: str) -> dict:
     out["branch"] = branch
     for family in _BRANCH_FAMILIES:
         out.update(_FAMILY_FUNCS[family](ct_branch))
-    # Tag SEMPRE do CT cru, independentemente do braço (ver docstring).
-    out.update(_FAMILY_FUNCS[_TAG_FAMILY](ct_raw))
+
+    # Features de tag: do CT CRU em `cru`/`controlado`, do CT DO BRAÇO em
+    # `shuffled`.
+    #
+    # A regra "tag sempre do cru" existe por causa do TRUNCAMENTO: no braço
+    # `controlado` cortar os 8 bytes finais removeria metade da tag dos
+    # algoritmos com ABYTES=16, e a extração passaria a medir payload
+    # achando que é tag. Essa justificativa **não vale para o `shuffled`**,
+    # que não trunca nada — e aplicá-la lá era um bug real (achado na
+    # auditoria de 2026-08-23): 8 das 641 features do CONTROLE NEGATIVO
+    # preservavam intacta exatamente a estrutura sequencial que o controle
+    # existe para destruir. Se houvesse sinal na tag, ele sobreviveria ao
+    # embaralhamento e a leitura viraria "o sinal é de histograma" — a
+    # conclusão oposta da verdadeira.
+    ct_for_tag = ct_branch if branch == "shuffled" else ct_raw
+    out.update(_FAMILY_FUNCS[_TAG_FAMILY](ct_for_tag))
     return out
 
 
