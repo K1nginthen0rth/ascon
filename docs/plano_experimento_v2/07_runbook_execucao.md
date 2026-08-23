@@ -109,6 +109,10 @@ python scripts/run_v2_caminho_a.py --analysis 4class      --branch shuffled     
 python scripts/run_v2_caminho_a.py --analysis pairs       --branch shuffled
 python scripts/run_v2_caminho_a.py --analysis 4class      --branch controlado --no-keyholdout
 python scripts/run_v2_caminho_a.py --analysis ecb_control --branch controlado --no-keyholdout
+
+# ablação de famílias (all/clássicas/NIST/por-família/top-1) e permutação
+python scripts/run_v2_caminho_a.py --analysis family_ablation --branch controlado
+python scripts/run_v2_caminho_a.py --analysis permutation     --branch controlado
 ```
 
 A ablação `--no-keyholdout` roda nos **dois recortes** (4 classes e o
@@ -122,6 +126,13 @@ entre "não há inflação" e "o teste não tem poder".
 `--selector-preset rapido` existe para exploração — **nunca** para o
 resultado oficial.
 
+**Stacking + 3 réplicas da literatura** (HKNNRF, XGB-LGBM/Hamming,
+Transformer-E20) rodam automaticamente dentro de `4class`/`pairs` (é lá
+que sustentam a comparação com a RSL) — `--skip-replicas` desliga para
+exploração rápida, nunca no resultado oficial. `ecb_control`/
+`prng_control` já vêm com replicas desligadas por padrão (são controles
+do método, não parte da comparação entre algoritmos).
+
 ---
 
 ## Etapa 5 — Caminhos B/C/E (GPU: Kaggle T4 / Colab Pro)
@@ -132,16 +143,27 @@ decide se cabe no orçamento de GPU.
 
 ```bash
 python scripts/run_v2_caminhos_bce.py --path B --mode smoke --branch controlado
-python scripts/run_v2_caminhos_bce.py --path C --mode smoke --branch controlado
 python scripts/run_v2_caminhos_bce.py --path E --mode smoke --branch controlado
+
+# Path C: --mode smoke roda as 4 variantes de condicionamento (sum1/raw/
+# log1p/standardized) automaticamente e imprime a vencedora por val_loss
+# — ignora --cond neste modo.
+python scripts/run_v2_caminhos_bce.py --path C --mode smoke --branch controlado
 ```
 
-Depois, por caminho:
+Depois, por caminho (`--cond` só tem efeito em C; default `sum1`):
 
 ```bash
 python scripts/run_v2_caminhos_bce.py --path B --mode hpsearch --branch controlado --n-configs 10
 python scripts/run_v2_caminhos_bce.py --path B --mode cv       --branch controlado --hp-json best_B.json
 python scripts/run_v2_caminhos_bce.py --path B --mode final    --branch controlado --hp-json best_B.json
+
+python scripts/run_v2_caminhos_bce.py --path C --mode cv    --branch controlado --cond log1p
+python scripts/run_v2_caminhos_bce.py --path C --mode final --branch controlado --cond log1p
+
+# Réplica E05 (secundária) — ignora --mode, roda CV+final de uma vez,
+# só no subconjunto plaintext_source=imagem, sem alimentar o Caminho D.
+python scripts/run_v2_caminhos_bce.py --path E05 --mode cv --branch controlado
 ```
 
 **Memória:** um fold de treino completo são ~5,0 GB só de ciphertexts em
@@ -196,7 +218,14 @@ python scripts/consolidate_v2.py
 
 Gera `reports/v2/consolidado_v2.md` e `.csv`: família primária (6 pares,
 Caminho A, braço controlado, fold final) separada do exploratório, com
-BH-FDR (q=0,05) aplicado só no exploratório.
+BH-FDR (q=0,05) aplicado só no exploratório. Também reconstrói, a partir
+dos parquets de predição já salvos: McNemar pareado + Bonferroni entre
+todos os pares de modelos de cada comparação primária
+(`consolidado_v2_mcnemar.csv`), e estratificação de erro por `key_id`/
+`plaintext_source` para todo resultado acima do acaso
+(`consolidado_v2_estratificacao.csv`) — uma bandeira em
+`plaintext_source` ("separa melhor em imagens") é sinal de artefato, não
+achado sobre o algoritmo.
 
 **Leitura do resultado:**
 - Positivo (primário, ou exploratório que sobrevive ao FDR) ⇒ exige

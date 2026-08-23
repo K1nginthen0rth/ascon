@@ -224,3 +224,46 @@ experimento válido de um com metade das features corrompidas.
    validada equivalente mas é **mais lenta** que o `memmem` em C do
    operador `in` do Python. Extração total: **5,9 s → 1,69 s por
    amostra**.
+
+## 5.7 Auditoria de aderência externa (2026-08-22) — todos os itens fechados
+
+Uma segunda leitura, linha a linha, do plano inteiro contra o código dos
+6 caminhos (feita de forma independente e verificada por conferência
+direta antes de aceitar qualquer achado, não por confiança no relatório)
+encontrou 4 bugs metodológicos reais e 10 itens do escopo da Fase 6/7/11
+que a §5.1 desta mesma seção afirmava incorretamente estarem
+implementados. Todos corrigidos/implementados nesta rodada:
+
+**Bugs corrigidos (mudam número, não só forma):**
+1. Caminho D misturava latentes de redes B/C/E de FOLDS diferentes —
+   espaços vetoriais não comparáveis entre si. Corrigido: treino e
+   validação de cada fold usam sempre a rede DAQUELE fold.
+2. Modelo final de B/C/E fazia early stopping olhando o próprio teste
+   (`train_cnn(model, tr_ds, te_ds, ...)`). Corrigido com
+   `train_cnn_fixed` (épocas fixas, vindas da média do `best_epoch` da
+   CV).
+3. Caminho F nunca chegava ao teste canônico — avaliava num split
+   80/20 artificial dentro do trainval. Corrigido: meta-modelo fitado
+   em 100% do OOF, avaliado uma vez no teste canônico via as predições
+   `final` de A-E.
+4. Modelo final do Caminho A ignorava `--selector-preset`.
+
+**Escopo implementado** (estava ausente, não por decisão registrada —
+resposta honesta à pergunta "foi corte ou esquecimento": foi
+esquecimento): Stacking próprio · réplicas HKNNRF/XGB-LGBM(Hamming)/
+Transformer-E20 · ablação de famílias · teste de permutação (20×,
+by_key/within_key) · 3 variantes de condicionamento da CNN2D · réplica
+E05 · estratificação de erro · McNemar pareado + Bonferroni.
+
+**Achado colateral:** um crash reprodutível de `DataLoader` no Windows
+(`num_workers=4` + `persistent_workers=True` com múltiplos loaders em
+sequência no mesmo processo) só apareceu ao validar esses itens de
+ponta a ponta pela primeira vez — corrigido com `num_workers=0` no
+Windows (Kaggle/Colab, onde os treinos de produção rodam, mantêm 4).
+
+Todos os itens validados com fixtures usando `sample_id` reais do
+dataset (não só sintéticos) onde a correção dependia de dado real —
+notavelmente a estratificação de erro, que detectou corretamente um
+viés de `plaintext_source` injetado deliberadamente num modelo de teste
+e não disparou falso-positivo no modelo sem esse viés. 232/232 testes
+do projeto passando. Detalhe completo nos commits `153a337` a `a808549`.
