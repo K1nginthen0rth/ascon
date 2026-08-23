@@ -43,7 +43,7 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 from sklearn.ensemble import RandomForestClassifier  # noqa: E402
 from sklearn.linear_model import LogisticRegression  # noqa: E402
-from sklearn.model_selection import StratifiedKFold  # noqa: E402
+from sklearn.model_selection import GroupKFold  # noqa: E402
 from sklearn.preprocessing import StandardScaler  # noqa: E402
 from sklearn.svm import SVC, LinearSVC  # noqa: E402
 from xgboost import XGBClassifier  # noqa: E402
@@ -176,34 +176,49 @@ def build_models(seed: int = SEED_MODEL) -> dict:
             n_estimators=500, max_depth=6, learning_rate=0.1,
             random_state=seed, n_jobs=-1, eval_metric="mlogloss", tree_method="hist",
         ),
-        "LogisticRegression": LogisticRegression(
-            max_iter=2000, random_state=seed, n_jobs=-1,
-        ),
+        # sem `n_jobs`: sem efeito desde sklearn 1.8 e removido na 1.10.
+        "LogisticRegression": LogisticRegression(max_iter=2000, random_state=seed),
     }
 
 
 def fit_svm_with_search(
-    X_train: np.ndarray, y_train: np.ndarray, seed: int = SEED_MODEL,
+    X_train: np.ndarray, y_train: np.ndarray, groups: np.ndarray,
+    seed: int = SEED_MODEL,
 ) -> tuple[SVC, dict]:
     """
     SVM-RBF com busca de hiperparâmetros em SUBAMOSTRA e fit final no
     fold completo (ver constante SVM_SEARCH_SUBSAMPLE para o motivo).
-    A busca usa CV estratificada interna sobre a subamostra; o vencedor
-    é refitado no conjunto de treino inteiro do fold.
+
+    **CV interna GROUP-AWARE (por `key_id`), não estratificada simples.**
+    O plano exige isso explicitamente e a diferença é real: com
+    `StratifiedKFold`, amostras da MESMA chave caem em treino e validação
+    internos, e a escolha de C/gamma fica otimista. O vazamento não
+    contaminaria a métrica reportada (essa é medida na validação do fold,
+    com key-holdout íntegro), mas escolheria hiperparâmetros calibrados
+    para um cenário que não existe no teste.
     """
     rng = np.random.default_rng(seed)
     n = len(y_train)
     if n > SVM_SEARCH_SUBSAMPLE:
         idx = rng.choice(n, size=SVM_SEARCH_SUBSAMPLE, replace=False)
-        Xs, ys = X_train[idx], y_train[idx]
+        Xs, ys, gs = X_train[idx], y_train[idx], np.asarray(groups)[idx]
     else:
-        Xs, ys = X_train, y_train
+        Xs, ys, gs = X_train, y_train, np.asarray(groups)
+
+    n_groups = len(np.unique(gs))
+    n_splits = min(3, n_groups)
+    if n_splits < 2:
+        # Chaves demais de menos para CV group-aware: usa a grade default
+        # em vez de cair silenciosamente numa CV que vaza por chave.
+        final = SVC(kernel="rbf", random_state=seed, **SVM_GRID[0])
+        final.fit(X_train, y_train)
+        return final, {**SVM_GRID[0], "search": "pulada (grupos insuficientes)"}
 
     best_score, best_params = -np.inf, SVM_GRID[0]
-    inner_cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=seed)
+    inner_cv = GroupKFold(n_splits=n_splits)
     for params in SVM_GRID:
         scores = []
-        for tr, va in inner_cv.split(Xs, ys):
+        for tr, va in inner_cv.split(Xs, ys, groups=gs):
             m = SVC(kernel="rbf", random_state=seed, **params)
             m.fit(Xs[tr], ys[tr])
             scores.append(m.score(Xs[va], ys[va]))
@@ -213,7 +228,9 @@ def fit_svm_with_search(
 
     final = SVC(kernel="rbf", random_state=seed, probability=False, **best_params)
     final.fit(X_train, y_train)
-    return final, {**best_params, "search_subsample": min(n, SVM_SEARCH_SUBSAMPLE)}
+    return final, {**best_params, "search_subsample": min(n, SVM_SEARCH_SUBSAMPLE),
+                   "inner_cv": f"GroupKFold({n_splits}) por key_id",
+                   "inner_cv_score": round(best_score, 4)}
 
 
 def get_proba(model, X: np.ndarray) -> np.ndarray | None:
@@ -304,9 +321,6 @@ def run_analysis(
           f"  trainval={len(trainval_df):,}  test={len(test_df):,}  "
           f"features={len(feat_cols)}\n{'=' * 70}")
 
-    all_models = build_models()
-    if models_subset:
-        all_models = {k: v for k, v in all_models.items() if k in models_subset}
     use_svm = (models_subset is None) or ("SVM-RBF" in models_subset)
 
     # ---------------- CV por fold ----------------
@@ -352,7 +366,14 @@ def run_analysis(
         scaler = StandardScaler().fit(X_tr)
         X_tr_s, X_va_s = scaler.transform(X_tr), scaler.transform(X_va)
 
-        fold_models = dict(all_models)
+        # Modelos NOVOS a cada fold. `dict(all_models)` era uma cópia rasa:
+        # os mesmos objetos eram refitados fold após fold. O sklearn refita
+        # limpo, então não havia erro hoje — mas é estado compartilhado
+        # entre folds que só não vaza por detalhe de implementação, e
+        # instanciar de novo custa nada.
+        fold_models = build_models()
+        if models_subset:
+            fold_models = {k: v for k, v in fold_models.items() if k in models_subset}
         for name, model in fold_models.items():
             t_fit = time.perf_counter()
             Xa, Xb = (X_tr_s, X_va_s) if name in ("LinearSVC", "LogisticRegression") else (X_tr, X_va)
@@ -371,7 +392,8 @@ def run_analysis(
 
         if use_svm:
             t_fit = time.perf_counter()
-            svm, svm_params = fit_svm_with_search(X_tr_s, y_tr)
+            svm, svm_params = fit_svm_with_search(
+                X_tr_s, y_tr, groups=tr["key_id"].to_numpy())
             report_eval(
                 run_id=f"{DATASET_ID}_{analysis_name}", caminho="A", modelo="SVM-RBF",
                 braco=braco, fold=fold_idx,
@@ -417,7 +439,8 @@ def run_analysis(
 
     if use_svm:
         t_fit = time.perf_counter()
-        svm, svm_params = fit_svm_with_search(X_tv_s, y_tv)
+        svm, svm_params = fit_svm_with_search(
+            X_tv_s, y_tv, groups=trainval_df["key_id"].to_numpy())
         report_eval(
             run_id=f"{DATASET_ID}_{analysis_name}", caminho="A", modelo="SVM-RBF",
             braco=braco, fold="final",

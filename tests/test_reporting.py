@@ -169,3 +169,53 @@ def test_report_eval_extra_metadata_included_in_jsonl(tmp_path, sample_data):
     record = json.loads(jsonl_path.read_text(encoding="utf-8").strip())
     assert record["extra"]["best_params"]["C"] == 1.0
     assert record["fold"] == "final"
+
+
+# ---------------------------------------------------------------------------
+# Robustez: report_eval NUNCA pode perder um fold inteiro por causa de uma
+# métrica opcional. Todos estes casos já quebraram em desenvolvimento.
+# ---------------------------------------------------------------------------
+def test_report_eval_survives_invalid_proba(tmp_path, capsys):
+    """`y_proba` que não soma 1 fazia `roc_auc_score` levantar e derrubar a
+    chamada inteira, perdendo TODAS as métricas do fold. Agora a AUC vira
+    None e o resto do relato segue."""
+    y_true = np.array([0, 0, 1, 1, 2, 2])
+    y_pred = np.array([0, 1, 1, 1, 2, 0])
+    bad_proba = np.eye(4)[y_pred] * 0.7 + 0.1  # não soma 1
+    report = report_eval(
+        run_id="edge", caminho="A", modelo="M", braco="b", fold=0,
+        y_true=y_true, y_pred=y_pred, y_proba=bad_proba,
+        class_names=["A", "B", "C", "D"], labels=[0, 1, 2, 3],
+        out_dir=tmp_path, n_bootstrap=20,
+    )
+    assert report.auc_roc is None
+    assert 0.0 <= report.f1_macro <= 1.0
+    assert (tmp_path / "edge_metrics.jsonl").exists()
+    assert len(list((tmp_path / "predictions").glob("*.parquet"))) == 1
+
+
+def test_report_eval_handles_class_absent_from_fold(tmp_path):
+    """Classe declarada em `labels` mas ausente do fold não pode quebrar
+    a matriz de confusão nem os nomes das classes."""
+    y_true = np.array([0, 0, 1, 1, 2, 2])       # classe 3 ausente
+    y_pred = np.array([0, 1, 1, 1, 2, 0])
+    report = report_eval(
+        run_id="edge2", caminho="A", modelo="M", braco="b", fold=0,
+        y_true=y_true, y_pred=y_pred, y_proba=np.eye(4)[y_pred],
+        class_names=["A", "B", "C", "D"], labels=[0, 1, 2, 3],
+        out_dir=tmp_path, n_bootstrap=20,
+    )
+    assert report.confusion_matrix.shape == (4, 4)
+    assert report.per_class["3"]["support"] == 0
+
+
+def test_report_eval_handles_single_class(tmp_path):
+    y = np.zeros(5, dtype=int)
+    report = report_eval(
+        run_id="edge3", caminho="A", modelo="M", braco="b", fold=0,
+        y_true=y, y_pred=y, y_proba=np.eye(4)[y],
+        class_names=["A", "B", "C", "D"], labels=[0, 1, 2, 3],
+        out_dir=tmp_path, n_bootstrap=20,
+    )
+    assert report.accuracy == 1.0
+    assert len(list((tmp_path / "confusion_matrices").glob("*.png"))) == 1

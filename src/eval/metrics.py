@@ -199,6 +199,23 @@ def compute_auc_roc(
     if labels is None:
         labels = sorted(np.unique(y_true).tolist())
 
+    # AUC é a única métrica aqui que pode LEVANTAR por propriedade da
+    # entrada (probabilidades que não somam 1, classe ausente do batch,
+    # etc.). Sem esta proteção, uma exceção aqui derrubaria a chamada
+    # inteira de `report_eval` e perderia TODAS as métricas daquele
+    # fold — o oposto da regra de gravação incremental. AUC ausente vira
+    # None e o resto do relato segue.
+    try:
+        return _compute_auc_roc_inner(y_true, y_proba, labels)
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [aviso] AUC-ROC não calculada ({type(exc).__name__}: {exc}); "
+              f"demais métricas seguem normalmente.")
+        return None
+
+
+def _compute_auc_roc_inner(
+    y_true: np.ndarray, y_proba: np.ndarray, labels: list,
+) -> dict:
     n_classes = y_proba.shape[1]
     auc_per_class = None
     if n_classes == 2:

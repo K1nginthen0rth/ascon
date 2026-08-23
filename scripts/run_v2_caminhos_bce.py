@@ -72,6 +72,16 @@ def load_cts(keys: set[str], classes: list[str], branch: str,
     Carrega ciphertexts das chaves/classes pedidas, lendo o parquet por
     row group (nunca inteiro). Aplica o corte do braço `controlado`.
 
+    **Cuidado com memória — conta explícita:** cada CT tem ~65KB, então o
+    treino completo de um fold (192 chaves x 100 slots x 4 algoritmos =
+    76.800 amostras) ocupa ~5,0 GB só de bytes na RAM. Numa máquina de
+    16GB isso convive mal com o resto; num Kaggle de 13GB provavelmente
+    estoura. Por isso `run_cv`/`run_final` expõem `--max-train-samples`:
+    a subamostragem é estratificada implicitamente pela ordem de leitura
+    (os 4 algoritmos alternam dentro de cada slot), e o valor efetivamente
+    usado é registrado no relatório para não virar diferença silenciosa
+    entre execuções.
+
     Returns:
         (cts, y, sample_ids, key_ids)
     """
@@ -256,15 +266,19 @@ def run_smoke(path: str, branch: str, device: str, out_dir: Path,
 
 
 def run_cv(path: str, branch: str, device: str, out_dir: Path,
-           epochs: int, batch_size: int, hp: dict | None = None) -> None:
+           epochs: int, batch_size: int, hp: dict | None = None,
+           max_train: int | None = None) -> None:
     folds = load_folds()
     for fold_spec in folds["folds"]:
         fi = fold_spec["fold"]
         tr_keys, va_keys = set(fold_spec["train_keys"]), set(fold_spec["val_keys"])
         print(f"\n[{path} fold {fi}] carregando {len(tr_keys)} chaves treino / "
               f"{len(va_keys)} val...")
-        cts_tr, y_tr, _, _ = load_cts(tr_keys, REAL_ALGORITHMS, branch)
+        cts_tr, y_tr, _, _ = load_cts(tr_keys, REAL_ALGORITHMS, branch,
+                                      max_samples=max_train)
         cts_va, y_va, sid_va, kid_va = load_cts(va_keys, REAL_ALGORITHMS, branch)
+        print(f"  treino={len(cts_tr)} val={len(cts_va)} "
+              f"(~{len(cts_tr) * 65552 / 1e9:.1f} GB de CT em RAM no treino)")
 
         tr_ds = make_dataset(path, cts_tr, y_tr, branch)
         va_ds = make_dataset(path, cts_va, y_va, branch)
@@ -292,18 +306,21 @@ def run_cv(path: str, branch: str, device: str, out_dir: Path,
                 "train_time_s": round(time.perf_counter() - t0, 1),
                 "latent_effective_rank_95": effective_rank(lat),
                 "latent_dim": int(lat.shape[1]), "hp": hp or {},
+                "n_train_samples": len(cts_tr), "max_train_cap": max_train,
             },
         )
         _save_latents(out_dir, path, branch, f"fold{fi}", lat, sid_va, kid_va, y_va)
 
 
 def run_final(path: str, branch: str, device: str, out_dir: Path,
-              epochs: int, batch_size: int, hp: dict | None = None) -> None:
+              epochs: int, batch_size: int, hp: dict | None = None,
+              max_train: int | None = None) -> None:
     """Modelo final: trainval completo -> teste. 3 seeds só no braço
     controlado (primário); no cru, seed 7 apenas."""
     folds = load_folds()
     tv_keys, te_keys = set(folds["trainval_keys"]), set(folds["test_keys"])
-    cts_tv, y_tv, _, _ = load_cts(tv_keys, REAL_ALGORITHMS, branch)
+    cts_tv, y_tv, _, _ = load_cts(tv_keys, REAL_ALGORITHMS, branch,
+                                  max_samples=max_train)
     cts_te, y_te, sid_te, kid_te = load_cts(te_keys, REAL_ALGORITHMS, branch)
     tr_ds = make_dataset(path, cts_tv, y_tv, branch)
     te_ds = make_dataset(path, cts_te, y_te, branch)
@@ -333,6 +350,7 @@ def run_final(path: str, branch: str, device: str, out_dir: Path,
                 "train_time_s": round(time.perf_counter() - t0, 1),
                 "latent_effective_rank_95": effective_rank(lat),
                 "latent_dim": int(lat.shape[1]), "hp": hp or {},
+                "n_train_samples": len(cts_tv), "max_train_cap": max_train,
             },
         )
         _save_latents(out_dir, path, branch, f"final_s{seed}", lat, sid_te, kid_te, y_te)
@@ -400,6 +418,11 @@ def main() -> None:
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--smoke-samples", type=int, default=500)
     p.add_argument("--n-configs", type=int, default=10)
+    p.add_argument("--max-train-samples", type=int, default=None,
+                   help="Teto de amostras de treino carregadas em RAM por fold. "
+                        "Sem teto, um fold completo ocupa ~5,0 GB só de "
+                        "ciphertexts (76.800 x 65KB) — arrisca OOM em máquinas "
+                        "de 13-16GB. O valor usado é registrado no relatório.")
     p.add_argument("--hp-json", default=None,
                    help="JSON com a config vencedora do hpsearch (modo cv/final).")
     args = p.parse_args()
@@ -425,10 +448,10 @@ def main() -> None:
                      epochs, args.batch_size, args.n_configs)
     elif args.mode == "cv":
         run_cv(args.path, args.branch, args.device, out_dir, epochs,
-               args.batch_size, hp)
+               args.batch_size, hp, max_train=args.max_train_samples)
     else:
         run_final(args.path, args.branch, args.device, out_dir, epochs,
-                  args.batch_size, hp)
+                  args.batch_size, hp, max_train=args.max_train_samples)
     print(f"\nConcluído em {(time.perf_counter() - t0) / 60:.1f}min — {out_dir}")
 
 

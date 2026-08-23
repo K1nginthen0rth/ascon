@@ -99,13 +99,34 @@ def build_oof_matrix(oof: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
 
     wide: dict[str, pd.Series] = {}
     base = None
+    per_source_ids: dict[str, set] = {}
     for source, grp in oof.groupby("source"):
         grp = grp.drop_duplicates(subset=["sample_id"]).set_index("sample_id")
+        per_source_ids[source] = set(grp.index)
         proba = np.vstack(grp["y_proba"].to_numpy())
         for c in range(n_classes):
             wide[f"p_{source}_c{c}"] = pd.Series(proba[:, c], index=grp.index)
         if base is None:
             base = grp[["y_true", "key_id"]]
+
+    # Diagnóstico ANTES do join: se as fontes não compartilham `sample_id`,
+    # o inner join zera silenciosamente e o erro genérico ("matriz vazia")
+    # não diz onde está o problema. Aqui reportamos quantas amostras cada
+    # fonte tem e o tamanho da interseção — normalmente o culpado é um
+    # caminho ter rodado sobre outra partição de folds ou outro subconjunto
+    # de classes.
+    common = set.intersection(*per_source_ids.values()) if per_source_ids else set()
+    print("  amostras por fonte: "
+          + ", ".join(f"{s}={len(ids)}" for s, ids in sorted(per_source_ids.items())))
+    print(f"  interseção de sample_id entre TODAS as fontes: {len(common)}")
+    if not common:
+        raise RuntimeError(
+            "Nenhum `sample_id` em comum entre as fontes de predição. As "
+            "fontes precisam ter predito as MESMAS amostras (mesma partição "
+            "de folds e mesmo conjunto de classes) para o meta-modelo "
+            "existir. Fontes encontradas: "
+            + ", ".join(f"{s} ({len(ids)} amostras)" for s, ids in sorted(per_source_ids.items()))
+        )
 
     mat = pd.DataFrame(wide)
     mat = mat.join(base, how="inner").dropna()
@@ -198,7 +219,8 @@ def main() -> None:
     X = mat_cal[proba_cols].to_numpy(np.float64)
     y = mat_cal["y_true"].to_numpy()
 
-    meta = LogisticRegression(max_iter=2000, random_state=SEED_MODEL, n_jobs=-1)
+    # sem `n_jobs`: sem efeito desde sklearn 1.8 e removido na 1.10.
+    meta = LogisticRegression(max_iter=2000, random_state=SEED_MODEL)
     t0 = time.perf_counter()
     meta.fit(X[is_train], y[is_train])
     y_pred = meta.predict(X[is_test])
