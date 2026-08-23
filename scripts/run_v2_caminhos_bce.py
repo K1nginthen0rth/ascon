@@ -81,11 +81,17 @@ def load_cts(keys: set[str], classes: list[str], branch: str,
     treino completo de um fold (192 chaves x 100 slots x 4 algoritmos =
     76.800 amostras) ocupa ~5,0 GB só de bytes na RAM. Numa máquina de
     16GB isso convive mal com o resto; num Kaggle de 13GB provavelmente
-    estoura. Por isso `run_cv`/`run_final` expõem `--max-train-samples`:
-    a subamostragem é estratificada implicitamente pela ordem de leitura
-    (os 4 algoritmos alternam dentro de cada slot), e o valor efetivamente
-    usado é registrado no relatório para não virar diferença silenciosa
-    entre execuções.
+    estoura. Por isso `run_cv`/`run_final` expõem `--max-train-samples`.
+
+    **O teto é POR CHAVE, não um corte na ordem de leitura** (corrigido em
+    2026-08-23 após auditoria): o parquet está ordenado por chave, então
+    parar na N-ésima linha lida colapsava a diversidade de chaves —
+    `--max-train-samples 20000` num fold de 192 chaves treinava com ~50
+    delas, e diversidade de chave é justamente o que o key-holdout existe
+    para medir. Agora o teto vira uma cota por chave
+    (`max_samples // n_chaves`, arredondada para baixo a um múltiplo do nº
+    de classes para preservar o balanceamento), aplicada a TODAS as
+    chaves. O valor efetivamente usado é registrado no relatório.
 
     Returns:
         (cts, y, sample_ids, key_ids)
@@ -100,22 +106,34 @@ def load_cts(keys: set[str], classes: list[str], branch: str,
     sids: list[str] = []
     kids: list[str] = []
 
+    per_key_cap: int | None = None
+    if max_samples is not None and keys:
+        n_cls = max(1, len(label_map))
+        per_key_cap = max(n_cls, (max_samples // len(keys)) // n_cls * n_cls)
+        print(f"  [max-train] teto de {max_samples} -> {per_key_cap} amostras por "
+              f"chave x {len(keys)} chaves = {per_key_cap * len(keys)} "
+              f"(preserva TODAS as chaves)")
+    taken_per_key: dict[str, int] = {}
+
     for gi in range(pf.num_row_groups):
         for batch in pf.iter_batches(batch_size=500, row_groups=[gi], columns=cols):
             for row in batch.to_pylist():
-                if row["key_id"] not in keys or row["algorithm"] not in label_map:
+                kid = row["key_id"]
+                if kid not in keys or row["algorithm"] not in label_map:
                     continue
                 if plaintext_source is not None and row["plaintext_source"] != plaintext_source:
                     continue
+                if per_key_cap is not None:
+                    if taken_per_key.get(kid, 0) >= per_key_cap:
+                        continue
+                    taken_per_key[kid] = taken_per_key.get(kid, 0) + 1
                 ct = bytes(row["ciphertext"])
                 if branch == "controlado":
                     ct = ct[:CONTROLLED_LEN]
                 cts.append(ct)
                 ys.append(label_map[row["algorithm"]])
                 sids.append(row["sample_id"])
-                kids.append(row["key_id"])
-                if max_samples is not None and len(cts) >= max_samples:
-                    return cts, np.asarray(ys), sids, kids
+                kids.append(kid)
     return cts, np.asarray(ys), sids, kids
 
 

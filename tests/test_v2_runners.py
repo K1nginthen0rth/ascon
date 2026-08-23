@@ -221,3 +221,28 @@ def test_permutacao_recebe_keyholdout_em_vez_de_ignorar():
     em silêncio."""
     import inspect
     assert "keyholdout" in inspect.signature(caminho_a.analysis_permutation).parameters
+
+
+# ---------------------------------------------------------------------------
+# ITEM 6 — `--max-train-samples` colapsava a diversidade de chaves
+# ---------------------------------------------------------------------------
+
+@pytest.mark.skipif(not caminhos_bce.PQ_IN.exists(),
+                    reason="dataset v2 real não disponível neste ambiente")
+def test_max_train_samples_preserva_todas_as_chaves():
+    """
+    O parquet está ordenado por chave, então a versão anterior (parar na
+    N-ésima linha lida) treinava com ~50 das 192 chaves do fold —
+    diversidade de chave é exatamente o que o key-holdout existe para
+    medir. O teto agora é uma cota POR CHAVE.
+    """
+    folds = caminhos_bce.load_folds()
+    tr_keys = set(folds["folds"][0]["train_keys"])
+    _, y, _, kids = caminhos_bce.load_cts(
+        tr_keys, caminhos_bce.REAL_ALGORITHMS, "controlado", max_samples=2000)
+
+    assert set(kids) == tr_keys, (
+        f"cota colapsou a diversidade: {len(set(kids))} de {len(tr_keys)} chaves")
+    # E o balanceamento de classes sobrevive (cota é múltipla do nº de classes).
+    counts = np.bincount(y, minlength=len(caminhos_bce.REAL_ALGORITHMS))
+    assert counts.min() == counts.max(), f"classes desbalanceadas: {counts.tolist()}"
