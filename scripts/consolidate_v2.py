@@ -172,6 +172,125 @@ def is_primary(df: pd.DataFrame) -> pd.Series:
     )
 
 
+# ---------------------------------------------------------------------------
+# McNemar pareado + Bonferroni (04_protocolo §4.3) — família primária
+# ---------------------------------------------------------------------------
+
+def run_mcnemar_primary(primary: pd.DataFrame) -> pd.DataFrame:
+    """
+    McNemar pareado entre TODOS os pares de modelos, dentro de cada
+    comparação da família primária (mesmo run_id/braço/fold — nunca entre
+    análises diferentes, o que compararia amostras distintas). Bonferroni
+    aplicado sobre o nº de pares de modelos DENTRO de cada comparação
+    (não globalmente — cada comparação primária é sua própria família de
+    testes pareados).
+    """
+    from src.eval.metrics import mcnemar_test
+    from src.eval.reporting import load_predictions
+    from itertools import combinations
+
+    rows = []
+    for run_id, grp in primary.groupby("run_id"):
+        src = REPORTS / Path(grp.iloc[0]["source_file"]).parent
+        try:
+            preds = load_predictions(src, run_id, caminho=PRIMARY_CAMINHO)
+        except FileNotFoundError:
+            continue
+        preds = preds[(preds["braco"] == PRIMARY_BRANCH) & (preds["fold"].astype(str) == "final")]
+        by_model = {m: g.sort_values("sample_id") for m, g in preds.groupby("modelo")}
+        models = sorted(by_model)
+        if len(models) < 2:
+            continue
+        pairs = list(combinations(models, 2))
+        for m_a, m_b in pairs:
+            ga, gb = by_model[m_a], by_model[m_b]
+            merged = ga[["sample_id", "y_true", "y_pred"]].merge(
+                gb[["sample_id", "y_pred"]], on="sample_id", suffixes=("_a", "_b"))
+            if merged.empty:
+                continue
+            res = mcnemar_test(merged["y_true"].to_numpy(),
+                               merged["y_pred_a"].to_numpy(), merged["y_pred_b"].to_numpy())
+            res["p_bonferroni"] = min(1.0, res["p_value"] * len(pairs))
+            res["significativo_bonferroni"] = res["p_bonferroni"] < 0.05
+            rows.append({"run_id": run_id, "modelo_a": m_a, "modelo_b": m_b,
+                        "n_pares_na_comparacao": len(pairs), **res})
+    return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
+# Estratificação de erro (06 Fase 11.2 / 04 §4.6.7) — todo resultado acima
+# do acaso é conferido contra artefato de chave ou de plaintext_source.
+# ---------------------------------------------------------------------------
+
+_RAW_DATASET = REPO_ROOT / "data" / "processed" / "keyholdout_5class_v2.parquet"
+_ARTIFACT_THRESHOLD = 0.05  # diferença de acurácia entre estratos que vira bandeira
+
+
+def _sample_metadata() -> pd.DataFrame:
+    """`sample_id -> plaintext_source`, lido só dessas duas colunas (nunca
+    o parquet inteiro de 11,8GB — mesma disciplina de memória do resto
+    do projeto)."""
+    if not _RAW_DATASET.exists():
+        return pd.DataFrame(columns=["sample_id", "plaintext_source"])
+    return pd.read_parquet(_RAW_DATASET, columns=["sample_id", "plaintext_source"])
+
+
+def stratify_row(row: pd.Series, meta: pd.DataFrame) -> dict | None:
+    """Estratificação de erro de UMA linha da tabela consolidada (um
+    run_id/caminho/modelo/braço/fold específico). None se não há
+    predições persistidas para reconstruir (ex.: rodadas antigas)."""
+    from src.eval.reporting import load_predictions
+
+    src = REPORTS / Path(row["source_file"]).parent
+    try:
+        preds = load_predictions(src, row["run_id"], caminho=row["caminho"])
+    except FileNotFoundError:
+        return None
+    preds = preds[(preds["modelo"] == row["modelo"]) & (preds["braco"] == row["braco"])
+                 & (preds["fold"].astype(str) == str(row["fold"]))]
+    if preds.empty:
+        return None
+
+    preds = preds.merge(meta, on="sample_id", how="left")
+    preds["correct"] = preds["y_true"] == preds["y_pred"]
+
+    out: dict = {}
+    if preds["plaintext_source"].notna().any():
+        by_source = preds.groupby("plaintext_source")["correct"].mean()
+        out["acc_por_plaintext_source"] = by_source.round(4).to_dict()
+        if len(by_source) >= 2:
+            spread = float(by_source.max() - by_source.min())
+            out["spread_plaintext_source"] = round(spread, 4)
+            out["bandeira_plaintext_source"] = spread > _ARTIFACT_THRESHOLD
+
+    if "key_id" in preds.columns and preds["key_id"].notna().any():
+        by_key = preds.groupby("key_id")["correct"].mean()
+        out["acc_por_chave_desvio"] = round(float(by_key.std()), 4)
+        out["acc_por_chave_min_max"] = [round(float(by_key.min()), 4), round(float(by_key.max()), 4)]
+        out["bandeira_chave"] = bool(by_key.std() > 0.15)
+
+    return out or None
+
+
+def stratify_above_chance(df: pd.DataFrame) -> pd.DataFrame:
+    """Roda `stratify_row` em toda linha (primária ou exploratória) com
+    `acima_do_acaso=True` — a checagem de artefato só faz sentido quando
+    há algo acima do acaso para explicar."""
+    meta = _sample_metadata()
+    if meta.empty:
+        print("[aviso] dataset bruto não encontrado — estratificação de erro pulada")
+        return pd.DataFrame()
+    targets = df[df.get("acima_do_acaso", False) == True]  # noqa: E712
+    rows = []
+    for _, row in targets.iterrows():
+        strat = stratify_row(row, meta)
+        if strat:
+            rows.append({"run_id": row["run_id"], "caminho": row["caminho"],
+                        "modelo": row["modelo"], "braco": row["braco"],
+                        "fold": row["fold"], **strat})
+    return pd.DataFrame(rows)
+
+
 def md_table(df: pd.DataFrame, cols: list[str]) -> str:
     if df.empty:
         return "_(vazio)_\n"
@@ -266,6 +385,49 @@ def main() -> None:
                 "acaso no teste 4-classes e ~1,3 p.p. no par binário, com 80% "
                 "de poder. Efeitos menores que isso não são detectáveis nesta "
                 "escala — limitação declarada, não prova de ausência.\n")
+
+        f.write("\n## 4. McNemar pareado entre modelos (família primária, "
+                "Bonferroni)\n\n")
+        f.write("Comparação pareada modelo-a-modelo, SÓ dentro da mesma "
+                "comparação (run_id) — nunca entre pares diferentes, que "
+                "teriam amostras distintas. Bonferroni sobre o nº de pares "
+                "de modelos dentro de cada comparação.\n\n")
+        try:
+            mcnemar_df = run_mcnemar_primary(primary) if not primary.empty else pd.DataFrame()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[aviso] McNemar pulado: {type(exc).__name__}: {exc}")
+            mcnemar_df = pd.DataFrame()
+        if mcnemar_df.empty:
+            f.write("_(sem predições persistidas suficientes — rode o Caminho A "
+                    "com `--analysis pairs` antes)_\n")
+        else:
+            f.write(md_table(mcnemar_df, ["run_id", "modelo_a", "modelo_b", "n10", "n01",
+                                          "p_value", "p_bonferroni", "significativo_bonferroni"]))
+            mcnemar_df.to_csv(REPORTS / "consolidado_v2_mcnemar.csv", index=False)
+
+        f.write("\n## 5. Estratificação de erro (todo resultado acima do acaso)\n\n")
+        f.write("Confere se o erro correlaciona com `key_id` ou "
+                "`plaintext_source` — \"separa melhor em imagens\" é bandeira "
+                "de artefato, não achado sobre o algoritmo (04 §4.6.7). "
+                f"Bandeira: diferença de acurácia entre plaintext_source > "
+                f"{_ARTIFACT_THRESHOLD} ou desvio-padrão de acurácia por chave > 0,15.\n\n")
+        try:
+            strat_df = stratify_above_chance(pd.concat([primary, exploratory], ignore_index=True))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[aviso] estratificação de erro pulada: {type(exc).__name__}: {exc}")
+            strat_df = pd.DataFrame()
+        if strat_df.empty:
+            f.write("_(nenhum resultado acima do acaso com predições persistidas "
+                    "para estratificar)_\n")
+        else:
+            flag_cols = [c for c in strat_df.columns if c.startswith("bandeira_")]
+            n_flagged = int(strat_df[flag_cols].any(axis=1).sum()) if flag_cols else 0
+            f.write(f"**{n_flagged} de {len(strat_df)}** resultado(s) acima do acaso "
+                    f"levantam bandeira de possível artefato.\n\n")
+            f.write(md_table(strat_df, ["run_id", "caminho", "modelo", "braco", "fold"]
+                            + [c for c in strat_df.columns if c not in
+                               ("run_id", "caminho", "modelo", "braco", "fold")]))
+            strat_df.to_csv(REPORTS / "consolidado_v2_estratificacao.csv", index=False)
 
     print(f"Consolidado salvo em:\n  {OUT_MD}\n  {OUT_CSV}")
 

@@ -71,7 +71,8 @@ FINAL_SEEDS = [7, 107, 207]
 # ---------------------------------------------------------------------------
 
 def load_cts(keys: set[str], classes: list[str], branch: str,
-             max_samples: int | None = None) -> tuple[list[bytes], np.ndarray, list[str], list[str]]:
+             max_samples: int | None = None,
+             plaintext_source: str | None = None) -> tuple[list[bytes], np.ndarray, list[str], list[str]]:
     """
     Carrega ciphertexts das chaves/classes pedidas, lendo o parquet por
     row group (nunca inteiro). Aplica o corte do braço `controlado`.
@@ -92,6 +93,8 @@ def load_cts(keys: set[str], classes: list[str], branch: str,
     label_map = {c: i for i, c in enumerate(classes)}
     pf = pq.ParquetFile(PQ_IN)
     cols = ["sample_id", "algorithm", "key_id", "ciphertext"]
+    if plaintext_source is not None:
+        cols.append("plaintext_source")
     cts: list[bytes] = []
     ys: list[int] = []
     sids: list[str] = []
@@ -101,6 +104,8 @@ def load_cts(keys: set[str], classes: list[str], branch: str,
         for batch in pf.iter_batches(batch_size=500, row_groups=[gi], columns=cols):
             for row in batch.to_pylist():
                 if row["key_id"] not in keys or row["algorithm"] not in label_map:
+                    continue
+                if plaintext_source is not None and row["plaintext_source"] != plaintext_source:
                     continue
                 ct = bytes(row["ciphertext"])
                 if branch == "controlado":
@@ -568,12 +573,123 @@ def run_hpsearch(path: str, branch: str, device: str, out_dir: Path,
         )
 
 
+# ---------------------------------------------------------------------------
+# Réplica E05 — reshape do payload (06 Fase 7, prioridade secundária)
+# ---------------------------------------------------------------------------
+
+class _E05ReshapeDataset(torch.utils.data.Dataset):
+    """
+    CT bytes -> reshape linear do PAYLOAD (65.536 bytes -> 256x256), a
+    representação da réplica E05. Diferente da co-ocorrência (Caminho C
+    principal): aqui bytes adjacentes na imagem não são necessariamente
+    adjacentes no CT — é justamente a limitação que o E05 original aceita
+    e que motivou o Caminho C usar co-ocorrência como representação
+    canônica. Mantida só para esta réplica pontual.
+    """
+
+    def __init__(self, cts: list, labels: np.ndarray) -> None:
+        self.cts = cts
+        self.labels = torch.from_numpy(np.asarray(labels, dtype=np.int64))
+
+    def __len__(self) -> int:
+        return len(self.cts)
+
+    def __getitem__(self, idx: int):
+        from src.models.ciphertext_to_image import ciphertext_to_image
+        img = ciphertext_to_image(bytes(self.cts[idx]), image_size=256)
+        return torch.from_numpy(img[np.newaxis, :, :]), self.labels[idx]
+
+
+def run_e05_replica(branch: str, device: str, epochs: int, batch_size: int) -> None:
+    """
+    Réplica E05: mesma arquitetura do Caminho C (`CiphertextCNN2D`), mas
+    (a) representação = reshape linear do payload, não co-ocorrência, e
+    (b) treinada e avaliada SÓ no subconjunto `plaintext_source="imagem"`
+    (~20% do dataset) — é essa combinação representação+subconjunto que
+    define a réplica, não a arquitetura isoladamente.
+
+    Prioridade SECUNDÁRIA no plano — por isso esta função não alimenta o
+    Caminho D nem persiste latentes: existe só para sustentar "a técnica
+    do E05, sob nosso protocolo, dá X" como comparação isolada.
+    """
+    folds = load_folds()
+    e05_dir = OUT_ROOT / "caminho_c" / "e05_replica" / branch
+    e05_dir.mkdir(parents=True, exist_ok=True)
+
+    for fold_spec in folds["folds"]:
+        fi = fold_spec["fold"]
+        tr_keys, va_keys = set(fold_spec["train_keys"]), set(fold_spec["val_keys"])
+        cts_tr, y_tr, _, _ = load_cts(tr_keys, REAL_ALGORITHMS, branch, plaintext_source="imagem")
+        cts_va, y_va, sid_va, kid_va = load_cts(va_keys, REAL_ALGORITHMS, branch, plaintext_source="imagem")
+        print(f"\n[E05 fold {fi}] treino={len(cts_tr)} val={len(cts_va)} (subconjunto imagem)")
+        if len(cts_tr) == 0 or len(cts_va) == 0:
+            print(f"  [aviso] fold {fi} sem amostras de imagem suficientes — pulando")
+            continue
+
+        tr_ds = _E05ReshapeDataset(cts_tr, y_tr)
+        va_ds = _E05ReshapeDataset(cts_va, y_va)
+        model = CiphertextCNN2D(n_classes=len(REAL_ALGORITHMS)).to(device)
+        n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+        t0 = time.perf_counter()
+        model, best_ep = train_cnn(model, tr_ds, va_ds, device=device, n_epochs=epochs,
+                                   patience=5, seed=SEED_MODEL, fold_id=fi, cnn_id=f"E05_{branch}",
+                                   ckpt_dir=e05_dir / "ckpts", batch_size=batch_size, verbose=True)
+        logits = predict_logits(model, va_ds, device, batch_size)
+        report_eval(
+            run_id=f"{DATASET_ID}_4class", caminho="C", modelo="E05_replica_reshape_payload",
+            braco=f"{branch}_imagem", fold=fi,
+            y_true=y_va, y_pred=logits.argmax(1), y_proba=softmax(logits),
+            sample_ids=sid_va, key_ids=kid_va,
+            class_names=REAL_ALGORITHMS, labels=list(range(len(REAL_ALGORITHMS))),
+            out_dir=e05_dir, extra={
+                "n_params": n_params, "best_epoch": best_ep,
+                "train_time_s": round(time.perf_counter() - t0, 1),
+                "referencia": "E05 (réplica secundária, subconjunto imagem)",
+                "n_train": len(cts_tr), "n_val": len(cts_va),
+            },
+        )
+
+    # Modelo final: trainval completo -> teste, sempre no subconjunto imagem.
+    tv_keys, te_keys = set(folds["trainval_keys"]), set(folds["test_keys"])
+    cts_tv, y_tv, _, _ = load_cts(tv_keys, REAL_ALGORITHMS, branch, plaintext_source="imagem")
+    cts_te, y_te, sid_te, kid_te = load_cts(te_keys, REAL_ALGORITHMS, branch, plaintext_source="imagem")
+    if len(cts_tv) == 0 or len(cts_te) == 0:
+        print("[E05] subconjunto imagem insuficiente para o modelo final — pulando")
+        return
+    tr_ds = _E05ReshapeDataset(cts_tv, y_tv)
+    te_ds = _E05ReshapeDataset(cts_te, y_te)
+    n_epochs = _epochs_from_cv("C", f"{branch}_imagem", e05_dir, default=epochs)
+    model = CiphertextCNN2D(n_classes=len(REAL_ALGORITHMS)).to(device)
+    n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    t0 = time.perf_counter()
+    model = train_cnn_fixed(model, tr_ds, n_epochs=n_epochs, device=device, seed=SEED_MODEL,
+                            fold_id=99, cnn_id=f"E05_{branch}_final",
+                            ckpt_dir=e05_dir / "ckpts", batch_size=batch_size)
+    logits = predict_logits(model, te_ds, device, batch_size)
+    report_eval(
+        run_id=f"{DATASET_ID}_4class", caminho="C", modelo="E05_replica_reshape_payload",
+        braco=f"{branch}_imagem", fold="final",
+        y_true=y_te, y_pred=logits.argmax(1), y_proba=softmax(logits),
+        sample_ids=sid_te, key_ids=kid_te,
+        class_names=REAL_ALGORITHMS, labels=list(range(len(REAL_ALGORITHMS))),
+        out_dir=e05_dir, extra={
+            "n_params": n_params, "n_epochs_fixed": n_epochs,
+            "train_time_s": round(time.perf_counter() - t0, 1),
+            "n_train": len(cts_tv), "n_test": len(cts_te),
+        },
+    )
+
+
 def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
 
     p = argparse.ArgumentParser()
-    p.add_argument("--path", required=True, choices=["B", "C", "E"])
+    p.add_argument("--path", required=True, choices=["B", "C", "E", "E05"],
+                   help="E05 = réplica secundária (reshape do payload, "
+                        "subconjunto imagem) — ignora --mode, roda CV+final "
+                        "de uma vez.")
     p.add_argument("--mode", required=True, choices=["smoke", "hpsearch", "cv", "final"])
     p.add_argument("--branch", default="controlado", choices=["cru", "controlado"])
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -609,7 +725,11 @@ def main() -> None:
               "para GPU (Kaggle T4 / Colab). Use só para smoke.")
 
     t0 = time.perf_counter()
-    if args.mode == "smoke" and args.path == "C":
+    if args.path == "E05":
+        print("[AVISO] --path E05 ignora --mode: roda CV + final de uma vez "
+              "(réplica secundária, sem smoke/hpsearch próprios).")
+        run_e05_replica(args.branch, args.device, epochs, args.batch_size)
+    elif args.mode == "smoke" and args.path == "C":
         run_smoke_cnn2d_conditioning(args.branch, args.device, out_dir,
                                      args.smoke_samples, epochs, args.batch_size)
     elif args.mode == "smoke":
