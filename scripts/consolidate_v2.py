@@ -374,7 +374,22 @@ def main() -> None:
 
     primary_mask = is_primary(df)
     primary = df[primary_mask].copy()
-    exploratory = apply_bh_fdr(df[~primary_mask].copy(), q=args.q)
+
+    # **A família exploratória é só de resultados FINAIS.** Os folds de CV
+    # (0..4) são diagnóstico de estabilidade, não hipóteses — incluí-los
+    # colocava a MESMA hipótese 6x no denominador do BH-FDR (5 folds + o
+    # final), com dependência forte entre as linhas, e fazia uma linha de
+    # validação receber `significativo_fdr`, um status inferencial que ela
+    # não tem. Corrigido na auditoria de 2026-08-23. Os folds continuam no
+    # CSV completo, só não entram na correção de múltiplas comparações.
+    resto = df[~primary_mask].copy()
+    e_final = resto["fold"].astype(str).str.startswith("final")
+    n_folds_cv = int((~e_final).sum())
+    if n_folds_cv:
+        print(f"[FDR] {n_folds_cv} linha(s) de fold de CV fora da família "
+              f"exploratória (diagnóstico, não hipótese) — seguem no CSV")
+    exploratory = apply_bh_fdr(resto[e_final].copy(), q=args.q)
+    exploratory_cv = resto[~e_final].copy()
 
     print(f"Registros de métrica: {len(df):,}  "
           f"(primários: {len(primary)}, exploratórios: {len(exploratory)})")
@@ -390,7 +405,8 @@ def main() -> None:
 
     REPORTS.mkdir(parents=True, exist_ok=True)
     pd.concat([primary.assign(familia="primaria"),
-               exploratory.assign(familia="exploratoria")],
+               exploratory.assign(familia="exploratoria"),
+               exploratory_cv.assign(familia="fold_cv_diagnostico")],
               ignore_index=True).to_csv(OUT_CSV, index=False)
 
     with open(OUT_MD, "w", encoding="utf-8") as f:

@@ -108,7 +108,20 @@ def _ct_for_branch(ct: bytes, branch: str, sample_id: str) -> bytes:
     if branch == "controlado":
         return ct[:CONTROLLED_LEN]
     if branch == "shuffled":
-        return _shuffle_ct(ct, sample_id)
+        # **TRUNCA ANTES de embaralhar — corrigido em 2026-08-23.**
+        # A versão anterior só permutava, deixando Grain em 65.544 e os
+        # demais em 65.552. Como várias features são função EXATA do
+        # comprimento (medido: `compression_ratio_zlib`,
+        # `compression_ratio_lzma`, `ngram_4_nunique`, `ngram_4_entropy`,
+        # `ngram_4_collision_rate` e `ngram_3_max_freq` separam com AUC
+        # 1,0000 usando só bytes uniformes que diferem no comprimento), o
+        # controle NEGATIVO ficava com um separador perfeito intacto — o
+        # embaralhamento não apaga comprimento. Qualquer comparação com o
+        # Grain daria F1≈1,0 e a leitura viraria "o sinal é de histograma"
+        # quando é de comprimento: a conclusão oposta da verdadeira.
+        # Truncando primeiro, o braço vira o controle negativo do
+        # `controlado`, que é o braço primário — que é o que ele deve ser.
+        return _shuffle_ct(ct[:CONTROLLED_LEN], sample_id)
     raise ValueError(f"braço desconhecido: {branch!r}")
 
 

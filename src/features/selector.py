@@ -270,9 +270,22 @@ class LWCFeatureSelector:
         return self
 
     def transform(self, X: np.ndarray | pd.DataFrame) -> np.ndarray:
-        """Aplica a máscara final (saída do mRMR, Estágio 2) ao X fornecido."""
+        """
+        Aplica a máscara final (saída do mRMR, Estágio 2) ao X fornecido.
+
+        Imputa NaN→0 como o `_prepare` do `fit` faz — sem isso, `fit` e
+        `transform` tratavam NaN de forma diferente (achado na auditoria de
+        2026-08-23). Hoje é latente (nenhuma das 641 features devolve NaN
+        em CT real dos 6 algoritmos), mas as famílias NIST imputam p-value
+        neutro por convenção e não por garantia: se alguma voltar a
+        devolver NaN, o `StandardScaler` propaga e LinearSVC/LR/SVM
+        levantam, derrubando metade do Caminho A no meio de uma rodada de
+        horas.
+        """
         self._check_fitted()
         Xa = X.values if isinstance(X, pd.DataFrame) else np.asarray(X)
+        Xa = np.nan_to_num(np.asarray(Xa, dtype=np.float64),
+                           nan=0.0, posinf=0.0, neginf=0.0)
         return Xa[:, self._final_mask]
 
     def fit_transform(

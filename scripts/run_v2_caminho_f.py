@@ -112,6 +112,20 @@ def _collect(branch: str, run_id: str, want_final: bool) -> pd.DataFrame:
             df = pd.read_parquet(pq_file)
             if df.empty or "y_proba" not in df.columns:
                 continue
+
+            # **Filtro por BRAÇO — bloqueador real corrigido em 2026-08-23.**
+            # A ablação `--no-keyholdout` grava no MESMO diretório e com o
+            # MESMO `run_id`, mudando só o `braco` (para
+            # `<braço>_sem_keyholdout`). Como o glob é por `run_id` e o
+            # filtro era só por fold, essas linhas entravam na matriz OOF —
+            # e o split dessa ablação é ALEATÓRIO POR AMOSTRA, então seus
+            # folds de CV contêm chaves do teste canônico. O assert de
+            # vazamento disparava e o Caminho F morria. O runbook manda
+            # rodar `--no-keyholdout` (Etapa 4) antes do F (Etapa 7), então
+            # era a sequência documentada que quebrava.
+            df = df[df["braco"].astype(str) == branch]
+            if df.empty:
+                continue
             # Assimétrico de propósito — ver `_is_final_fold`. Inclusão usa
             # o conjunto estrito (só a seed principal alimenta o F);
             # exclusão usa o predicado amplo (NENHUMA rodada final pode

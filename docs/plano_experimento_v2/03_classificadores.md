@@ -101,6 +101,12 @@ tarefa em cascata) foi movida para o Caminho A (§3.1).
 - Janelas locais de ~1024 bytes (≈64 janelas por CT) → atenção intra-janela →
   embedding por janela → **atenção global** entre as 64 janelas → latente +
   cabeça de classificação. `extract_latent()` obrigatório (alimenta D e F).
+- **Patch embedding de 16 bytes/token dentro da janela** (padrão ViT), não um
+  token por byte: atenção byte-a-byte sobre janelas de 1024 aloca ~2,1 GB só
+  na matriz de atenção com batch 2, e passa de 8 GB em GPU. O patch reduz a
+  atenção por um fator de 256 e mantém intacta a hierarquia local→global, que
+  é a contribuição de fato. **Precisa constar na descrição da arquitetura na
+  dissertação** — é desvio do texto original deste plano, não do seu espírito.
 - Atenção completa sobre 65.552 posições é matematicamente inviável (~4,3e9
   células por cabeça) — a hierarquia local→global é necessidade de
   engenharia, não escolha estilística.

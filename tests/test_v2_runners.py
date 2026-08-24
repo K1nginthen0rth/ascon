@@ -270,3 +270,79 @@ def test_mrmr_resolve_para_o_pacote_instalado():
         f"pacote instalado (era exatamente o bug de 2026-08-23)")
     assert not (REPO_ROOT / "mrmr.py").exists(), (
         "mrmr.py voltou para a raiz do repositório — vai sombrear o pacote")
+
+
+# ---------------------------------------------------------------------------
+# 4a auditoria (2026-08-23) — 2 bloqueadores
+# ---------------------------------------------------------------------------
+
+def test_shuffled_nao_vaza_comprimento(ct_com_tag_marcada):
+    """
+    **B2.** O braço `shuffled` só permutava, sem truncar — Grain ficava em
+    65.544 e os demais em 65.552. Seis features são função EXATA do
+    comprimento (compression_ratio_zlib/lzma, ngram_4_nunique/entropy/
+    collision_rate, ngram_3_max_freq: AUC 1,0000 usando só bytes uniformes
+    que diferem no comprimento), e embaralhar não apaga comprimento. O
+    CONTROLE NEGATIVO ficava com um separador perfeito intacto.
+    """
+    grain = ct_com_tag_marcada[:65544]
+    outro = ct_com_tag_marcada[:65544] + b"\x00" * 8      # 65.552
+    assert len(grain) != len(outro)
+
+    for br in ("controlado", "shuffled"):
+        lg = len(extract_v2._ct_for_branch(grain, br, "s1"))
+        lo = len(extract_v2._ct_for_branch(outro, br, "s2"))
+        assert lg == lo, f"braço {br!r} deixa comprimentos diferentes ({lg} vs {lo})"
+
+    # `cru` DEVE preservar a diferença — é o braço que existe para medi-la.
+    assert len(extract_v2._ct_for_branch(grain, "cru", "s1")) != \
+           len(extract_v2._ct_for_branch(outro, "cru", "s2"))
+
+
+def test_caminho_f_filtra_por_braco(tmp_path, monkeypatch):
+    """
+    **B1.** A ablação `--no-keyholdout` grava no MESMO diretório com o
+    MESMO `run_id`, mudando só o `braco`. Como o glob era por `run_id` e o
+    filtro só por fold, essas linhas entravam na matriz OOF — e o split
+    dessa ablação é aleatório POR AMOSTRA, então seus folds de CV contêm
+    chaves do teste canônico. O assert de vazamento derrubava o script, na
+    sequência que o próprio runbook manda rodar.
+    """
+    import numpy as np
+    from src.eval.reporting import report_eval
+
+    out = tmp_path / "caminho_a" / "controlado"
+    ALG = ["A", "B"]
+    y = np.array([0, 1, 0, 1])
+    proba = np.eye(2)[y]
+    for braco in ("controlado", "controlado_sem_keyholdout"):
+        report_eval(run_id="run", caminho="A", modelo="RF", braco=braco, fold=0,
+                    y_true=y, y_pred=y, y_proba=proba,
+                    sample_ids=[f"{braco}_{i}" for i in range(4)],
+                    key_ids=["k1", "k1", "k2", "k2"],
+                    class_names=ALG, labels=[0, 1], out_dir=out, n_bootstrap=10)
+
+    monkeypatch.setattr(caminho_f, "REPORTS", tmp_path)
+    monkeypatch.setattr(caminho_f, "CAMINHO_DIRS", {"A": "caminho_a"})
+    oof = caminho_f._collect("controlado", "run", want_final=False)
+    assert set(oof["braco"]) == {"controlado"}, (
+        f"braços vazados para a matriz OOF: {sorted(set(oof['braco']))}")
+
+
+def test_selector_transform_imputa_nan():
+    """**M2.** `fit` imputava NaN→0 e `transform` não — divergência que só
+    não aparecia porque nenhuma feature devolve NaN hoje."""
+    from src.features.selector import LWCFeatureSelector, SelectorConfig
+    import numpy as np
+    rng = np.random.default_rng(0)
+    X = rng.standard_normal((80, 12))
+    y = rng.integers(0, 2, 80)
+    X[:, 0] += y * 3.0
+    sel = LWCFeatureSelector(SelectorConfig(random_state=13, top_k_mi=8,
+                                            n_features_mrmr=4, boruta_max_iter=5))
+    sel.fit(X, y, feature_names=[f"f{i}" for i in range(12)])
+
+    X_nan = X.copy()
+    X_nan[0, :] = np.nan
+    out = sel.transform(X_nan)
+    assert np.isfinite(out).all(), "transform propagou NaN"

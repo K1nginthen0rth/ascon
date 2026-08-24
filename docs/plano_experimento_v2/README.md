@@ -36,18 +36,6 @@ concluído).
 | Validação estatística | IC bootstrap + McNemar | + 🔶 poder a priori, hipótese primária + FDR, pré-registro |
 | Relato | prints ad-hoc por script | **função única obrigatória**: toda métrica impressa na hora + matriz de confusão sempre (console + JSON + PNG) + predição/probabilidade por amostra (pré-requisito do Caminho F) |
 
-**Revisão de 2026-08-21 (pós-fechamento):** uma leitura crítica encontrou 5
-erros/lacunas no plano abaixo — Caminho E rotulado erroneamente como réplica
-do E20, features de tag vazando `len_ct` via viés de amostra pequena (e
-colidindo com o truncamento do Grain), reshape da réplica E05 incompatível
-com o tamanho do CT, mapeamento de nonce do Sparkle indefinido, réplica
-XGB-LGBM sem a representação do estudo original, ablação key-holdout
-prometendo um efeito que não existe nos 4 algoritmos íntegros, e Caminho F
-sem disciplina out-of-fold. Todos corrigidos diretamente nos arquivos 01–04;
-detalhe e rastreabilidade em
-[05_execucao_riscos_pendencias.md §5.5](05_execucao_riscos_pendencias.md#55-correções-aplicadas-revisão-crítica-2026-08-21)
-e em `docs/analise_critica_plano_v2.md`.
-
 ## Arquivos desta pasta
 
 | Arquivo | Conteúdo |
@@ -56,20 +44,19 @@ e em `docs/analise_critica_plano_v2.md`.
 | [02_features_e_selecao.md](02_features_e_selecao.md) | Suíte completa de features (com fontes) e o redesenho do seletor |
 | [03_classificadores.md](03_classificadores.md) | Os 6 Caminhos (A–F), correção do SVM, réplicas da literatura |
 | [04_protocolo_metricas_validacao.md](04_protocolo_metricas_validacao.md) | Split/CV, ablações, métricas, regra de relato obrigatória, controles, arcabouço estatístico |
-| [05_execucao_riscos_pendencias.md](05_execucao_riscos_pendencias.md) | Ordem de execução, orçamento computacional, riscos, pendências, **estado real de implementação e auditoria de aderência (§5.6–5.7)** |
-| **[06_implementacao_passo_a_passo.md](06_implementacao_passo_a_passo.md)** | **Documento-norte executável** — fases, arquivos, critérios de aceite. Incorpora a rodada final de decisões (2026-08-21) e a análise crítica. **Em divergência com 01–05, o 06 prevalece.** |
+| [05_execucao_riscos_pendencias.md](05_execucao_riscos_pendencias.md) | Ordem de execução, orçamento computacional, riscos e pendências |
+| **[06_implementacao_passo_a_passo.md](06_implementacao_passo_a_passo.md)** | **Documento-norte executável** — fases, arquivos, critérios de aceite. Incorpora a rodada final de decisões (2026-08-21). **Em divergência com 01–05, o 06 prevalece.** |
 | **[07_runbook_execucao.md](07_runbook_execucao.md)** | **Sequência exata de comandos** para rodar o experimento do dataset ao consolidado — o que falta é EXECUTAR, não implementar (ver estado abaixo). |
 
 ## Estado atual (2026-08-22) — todo o código está implementado
 
-**Fases 0–11 têm código completo e testado (246/246 testes).** O gargalo
+**Fases 0–11 têm código completo e testado (253/253 testes).** O gargalo
 agora é rodar, não escrever: a extração de features nas 180k amostras
 reais leva ~20h por braço (`controlado`/`cru`/`shuffled`), e os Caminhos
 B/C/E dependem de sessão de GPU (Kaggle/Colab). Sequência exata de
 comandos: [07_runbook_execucao.md](07_runbook_execucao.md). Detalhe
 fase-a-fase do que está pronto: [06_implementacao_passo_a_passo.md](06_implementacao_passo_a_passo.md)
-(status em cada cabeçalho de Fase) e a auditoria de aderência em
-[05 §5.6–5.7](05_execucao_riscos_pendencias.md#56-achados-da-implementação-20260821-22).
+(status em cada cabeçalho de Fase).
 
 ## Ordem de execução (ver 07 para os comandos exatos)
 

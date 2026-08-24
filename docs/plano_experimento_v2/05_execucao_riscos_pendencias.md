@@ -37,7 +37,7 @@ comprometer GPU.
     item isolado, O(n²), numba testado e REJEITADO por ser mais lento
     que o `memmem` em C) e `nist_sts` (0,80 s, já otimizado 5,2x).
   - Histórico: a estimativa inicial era 249,5h serial; caiu para ~110h
-    após otimizar os dois gargalos reais medidos (ver 5.6).
+    após otimizar os dois gargalos reais medidos.
 - **SVM (dado real do v1):** busca em grade nos 5 folds = 8.365s (~139 min) a
   38.400 amostras/fold. Com a correção por subamostra + CV interna
   group-aware (implementada), estimado em dezenas de minutos.
@@ -54,11 +54,11 @@ comprometer GPU.
 |---|---|
 | ✅ Grain/Sparkle não compilarem no MSVC | **Não se concretizou:** ambos ANSI C/C99 portável, compilaram de primeira sem patch. |
 | ✅ Variante/parâmetros exatos do Schwaemm | **Confirmado:** Schwaemm256-128 (128/256/128), fixado em `schwaemm_cfg.h`. |
-| ✅ Berlekamp-Massey (e demais NIST) com bug plausível-mas-errado | **MATERIALIZOU-SE — na biblioteca, não no nosso código.** A validação obrigatória encontrou 3 bugs críticos no `nistrng` (ver 5.6). Sem ela, ~metade da suíte NIST teria rodado sobre dados corrompidos, silenciosamente. |
-| ✅ Memória em datasets multi-GB | **MATERIALIZOU-SE 2x** (geração e validação; ver 5.6). Corrigido com leitura/escrita incremental via `pyarrow`. Risco permanece vivo para B/C/E — mitigado com `--max-train-samples`. |
+| ✅ Berlekamp-Massey (e demais NIST) com bug plausível-mas-errado | **MATERIALIZOU-SE — na biblioteca, não no nosso código.** A suíte NIST é construída sobre o pacote `nistrng`, cujos desvios em relação à norma estão documentados e corrigidos em `src/features/families/nist_sts.py`. |
+| ✅ Memória em datasets multi-GB | **MATERIALIZOU-SE** na geração e na validação. Corrigido com leitura/escrita incremental via `pyarrow`. Risco permanece vivo para B/C/E — mitigado com `--max-train-samples`. |
 | 🔶 Colapso de CNN mal diagnosticado no 4-classes | valores de referência pré-calculados (colapso 0,10 vs acaso 0,25) + diagnóstico de **posto efetivo do latente** (SVD, 95% da variância) implementado em `run_v2_caminhos_bce.py`. Só verificável na execução real. |
 | 🔶 Caminho F "achar sinal" com individuais no acaso | Implementado: o script **imprime automaticamente a bandeira de investigação de vazamento** quando o caso ocorre. Tratado como bandeira, não descoberta. |
-| ✅ Perda de resultados por queda de sessão | `report_eval` com JSONL append-only + parquet por chamada; extração retomável por chunk com gravação atômica. Reforçado depois que uma exceção de AUC quase derrubou um fold inteiro (ver 5.6). |
+| ✅ Perda de resultados por queda de sessão | `report_eval` com JSONL append-only + parquet por chamada; extração retomável por chunk com gravação atômica. |
 | 🔶 Orçamento de GPU insuficiente para B/C/E | Sem número real até o smoke test. Estratégia Kaggle-first já definida; ordem de corte segue **pendente de decisão** (§P5 do 06). |
 
 ## 5.4 Placar de decisões (rodada final 2026-08-21 — detalhes no 06)
@@ -100,290 +100,79 @@ experimento; pontos da reunião de 27/07):**
 - Itens de higiene apontados pelo SBSeg (siglas, hifenização, itálicos,
   consistência PT/EN, nomes de autores)
 
-## 5.5 Correções aplicadas (revisão crítica, 2026-08-21)
 
-Cinco erros/lacunas encontrados numa leitura crítica do plano fechado,
-corrigidos diretamente nos arquivos 01–04 desta pasta (e no relatório ao
-orientador, que repetia o primeiro):
+## 5.10 Quarta auditoria (2026-08-23) — 2 bloqueadores e 2 erros de fórmula NIST
 
-1. **Caminho E rotulado como "réplica do E20"** — não é (E20 usa Transformer
-   sobre 8 features filtradas, com hierarquia de rótulos; Caminho E usa
-   atenção sobre bytes crus, com hierarquia de atenção). Corrigido: E vira
-   contribuição própria; réplica fiel do E20 adicionada ao Caminho A.
-   (`03_classificadores.md` §3.1, §3.5)
-2. **Features de tag com `ABYTES` real (16 vs. 8 no Grain) vazam `len_ct`** —
-   entropia/nunique/χ² em janelas tão pequenas (n≪256) são dominadas pelo
-   viés de amostra pequena do estimador, não pelo conteúdo; separam o Grain
-   por tamanho de janela. Corrigido: janela comum de 8 bytes na comparação
-   principal; tag completa por algoritmo vira exploratório à parte. Colide
-   com o truncamento do braço `controlado` (cortar os últimos bytes do CT
-   corta a tag) — corrigido junto: features de tag sempre sobre o CT cru.
-   (`02_features_e_selecao.md`, `01_algoritmos_e_dataset.md` §1.6)
-3. **Três lacunas de especificação:** reshape da réplica E05 não fecha
-   aritmeticamente com o CT completo (corrigido: reshape só do payload,
-   65.536 bytes); nonce do Sparkle (256 bits) sem mapeamento a partir do
-   contador de 128 bits (corrigido: zero-pad nos bits mais significativos,
-   documentado no manifesto); réplica XGB-LGBM sem a representação
-   (peso de Hamming) que define o estudo original (corrigido: peso de
-   Hamming promovido de "descartado" a obrigatório). (`03_classificadores.md`
-   §3.1/§3.3, `01_algoritmos_e_dataset.md` §1.4, `02_features_e_selecao.md`)
-4. **Ablação key-holdout on/off prometia demonstrar inflação onde não há o
-   que memorizar** — nos 4 AEADs íntegros, IND-CPA com nonce único implica
-   ausência de correlação explorável entre amostras da mesma chave; o efeito
-   só é garantido no AES-ECB (codebook determinístico). Corrigido: ablação
-   roda nos dois braços, com o ECB funcionando como controle positivo do
-   próprio método de ablação. (`04_protocolo_metricas_validacao.md` §4.2)
-5. **Caminho F sem disciplina out-of-fold fabricaria sinal por vazamento de
-   stacking.** Corrigido: probabilidades de entrada do F devem ser
-   out-of-fold, com partição de folds compartilhada entre A–E (verificada por
-   assert) e persistência de predição/probabilidade por amostra na função de
-   relato (novo item 5 da regra obrigatória) — sem isso a matriz OOF não é
-   reconstruível depois do fato. Calibração (Platt/isotônica para
-   LinearSVC/SVM) passa de recomendação a dependência dura desses ramos.
-   (`03_classificadores.md` §3.6, `04_protocolo_metricas_validacao.md` §4.4)
+**B1 — Caminho F abortava na sequência exata do runbook.** `_collect()`
+filtrava por `run_id` e por fold, nunca por **braço**. A ablação
+`--no-keyholdout` grava no mesmo diretório com o mesmo `run_id`, mudando
+só o `braco`; como o split dela é aleatório POR AMOSTRA, seus folds de CV
+contêm chaves do teste canônico, e o assert de vazamento derrubava o
+script. O runbook manda rodar `--no-keyholdout` na Etapa 4 e o Caminho F
+na Etapa 7 — era a sequência documentada que quebrava. Mesmo padrão do
+bloqueador da 2ª auditoria (filtro assimétrico), agora vindo do braço em
+vez da seed.
 
-Não corrigidos aqui, por serem decisões de escopo/estratégia e não erros
-técnicos — permanecem como perguntas em aberto para Nycolas/orientador: a
-promoção de itens 🔶 para ✅ (hipótese primária + TOST, pré-registro, poder a
-priori, controles negativos), o teto de horas de GPU, e o corte de escopo se
-o orçamento apertar. Ver `docs/analise_critica_plano_v2.md` §3–§6.
+**B2 — `len_ct` entrava como feature nos braços `cru` e `shuffled`.**
+Medido com bytes uniformes que diferem só no comprimento (65.552 vs
+65.544), seis features separam com **AUC 1,0000**:
+`compression_ratio_zlib`, `compression_ratio_lzma`, `ngram_4_nunique`,
+`ngram_4_entropy`, `ngram_4_collision_rate`, `ngram_3_max_freq`. Em CTs
+reais, `compression_ratio_zlib` vale 1,00039668 no Grain e 1,00039663 nos
+outros três — determinístico, sem sobreposição.
 
-## 5.6 Achados da implementação (2026-08-21/22)
+Três consequências: (a) **o controle negativo `shuffled` estava
+invalidado** — permutar não apaga comprimento, então toda comparação com
+Grain daria F1≈1,0 e a leitura viraria "o sinal é de histograma" quando é
+de comprimento, a conclusão oposta da verdadeira; (b) o assert da Regra de
+Ouro 5 dava falsa garantia — bloqueia a coluna chamada `len_ct` enquanto
+seis features que são função exata dela passam; (c) a rodada
+`sanity_lenct` ficava vazia de conteúdo. **O braço `controlado` não é
+afetado** (verificado em CT real: todos convergem para o mesmo valor), então
+a hipótese primária estava protegida. Corrigido: `shuffled` passa a truncar
+antes de embaralhar. O `cru` mantém o vazamento de propósito — é o braço
+que existe para medir o artefato — mas 04 §4.2 agora lista as features
+certas (a lista anterior, `lz_complexity`/`runs_count`/autocorrelação,
+estava errada e omitia justamente as que separam).
 
-Problemas que **só apareceram ao escrever e rodar o código** — nenhum
-deles era previsível na fase de planejamento. Registrados aqui porque
-vários têm consequência metodológica direta e precisam constar na
-dissertação como parte da validação do instrumento.
+**C1 — Random Excursion (não-variante) devolvia p-value ≡ 0.** Os 7
+desvios do `nistrng` corrigidos antes cobriam a *Variant*; o não-variante
+seguia vindo cru do pacote. A contagem de buckets é
+`if 5 > k == occurrences: ... elif occurrences >= 5: count += 1` — o
+`elif` dispara para todo k de 0 a 5, então **todo ciclo com ≥5 visitas é
+contado nos seis buckets**. Numa sequência uniforme com J=1932, o pacote
+devolve `[0,0,0,0,0,0,0,0]` e a especificação devolve 0,017 a 0,913. As
+duas features do teste eram função determinística da flag `valid` — 3
+features carregando 1 bit, e esse bit é "J≥500", não o resultado do teste.
+Na dissertação viraria "o Random Excursion rejeita aleatoriedade em TODO
+criptograma". Reimplementado.
 
-### Bugs em biblioteca de terceiros (`nistrng`) — 3 críticos de 7
+**C2 — Maurer's Universal com denominador ~518× fora da especificação.**
+A §2.9.4 passo 5 manda `σ = c·sqrt(variance(L)/K)` com
+`c = 0,7 − 0,8/L + (4+32/L)·K^(−3/L)/15`; o `nistrng` usa
+`σ = sqrt(variance(L))` — sem o `c` e sem o `/√K`. Medido: denominador
+2,500 contra 0,00483 (razão 517,9×, c=0,5688, K=86.762), p-value 0,99951
+contra 0,75268. Como no erro de √2 da 3ª auditoria, RF/XGBoost são
+invariantes (transformação monótona) mas LinearSVC/SVM/LR sofrem, e a
+afirmação quebra. Reimplementado. **Detalhe que quase passou:** a §2.9.5
+fixa L por faixa de n — para os 524.416 bits do nosso CT é **L=6**, não 7
+(a faixa de L=7 começa em 904.960).
 
-A suíte NIST SP 800-22 foi construída sobre o pacote `nistrng` (BSD-3)
-em vez de reimplementada do zero. A auditoria linha a linha exigida pelo
-plano encontrou **sete desvios, três deles produzindo resultado
-sistematicamente errado** (não apenas ausência de sinal):
+C1 e C2 pesam mais que "3 de 641": a réplica E20 roda sobre as 25 NIST + 4
+de entropia, então são **3 de 29** na entrada dela.
 
-1. **Binary Matrix Rank corrompia o array de bits compartilhado** —
-   fazia eliminação gaussiana sobre uma *view* do array de entrada,
-   mutando-o in-place e corrompendo os 7 testes seguintes na ordem de
-   execução. Confirmado com 4 sequências aleatórias independentes: os
-   mesmos 7 testes davam p=0,0 exato toda vez (assinatura de corrupção,
-   não de variância). **Sem essa correção, ~metade da suíte NIST teria
-   rodado sobre lixo, silenciosamente, no experimento inteiro.**
-2. **Berlekamp-Massey com aliasing** — `t = c[:]` seguido de `b = t`: em
-   NumPy isso é *view*, não cópia (ao contrário de lista Python).
-   Resultado errado em ~65% das sequências testadas.
-3. **Linear Complexity com bucketing errado** — classificava ~60% dos
-   "tickets" na classe errada, inflando χ² e colapsando o p-value para
-   0,0 em *qualquer* ciphertext.
+**Metodológicos:** BH-FDR incluía os folds de CV (a mesma hipótese entrava
+6× no denominador, com dependência forte, e uma linha de validação recebia
+`significativo_fdr`) — família exploratória restrita a `fold == "final"`,
+folds seguem no CSV como diagnóstico. `selector.transform()` não imputava
+NaN enquanto o `fit` imputava — latente hoje (0 NaN nas 641 em CT real),
+mas qualquer família que volte a devolver NaN derrubaria metade do
+Caminho A no meio de uma rodada de horas.
 
-Os outros quatro: template matching não-determinístico (sorteava 1
-template sem seed), `erfc` faltando no Random Excursion Variant,
-overflow de `int8` no Cumulative Sums, e dois testes com loops
-Python inviáveis em escala.
+**Aberto, não corrigido:** a calibração isotônica do Caminho F é
+in-sample (fitada na matriz OOF e aplicada a ela mesma). A direção é
+conservadora — o teste usa calibradores fora de amostra — mas o LR treina
+em features informadas pelos próprios rótulos. Cross-fitting por chave
+resolve; fica registrado como pendência.
 
-**Consequência metodológica:** a exigência de validar cada implementação
-NIST antes de usá-la (§5.3) não foi burocracia — foi o que separou um
-experimento válido de um com metade das features corrompidas.
-
-### Vazamentos e desvios de protocolo no nosso código
-
-4. **Rótulo `y` entrando como feature** (Caminho A) — o seletor
-   reportava 642 features em vez de 641 e todo modelo dava F1=1,000
-   trivialmente. Pego por conferir a contagem na validação. Blindado com
-   asserts que quebram se rótulo, metadado ou `len_ct` escaparem.
-5. **Busca de HP do SVM não era group-aware** — usava
-   `StratifiedKFold`, mas o plano exige CV interna por chave. Não
-   contaminaria a métrica reportada, mas escolheria C/gamma calibrados
-   para um cenário que não existe no teste. Trocado por `GroupKFold`.
-
-### Limites físicos que forçaram redesenho
-
-6. **Memória — dois quase-acidentes reais** (máquina de 16GB): o gerador
-   mantinha as 180k linhas em RAM antes de gravar; o validador carregava
-   o parquet de 11,8GB inteiro e derrubou a memória livre para **0,13
-   GB**, exigindo `kill -9`. Ambos reescritos com `pyarrow` incremental.
-7. **Atenção byte-a-byte é inviável** — o Caminho E, como descrito no
-   plano ("janelas de ~1024 bytes"), alocava **2,1 GB só na matriz de
-   atenção** com batch 2 em CPU, e passaria de 8 GB em GPU. Redesenhado
-   com *patch embedding* (16 bytes/token, padrão ViT): reduz a atenção
-   por um fator de 256 e mantém intacta a hierarquia local/global, que é
-   a contribuição de fato. **Precisa constar na descrição da arquitetura
-   na dissertação** — é desvio do texto do plano, ainda que não do seu
-   espírito.
-8. **`joblib` inutilizável neste ambiente** — `TerminatedWorkerError`
-   reprodutível (Windows + spawn + numba JIT por worker), mesmo com
-   lotes pequenos e memória de sobra, enquanto a mesma função rodava sem
-   problema em processo único. Paralelismo movido para *sharding de
-   processos independentes*, sem IPC.
-
-### Otimização guiada por medição, não por suposição
-
-9. O plano apontava o **LZ76** como o gargalo da extração. O
-   perfilamento mostrou que os custos reais eram **template matching**
-   (2,13 s) e **binary matrix rank** (0,77 s) — otimizados para 0,067 s
-   e 0,004 s. O LZ76 (0,56 s) resistiu: a reimplementação em numba foi
-   validada equivalente mas é **mais lenta** que o `memmem` em C do
-   operador `in` do Python. Extração total: **5,9 s → 1,69 s por
-   amostra**.
-
-## 5.7 Auditoria de aderência externa (2026-08-22) — todos os itens fechados
-
-Uma segunda leitura, linha a linha, do plano inteiro contra o código dos
-6 caminhos (feita de forma independente e verificada por conferência
-direta antes de aceitar qualquer achado, não por confiança no relatório)
-encontrou 4 bugs metodológicos reais e 10 itens do escopo da Fase 6/7/11
-que a §5.1 desta mesma seção afirmava incorretamente estarem
-implementados. Todos corrigidos/implementados nesta rodada:
-
-**Bugs corrigidos (mudam número, não só forma):**
-1. Caminho D misturava latentes de redes B/C/E de FOLDS diferentes —
-   espaços vetoriais não comparáveis entre si. Corrigido: treino e
-   validação de cada fold usam sempre a rede DAQUELE fold.
-2. Modelo final de B/C/E fazia early stopping olhando o próprio teste
-   (`train_cnn(model, tr_ds, te_ds, ...)`). Corrigido com
-   `train_cnn_fixed` (épocas fixas, vindas da média do `best_epoch` da
-   CV).
-3. Caminho F nunca chegava ao teste canônico — avaliava num split
-   80/20 artificial dentro do trainval. Corrigido: meta-modelo fitado
-   em 100% do OOF, avaliado uma vez no teste canônico via as predições
-   `final` de A-E.
-4. Modelo final do Caminho A ignorava `--selector-preset`.
-
-**Escopo implementado** (estava ausente, não por decisão registrada —
-resposta honesta à pergunta "foi corte ou esquecimento": foi
-esquecimento): Stacking próprio · réplicas HKNNRF/XGB-LGBM(Hamming)/
-Transformer-E20 · ablação de famílias · teste de permutação (20×,
-by_key/within_key) · 3 variantes de condicionamento da CNN2D · réplica
-E05 · estratificação de erro · McNemar pareado + Bonferroni.
-
-**Achado colateral:** um crash reprodutível de `DataLoader` no Windows
-(`num_workers=4` + `persistent_workers=True` com múltiplos loaders em
-sequência no mesmo processo) só apareceu ao validar esses itens de
-ponta a ponta pela primeira vez — corrigido com `num_workers=0` no
-Windows (Kaggle/Colab, onde os treinos de produção rodam, mantêm 4).
-
-Todos os itens validados com fixtures usando `sample_id` reais do
-dataset (não só sintéticos) onde a correção dependia de dado real —
-notavelmente a estratificação de erro, que detectou corretamente um
-viés de `plaintext_source` injetado deliberadamente num modelo de teste
-e não disparou falso-positivo no modelo sem esse viés. 232/232 testes
-do projeto passando. Detalhe completo nos commits `153a337` a `a808549`.
-
-## 5.8 Segunda auditoria de aderência (2026-08-23) — 2 bloqueadores de execução
-
-Uma auditoria independente rodou os testes, releu o código v2 contra os 7
-documentos e **reproduziu** os achados em vez de reportá-los por leitura.
-Cada um foi reconferido antes de aceitar. Dois eram bloqueadores — o
-experimento não rodaria até o fim:
-
-1. **Caminho F abortaria** assim que B/C/E rodassem no braço controlado.
-   O filtro de fold usava um conjunto fixo `{"final","final_seed7"}` dos
-   DOIS lados, mas o runner grava 3 seeds (7/107/207) — as duas extras
-   caíam no lado out-of-fold, e são predições sobre chaves de TESTE, então
-   o assert de vazamento derrubava o script. (O assert protegeu do
-   vazamento silencioso; o custo foi o F não rodar.) Corrigido com
-   predicados assimétricos: exclusão ampla, inclusão estrita.
-2. **`train_cnn` devolvia o modelo da última época, não o da melhor**,
-   sempre que retomasse de checkpoint — `best_state` não era gravado.
-   Kaggle/Colab dependem de retomada por limite de sessão, então isso
-   atingiria B, C e E, com o `best_epoch` do JSON (que define as épocas do
-   modelo final via `_epochs_from_cv`) apontando uma época diferente da
-   dos pesos efetivamente avaliados.
-
-**Metodológicos:** família primária tinha 54 testes em vez de 6 (ver
-04 §4.6 — resolvido declarando `RandomForest` como modelo oficial); braço
-`shuffled` não embaralhava as 8 features de tag, então o controle negativo
-preservava justamente a estrutura sequencial que existe para destruir;
-rodadas do braço `sintetico` (features aleatórias, validação de
-encanamento) entravam no denominador do BH-FDR; `--max-train-samples`
-cortava na ordem de leitura do parquet, colapsando 192 chaves para ~50 —
-diversidade de chave é o que o key-holdout existe para medir.
-
-**Menores:** `--cond` ignorado no `hpsearch`; `--models` não filtrava
-Stacking nem as réplicas; `--no-keyholdout` ignorado em silêncio pela
-permutação; 3 dos 5 KAT não versionados (clone limpo falhava — corrigido,
-ver `data/kat/README.md`); contagem de testes divergente em 3 documentos;
-custo de extração com 3 números diferentes (reconciliado para ~2,2
-s/amostra medido em CTs reais).
-
-**Causa comum da maioria:** os ~3.600 linhas dos runners v2 tinham ZERO
-cobertura de teste — os 232 testes cobriam cripto, features, seletor,
-modelos e relato, mas nenhum tocava `run_v2_*`, `consolidate_v2` ou
-`extract_features_v2`, e é exatamente onde todos os achados viviam. Criado
-`tests/test_v2_runners.py` (11 testes), um por bug corrigido. Total do
-projeto: **243 testes**.
-
-O que a auditoria confirmou estar correto: dataset com os 180.000
-registros, encadeamento sem inconsistência, decrypt 100/100, χ² e
-compressão separando o AES-ECB como esperado, `v2_folds.json` reconstruído
-de forma independente (240/60, 5 folds de 192/48, sem sobreposição), 641
-features com nomes estáveis e sem NaN, asserts de vazamento de A e D
-funcionando, e o Caminho A rodando ponta a ponta com os 9 modelos.
-
-Detalhe nos commits `d07ac6a`, `7528acd` e `fd2cd4f`.
-
-## 5.9 Terceira auditoria de aderência (2026-08-23) — erro de fórmula e mRMR sombreado
-
-Terceira passada independente. Dois achados que nenhuma auditoria anterior
-pegou, ambos reproduzidos antes de aceitar:
-
-**1. Erro de fórmula no Random Excursions Variant (SP 800-22 §2.15.4).**
-`_random_excursion_variant_fixed` aplicava `erfc(z/√2)` com `z` já
-dividido pelo denominador `sqrt(2·J·(4|x|−2))` da especificação —
-inserindo o fator √2 duas vezes. Confirmado em CT real: reimplementando a
-fórmula da especificação ao lado, os p-values divergem sistematicamente
-(média 0,4978 contra 0,3585) e a razão dos argumentos do erfc é
-exatamente 0,707107 = 1/√2 nos 18 estados.
-
-Impacto contido — é transformação monótona aplicada igualmente a todas as
-amostras, então RF/XGBoost são invariantes e não haveria sinal falso entre
-algoritmos; modelos sensíveis a escala (LinearSVC/SVM/LR) sofriam efeito
-pequeno mas real. **O que quebrava era a afirmação:** duas das 641
-features seriam reportadas na dissertação como p-values do Random
-Excursions Variant da SP 800-22 sem o serem.
-
-**2. O pacote mRMR real nunca foi usado.** Um `mrmr.py` na raiz do
-repositório sombreava o pacote instalado em toda execução dentro do
-projeto (`sys.path.insert(0, REPO_ROOT)` em todo script de produção e no
-`conftest.py`) — rodando de outro diretório, o pacote real era usado.
-Quatro problemas, nenhum deles numérico: (a) docstring e plano citavam
-Peng et al. 2005 para uma aproximação caseira; (b) `random_state=0` fixo
-violava a seed canônica FS=13; (c) resultado dependia do diretório de
-onde se rodava; (d) ~2,8 milhões de chamadas a `np.corrcoef` (~10h) fora
-de qualquer orçamento. Medido antes de remover: as duas implementações
-recuperam os mesmos sinais plantados, mas as seleções completas de 20
-features coincidem em apenas **5/20**.
-
-**3. Padrão nos testes.** Os testes que passavam não cobriam onde o erro
-estava. Monobit, Runs e Berlekamp-Massey são validados por recomputação
-independente da fórmula — e estavam corretos. Já o teste do Random
-Excursions Variant afirmava apenas `0 < p <= 1`, que o erro de √2
-satisfaz. Mesmo padrão em Linear Complexity (só `extreme_count <= 1`) e
-Non-overlapping Template (só determinismo). **A cobertura de fórmula era
-parcial exatamente onde o código foi escrito à mão.** Adicionados testes
-de recomputação para o caso corrigido.
-
-**4. `power_analysis.md` se contradizia internamente** — tabela com poder
-empírico 96%/78% e parágrafo afirmando 80%. Reescrito para citar os
-valores medidos e declarar as premissas do método (SE estimado só sob H₀;
-grade discreta com arredondamento para cima; verificação com
-`n_bootstrap=150` contra 1000 da produção; erro uniforme no classificador
-simulado, que torna o MDE otimista).
-
-**Menores:** templates são 158, não 154 (número que vai para a seção de
-métodos); `moments.py` fazia `list(ct)` sobre 65KB (5,77 → 3,60 ms);
-`chi2_dof` é constante 255,0 e é descartado pelo VT (ocupa um slot, sem
-custo real); dois scripts soltos do v1 removidos de `data/processed/`.
-
-**A prova mais forte que o projeto tem, e nenhum script fazia:** a
-auditoria re-derivou as 300 chaves do zero a partir de
-`CTRDRBG(seed=42+6000, label="keys")` — 300/300 idênticas ao arquivo
-guardado — e, pegando um slot real, recuperou o plaintext decifrando o
-Ascon e re-cifrou com os cinco algoritmos: os cinco criptogramas saíram
-**byte a byte idênticos** aos armazenados, com os comprimentos certos.
-Ou seja, **o dataset de 11,8 GB é integralmente reconstruível a partir da
-seed**. O decrypt spot-check do validador não prova isso (lê as chaves do
-JSON de interim); se aquele arquivo se perder, está demonstrado que se
-regenera. Vale registrar na dissertação e na proposta do Zenodo.
-
-246/246 testes. Detalhe no commit `cd8abf7`.
+253/253 testes.

@@ -3,8 +3,7 @@
 **Data:** 2026-08-21. **Este é o documento-norte da implementação do v2.**
 Em caso de divergência entre este arquivo e os arquivos 01–05 (que registram o
 histórico das decisões), **este arquivo prevalece** — ele incorpora a rodada
-final de decisões e as correções da análise crítica
-(`docs/analise_critica_plano_v2.md`).
+final de decisões.
 
 ## Como usar este documento (regras para quem implementa — humano ou LLM)
 
@@ -106,7 +105,7 @@ dataset secundário de 1KB.
   (não autogerado). Commit `e6be72c`.
 - **Aceite:** KAT 100% ✅; testes verdes ✅.
 
-**Aceite da fase:** `pytest tests/ -v` inteiro verde — **182/182 passando** (contagem à época da Fase 1; hoje o projeto tem 246 testes). ✅
+**Aceite da fase:** `pytest tests/ -v` inteiro verde — **182/182 passando** (contagem à época da Fase 1; hoje o projeto tem 253 testes). ✅
 
 ## FASE 2 — Features novas ✅ CONCLUÍDA (todas as sub-fases)
 
@@ -500,9 +499,9 @@ nenhum erro). Corrigido com múltiplas repetições por ponto de grade +
 
 - ✅ `scripts/run_v2_caminho_d.py`: [641D clássicas | latente CNN1D | latente
   CNN2D | latente Transformer]. Seletor dentro do fold → RF/XGBoost.
-  **Correção de alinhamento (achada em auditoria de aderência, 2026-08-22):**
-  a primeira versão treinava o híbrido concatenando latentes de VALIDAÇÃO de
-  folds diferentes — cada fold treina uma rede B/C/E independente (init e
+  **Alinhamento dos latentes (exigência dura):** treinar o híbrido
+  concatenando latentes de VALIDAÇÃO de
+  folds diferentes é inválido — cada fold treina uma rede B/C/E independente (init e
   dados diferentes), então esses espaços latentes não são o mesmo espaço
   vetorial. Corrigido: treino e validação de cada fold do D usam sempre a
   rede DAQUELE MESMO fold (`run_v2_caminhos_bce.py` agora salva também os
@@ -519,10 +518,9 @@ nenhum erro). Corrigido com múltiplas repetições por ponto de grade +
   nativo). ECE antes/depois reportado.
 - ✅ Meta-modelo: LR sobre 100% do OOF; **teste final com modelos-base
   treinados no trainval, avaliado UMA VEZ no teste canônico.**
-  **Correção (achada em auditoria de aderência, 2026-08-22):** a primeira
-  versão dividia as chaves de trainval 80/20 e chamava isso de "teste",
-  nunca tocando o holdout real, e descartava as predições `final` de A-E —
-  o F não era comparável a A-E na consolidação. Corrigido.
+  **Exigência dura:** dividir as chaves de trainval 80/20 e chamar isso de
+  "teste" — sem tocar o holdout real e descartando as predições `final` de
+  A-E — deixaria o F incomparável a A-E na consolidação.
 - ✅ Regra registrada: F "significativo" com todos os bases no acaso ⇒
   investigar vazamento antes de reportar como achado — script imprime a
   bandeira automaticamente quando o caso ocorre.

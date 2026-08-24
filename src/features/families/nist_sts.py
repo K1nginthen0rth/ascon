@@ -575,6 +575,147 @@ def _non_overlapping_template_matching(bits: np.ndarray) -> tuple[float, float, 
     return float(arr.mean()), float(arr.std()), float(arr.min())
 
 
+def _cycles_from_bits(bits: np.ndarray) -> tuple[list[np.ndarray], int]:
+    """Ciclos da caminhada aleatória (S' com zeros nas pontas). Compartilhado
+    por Random Excursion e sua Variant."""
+    signed = np.where(bits == 0, -1, 1)
+    s_linha = np.concatenate(([0], np.cumsum(signed), [0]))
+    zeros = np.flatnonzero(s_linha == 0)
+    cycles = [s_linha[zeros[i]:zeros[i + 1] + 1] for i in range(len(zeros) - 1)]
+    return cycles, len(cycles)
+
+
+def _excursion_pi(x: int) -> list[float]:
+    """
+    Probabilidades π_k(x), k=0..5, da SP 800-22 §2.14 — calculadas pela
+    fórmula fechada em vez de tabeladas:
+
+        π_0 = 1 − 1/(2|x|)
+        π_k = (1/(4x²))·(1 − 1/(2|x|))^(k−1)   , k = 1..4
+        π_5 = (1/(2|x|))·(1 − 1/(2|x|))^4
+    """
+    a = abs(x)
+    p0 = 1.0 - 1.0 / (2.0 * a)
+    pis = [p0]
+    pis += [(1.0 / (4.0 * a * a)) * (p0 ** (k - 1)) for k in range(1, 5)]
+    pis.append((1.0 / (2.0 * a)) * (p0 ** 4))
+    return pis
+
+
+def _random_excursion_fixed(bits: np.ndarray) -> np.ndarray:
+    """
+    Random Excursion (NÃO a Variant) reimplementado — SP 800-22 §2.14.
+
+    **[CRÍTICO] Bug do nistrng (achado em 2026-08-23):** a contagem de
+    buckets do pacote é
+
+        if 5 > k == occurrences: count += 1
+        elif occurrences >= 5:   count += 1
+
+    O `elif` dispara para TODO k de 0 a 5, então **todo ciclo com ≥5
+    visitas ao estado é contado nos seis buckets ao mesmo tempo**. O χ²
+    explode e o p-value colapsa para 0,0 exato em qualquer sequência —
+    inclusive uniforme. Confirmado: numa sequência aleatória de 524.416
+    bits com J=1932 ciclos, o pacote devolve `[0,0,0,0,0,0,0,0]` enquanto
+    a especificação devolve p-values sensatos (0,017 a 0,913).
+
+    Sem esta correção, as duas features do teste (`nist_excursions_mean`
+    e `_min`) eram função determinística da flag `nist_excursions_valid`
+    — 3 features carregando 1 bit, e esse bit é "J≥500", não o resultado
+    do teste. Na dissertação viraria "o teste Random Excursion rejeita
+    aleatoriedade em TODO criptograma", que é o bug, não o achado.
+
+    Returns:
+        p-values dos 8 estados x ∈ {−4..−1, 1..4}; vazio se não há ciclos.
+    """
+    cycles, j = _cycles_from_bits(bits)
+    if j == 0:
+        return np.array([])
+    scores = []
+    for x in (-4, -3, -2, -1, 1, 2, 3, 4):
+        v_k = [0] * 6
+        for cycle in cycles:
+            k = int(np.count_nonzero(cycle == x))
+            v_k[min(k, 5)] += 1            # cada ciclo conta em UM bucket só
+        pi = _excursion_pi(x)
+        chi_square = sum(
+            ((v_k[k] - j * pi[k]) ** 2) / (j * pi[k]) for k in range(6)
+        )
+        scores.append(float(scipy.special.gammaincc(2.5, chi_square / 2.0)))
+    return np.array(scores)
+
+
+def _maurers_universal_fixed(bits: np.ndarray) -> tuple[float, bool]:
+    """
+    Maurer's Universal Statistical Test reimplementado — SP 800-22 §2.9.
+
+    **[CRÍTICO] Bug do nistrng (achado em 2026-08-23):** o desvio padrão
+    usado no denominador é `sqrt(variance(L))`, quando a especificação
+    (§2.9.4 passo 5) manda
+
+        σ = c · sqrt( variance(L) / K )
+        c = 0,7 − 0,8/L + (4 + 32/L)·K^(−3/L)/15
+
+    Faltam o fator de correção `c` E a divisão por √K — o denominador sai
+    ~460x maior que o correto (medido: 2,500 contra 0,00544 num CT de
+    64KB, c=0,5904, K=73.636), e o p-value é empurrado para perto de 1
+    em qualquer entrada. Numa sequência aleatória: 0,99951 (pacote)
+    contra 0,58961 (especificação).
+
+    Como é transformação monótona de |fn − EV|, RF/XGBoost são
+    invariantes — mas LinearSVC/SVM/LR sofrem, e a AFIRMAÇÃO quebra: a
+    feature não é o p-value do teste Universal de Maurer. Mesma classe do
+    erro de √2 do Random Excursions Variant, com fator ~460 em vez de
+    1,41.
+
+    Returns:
+        (p_value, elegivel)
+    """
+    n = int(bits.size)
+    # Tabela da §2.9.5: L em função de n. Só as faixas alcançáveis aqui.
+    if n < 387_840:
+        return _NAN, False
+    if n < 904_960:
+        block_len = 6
+    elif n < 2_068_480:
+        block_len = 7
+    else:
+        block_len = 8
+
+    q = 10 * (2 ** block_len)
+    k = n // block_len - q
+    if k <= 0:
+        return _NAN, False
+
+    expected = {6: 5.2177052, 7: 6.1962507, 8: 7.1836656}[block_len]
+    variance = {6: 2.954, 7: 3.125, 8: 3.238}[block_len]
+
+    # Valores inteiros de cada bloco de L bits (vetorizado).
+    usable = (q + k) * block_len
+    blocks = bits[:usable].reshape(-1, block_len).astype(np.int64)
+    weights = (1 << np.arange(block_len - 1, -1, -1)).astype(np.int64)
+    values = blocks @ weights
+
+    # Inicialização em laço explícito: `table[values[:q]] = arange(...)` é
+    # atribuição com índices REPETIDOS, e o numpy não garante qual vence
+    # nesse caso (a especificação exige o ÚLTIMO). Q é 1.280 para L=7 —
+    # o laço custa nada e é determinístico.
+    table = np.zeros(2 ** block_len, dtype=np.int64)
+    for i in range(q):
+        table[int(values[i])] = i + 1
+    total = 0.0
+    for i in range(q, q + k):
+        v = int(values[i])
+        total += math.log2((i + 1) - table[v])
+        table[v] = i + 1
+    fn = total / k
+
+    c = 0.7 - 0.8 / block_len + (4.0 + 32.0 / block_len) * (k ** (-3.0 / block_len)) / 15.0
+    sigma = c * math.sqrt(variance / k)
+    p_value = math.erfc(abs(fn - expected) / (math.sqrt(2.0) * sigma))
+    return float(p_value), True
+
+
 def _random_excursion_variant_fixed(bits: np.ndarray) -> np.ndarray:
     """
     Reimplementação com o `erfc` que falta no nistrng (ver ponto 2 do
@@ -646,10 +787,13 @@ def extract_nist_sts(ct: bytes) -> dict[str, float]:
         ("nist_runs", "runs"),
         ("nist_longest_run_ones", "longest_run_ones_in_a_block"),
         ("nist_dft", "dft"),
-        ("nist_maurers_universal", "maurers_universal"),
     ):
         p, _ = _single_score(battery_name, bits)
         out[feat_name] = p
+
+    # --- maurers universal (reimplementado — ver `_maurers_universal_fixed`)
+    maurer_p, _ = _maurers_universal_fixed(bits)
+    out["nist_maurers_universal"] = maurer_p
 
     # --- binary matrix rank (numba — ver `_binary_matrix_rank_fast`) -------
     rank_p, _ = _binary_matrix_rank_fast(bits)
@@ -700,7 +844,8 @@ def extract_nist_sts(ct: bytes) -> dict[str, float]:
     # --- random excursion (8 estados) --------------------------------------
     n_cycles = _count_cycles(bits)
     if n_cycles >= _MIN_CYCLES_FOR_EXCURSIONS:
-        scores, elig = _multi_score("random_excursion", bits)
+        scores = _random_excursion_fixed(bits)
+        elig = len(scores) > 0
         if elig and len(scores) > 0:
             out["nist_excursions_mean"] = float(np.mean(scores))
             out["nist_excursions_min"] = float(np.min(scores))

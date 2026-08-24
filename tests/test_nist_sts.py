@@ -510,3 +510,106 @@ def test_extract_nist_sts_grain_length_also_works():
     r = extract_nist_sts(ct)
     assert set(r.keys()) == set(_feature_keys())
     assert r["nist_linear_complexity_valid"] == 1.0  # 524.352 / 512 = 1023.75 -> floor 1023 blocos, ainda roda
+
+
+# ---------------------------------------------------------------------------
+# Random Excursion (não-variante) e Maurer's Universal — reimplementados
+# depois que a 4a auditoria (2026-08-23) achou os dois vindo crus do nistrng
+# com erro grave. Ambos validados por RECOMPUTAÇÃO da especificação, não
+# por checagem de intervalo — foi exatamente a checagem de intervalo que
+# deixou o erro de √2 do Variant passar.
+# ---------------------------------------------------------------------------
+
+def test_random_excursion_matches_spec_formula():
+    """
+    SP 800-22 §2.14. O `nistrng` conta cada ciclo com ≥5 visitas em TODOS
+    os 6 buckets (`elif occurrences >= 5` dispara para todo k), o que faz
+    o χ² explodir e o p-value colapsar para 0,0 exato em qualquer
+    sequência — inclusive uniforme.
+    """
+    from scipy.special import gammaincc
+    from src.features.families.nist_sts import (
+        _cycles_from_bits, _excursion_pi, _random_excursion_fixed,
+    )
+    rng = np.random.default_rng(0)
+    bits = rng.integers(0, 2, size=524_416).astype(np.int8)
+
+    obtido = _random_excursion_fixed(bits)
+    cycles, j = _cycles_from_bits(bits)
+    esperado = []
+    for x in (-4, -3, -2, -1, 1, 2, 3, 4):
+        v_k = [0] * 6
+        for cycle in cycles:
+            v_k[min(int(np.count_nonzero(cycle == x)), 5)] += 1
+        pi = _excursion_pi(x)
+        chi = sum(((v_k[k] - j * pi[k]) ** 2) / (j * pi[k]) for k in range(6))
+        esperado.append(float(gammaincc(2.5, chi / 2.0)))
+
+    assert len(obtido) == 8
+    np.testing.assert_allclose(obtido, esperado, rtol=1e-12, atol=1e-12)
+    # E o ponto do bug: NÃO pode ser tudo zero numa sequência uniforme.
+    assert not np.allclose(obtido, 0.0), (
+        "p-values todos zero — é a assinatura do bug de contagem de buckets")
+
+
+def test_excursion_pi_soma_um():
+    """As 6 probabilidades π_k(x) da §2.14 têm de somar 1 para cada estado."""
+    from src.features.families.nist_sts import _excursion_pi
+    for x in list(range(-4, 0)) + list(range(1, 5)):
+        assert abs(sum(_excursion_pi(x)) - 1.0) < 1e-12, f"π(x={x}) não soma 1"
+
+
+def test_maurers_universal_matches_spec_formula():
+    """
+    SP 800-22 §2.9.4 passo 5: σ = c·sqrt(variance(L)/K), com
+    c = 0,7 − 0,8/L + (4 + 32/L)·K^(−3/L)/15.
+
+    O `nistrng` usa σ = sqrt(variance(L)) — sem o `c` e sem o /√K, o que
+    deixa o denominador ~518x maior que o correto e empurra o p-value para
+    perto de 1 em qualquer entrada.
+    """
+    from src.features.families.nist_sts import _maurers_universal_fixed
+    rng = np.random.default_rng(0)
+    n = 524_416
+    bits = rng.integers(0, 2, size=n).astype(np.int8)
+
+    obtido, elegivel = _maurers_universal_fixed(bits)
+    assert elegivel
+
+    # Referência direta da especificação. Para n=524.416 a tabela da §2.9.5
+    # manda L=6 (a faixa de L=7 só começa em 904.960).
+    block_len = 6
+    q = 10 * (2 ** block_len)
+    k = n // block_len - q
+    expected_value, variance = 5.2177052, 2.954
+
+    table = np.zeros(2 ** block_len, dtype=int)
+
+    def valor(i: int) -> int:
+        v = 0
+        for b in bits[i * block_len:(i + 1) * block_len]:
+            v = (v << 1) | int(b)
+        return v
+
+    for i in range(q):
+        table[valor(i)] = i + 1
+    total = 0.0
+    for i in range(q, q + k):
+        v = valor(i)
+        total += math.log2((i + 1) - table[v])
+        table[v] = i + 1
+    fn = total / k
+    c = 0.7 - 0.8 / block_len + (4 + 32 / block_len) * (k ** (-3 / block_len)) / 15
+    esperado = math.erfc(abs(fn - expected_value) / (math.sqrt(2) * c * math.sqrt(variance / k)))
+
+    assert abs(obtido - esperado) < 1e-9, f"obtido={obtido} esperado={esperado}"
+
+
+def test_maurers_escolhe_L_pela_tabela_da_norma():
+    """A §2.9.5 fixa L por faixa de n. Com n=524.416 (nosso CT de 64KB) é
+    L=6 — usar L=7 muda K, c e o valor esperado, e o p-value junto."""
+    from src.features.families.nist_sts import _maurers_universal_fixed
+    rng = np.random.default_rng(1)
+    # Abaixo do mínimo da tabela (387.840): inelegível, não um número errado.
+    p, elegivel = _maurers_universal_fixed(rng.integers(0, 2, size=100_000).astype(np.int8))
+    assert not elegivel and math.isnan(p)
