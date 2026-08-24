@@ -362,7 +362,15 @@ def train_cnn_fixed(
     start_ep = 1
 
     if resume and ckpt and ckpt.exists():
-        start_ep, _, _ = _load_ckpt(ckpt, model, optim, device)
+        # 4 valores: `_load_ckpt` passou a devolver `best_state` junto quando
+        # o checkpoint foi corrigido para preservá-lo. `train_cnn_fixed` treina
+        # por nº FIXO de épocas e não usa `best_*` (não há early stopping
+        # aqui), mas precisa desempacotar os quatro — desempacotar três
+        # levantava `ValueError: too many values to unpack` em TODA retomada,
+        # e esta é justamente a função do modelo final de B/C/E, que grava
+        # checkpoint por época e roda em Kaggle/Colab, onde a sessão expira.
+        # A primeira execução funcionava; qualquer retomada quebrava.
+        start_ep, _, _, _ = _load_ckpt(ckpt, model, optim, device)
         print(f"  Resumindo checkpoint final {cnn_id} epoch {start_ep - 1}")
     else:
         print(f"  Iniciando do zero (modelo final {cnn_id})")

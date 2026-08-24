@@ -154,9 +154,16 @@ def report_eval(
     )
     label_to_name = {str(lbl): name for lbl, name in zip(labels, display_names)}
 
+    # `key_ids` alimenta o bootstrap por CLUSTER (ver `compute_metrics`): o
+    # desenho é agrupado (100 slots por chave) e reamostrar amostras
+    # individuais produz IC estreito demais sob sinal correlacionado à
+    # chave. Como o veredicto primário do projeto é "o IC 95% exclui o
+    # acaso", isso empurraria na direção de falso positivo. Passar aqui faz
+    # TODO caminho herdar a correção sem mudar nenhum runner.
     report = compute_metrics(
         y_true, y_pred, y_proba=y_proba, labels=labels,
         n_bootstrap=n_bootstrap, seed=seed,
+        groups=(np.asarray(key_ids) if key_ids is not None else None),
     )
 
     tag = f"[{run_id} | Caminho {caminho} | {modelo} | braço={braco} | fold={fold}]"

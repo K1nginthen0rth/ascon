@@ -29,7 +29,7 @@ concluído).
 | Dataset | 60k amostras, 100% SPGC | **180k** encadeado (6 "algoritmos" × 30k, incluindo PRNG), 80% texto / 20% imagem |
 | RNG de geração | NumPy PCG64 | CTR_DRBG AES (NIST SP 800-90A), validado por CAVP |
 | Caminhos | A–D | A–F (novo: E=Transformer, F=meta-classificador) |
-| Features | 307 | **641 medidas** (a estimativa de projeto era ~400+): NIST SP 800-22 completo + 5 da literatura + tag/payload, janela comum de 8 bytes. Duas são constantes por construção (Overlapping Template, estruturalmente inelegível em 64KB) — **639 informativas** |
+| Features | 307 | **641 medidas** (a estimativa de projeto era ~400+): NIST SP 800-22 completo + 5 da literatura + tag/payload, janela comum de 8 bytes. Três são constantes por construção em 64KB (`nist_overlapping_template` + `_valid`, teste inelegível; `nist_linear_complexity_valid`, sempre 1) — **638 informativas** |
 | Seletor | VT bruto → MI top-k → mRMR → Boruta(diag) | z-score → VT → MI (corte generoso, não-estatístico) → mRMR → Boruta(diag) |
 | Controle positivo | Vigenère | AES-128-ECB vs Ascon (resposta direta ao SBSeg) |
 | Controles negativos | — (nunca executados) | 🔶 PRNG puro + embaralhamento de bytes |
@@ -50,7 +50,7 @@ concluído).
 
 ## Estado atual (2026-08-22) — todo o código está implementado
 
-**Fases 0–11 têm código completo e testado (253/253 testes).** O gargalo
+**Fases 0–11 têm código completo e testado (256/256 testes).** O gargalo
 agora é rodar, não escrever: a extração de features nas 180k amostras
 reais leva ~20h por braço (`controlado`/`cru`/`shuffled`), e os Caminhos
 B/C/E dependem de sessão de GPU (Kaggle/Colab). Sequência exata de

@@ -126,10 +126,12 @@ distribuição real de J.
 
 **Consequência para o texto:** "rodamos a suíte NIST SP 800-22 completa"
 precisa da ressalva de que 2 dos 15 testes valem em ~metade das amostras,
-e 1 (Overlapping Template) em nenhuma. **Features informativas reais: 639
-de 641** — `nist_overlapping_template` e `_valid` são constantes por
-construção (o VT as descarta, então o efeito prático é nulo, mas o número
-que vai para o texto é 639).
+e 1 (Overlapping Template) em nenhuma. **Features informativas reais: 638 de 641** — três são constantes por
+construção em 64KB: `nist_overlapping_template` (sempre 0,5, teste
+estruturalmente inelegível), `nist_overlapping_template_valid` (sempre 0)
+e `nist_linear_complexity_valid` (sempre 1, pois 524.416/512 = 1024
+blocos exatos em qualquer amostra). O VT as descarta, então o efeito
+prático é nulo — mas **638** é o número que vai para o texto.
 
 **Templates: estatísticas agregadas, não 158 colunas** — média, desvio
 padrão e mínimo do p-value entre templates, como decidido em

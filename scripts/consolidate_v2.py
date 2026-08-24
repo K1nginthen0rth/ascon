@@ -150,9 +150,33 @@ def load_all_metrics(drop_non_official: bool = True) -> pd.DataFrame:
     return df
 
 
+# Comparações onde um resultado positivo é ARTEFATO CONHECIDO, não achado.
+# O Grain tem len_ct=65.544 e os demais 65.552; no braço `cru` (que existe
+# justamente para MEDIR esse artefato) seis features são função exata do
+# comprimento e separam com AUC 1,0000. Um classificador que separa por
+# comprimento acerta 100% em toda chave e em toda fonte de plaintext, então
+# a estratificação de erro — que testa dispersão por `key_id` e por
+# `plaintext_source` — vê dispersão zero e NÃO levanta bandeira. Sem esta
+# marcação, o consolidado apresentaria artefato puro como resultado
+# exploratório significativo, sem nenhum aviso (achado 2026-08-24).
+_ARTEFATO_COMPRIMENTO = "cru + comparação com Grain (separação por len_ct)"
+
+
+def _e_artefato_conhecido(df: pd.DataFrame) -> pd.Series:
+    braco_cru = df["braco"].astype(str).str.startswith("cru")
+    envolve_grain = (
+        df["run_id"].astype(str).str.contains("Grain", case=False)
+        # o 4class inclui o Grain entre as 4 classes
+        | df["run_id"].astype(str).str.contains("_4class")
+    )
+    return braco_cru & envolve_grain
+
+
 def add_verdicts(df: pd.DataFrame) -> pd.DataFrame:
     """Acaso, veredicto pelo IC e p-value aproximado a partir do IC."""
     df = df.copy()
+    df["artefato_conhecido"] = np.where(
+        _e_artefato_conhecido(df), _ARTEFATO_COMPRIMENTO, "")
     df["acaso"] = df["n_classes"].map(chance_level)
     df["acima_do_acaso"] = df["f1_ci_lo"] > df["acaso"]
     df["abaixo_do_acaso"] = df["f1_ci_hi"] < df["acaso"]
@@ -412,7 +436,7 @@ def main() -> None:
                     "acaso", "acima_do_acaso", "p_value", "n_samples"]
     cols_expl = ["run_id", "caminho", "modelo", "braco", "fold", "f1_macro",
                  "f1_ci_lo", "f1_ci_hi", "acaso", "p_value", "q_value",
-                 "significativo_fdr"]
+                 "significativo_fdr", "artefato_conhecido"]
 
     REPORTS.mkdir(parents=True, exist_ok=True)
     pd.concat([primary.assign(familia="primaria"),
@@ -444,6 +468,18 @@ def main() -> None:
                 "`significativo_fdr` marca o que sobrevive à correção. "
                 "Bonferroni global mataria qualquer efeito real nesta escala "
                 "de testes, por isso FDR.\n\n")
+        n_artefato = int((exploratory["artefato_conhecido"] != "").sum())
+        if n_artefato:
+            f.write(f"> ⚠️ **{n_artefato} linha(s) marcada(s) como "
+                    f"`artefato_conhecido`**: braço `cru` em comparação que "
+                    f"envolve o Grain. O Grain tem `len_ct` 8 bytes menor, e "
+                    f"seis features são função exata do comprimento (AUC "
+                    f"1,0000 medido) — um F1 alto aí é o artefato que o braço "
+                    f"`cru` existe para medir, **não** um achado sobre o "
+                    f"algoritmo. A estratificação de erro não pega isso "
+                    f"sozinha: separação por comprimento acerta 100% em toda "
+                    f"chave e toda fonte de plaintext, então a dispersão é "
+                    f"zero. Nunca reporte essas linhas como sinal.\n\n")
         f.write(md_table(
             exploratory.sort_values("p_value", na_position="last").head(80),
             cols_expl))

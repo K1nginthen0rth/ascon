@@ -346,3 +346,35 @@ def test_selector_transform_imputa_nan():
     X_nan[0, :] = np.nan
     out = sel.transform(X_nan)
     assert np.isfinite(out).all(), "transform propagou NaN"
+
+
+def test_train_cnn_fixed_retoma_de_checkpoint(tmp_path):
+    """
+    **B1 (bloqueador).** `train_cnn_fixed` desempacotava 3 valores de
+    `_load_ckpt`, que devolve 4 desde a correção do `best_state` — toda
+    RETOMADA levantava `ValueError: too many values to unpack`. É a função
+    do modelo final de B/C/E, que grava checkpoint por época e roda em
+    Kaggle/Colab, onde a sessão expira: a primeira execução passava e
+    qualquer retomada quebrava. O teste existente cobria `train_cnn`, não
+    esta — por isso passou pelas 253.
+    """
+    import os
+    import torch
+    from src.models.cnn2d import CiphertextCNN2D
+    from src.models.hybrid import (
+        CiphertextCoocDataset, _ckpt_path, _save_ckpt, train_cnn_fixed,
+    )
+
+    rng = np.random.default_rng(0)
+    cts = [os.urandom(2000) for _ in range(16)]
+    ds = CiphertextCoocDataset(cts, rng.integers(0, 4, 16))
+
+    model = CiphertextCNN2D(n_classes=4)
+    optim = torch.optim.Adam(model.parameters())
+    _save_ckpt(_ckpt_path(tmp_path, 99, "x"), 1, 99, model, optim,
+               best_val=0.5, best_epoch=1, best_state=None)
+
+    # Não deve levantar — antes da correção, ValueError aqui.
+    out = train_cnn_fixed(model, ds, n_epochs=2, device="cpu", seed=7,
+                          fold_id=99, cnn_id="x", ckpt_dir=tmp_path, batch_size=8)
+    assert out is not None

@@ -180,3 +180,51 @@ def test_as_dict_includes_new_fields() -> None:
     assert "accuracy" in d
     assert "per_class" in d
     assert d["auc_roc"]["auc_per_class"] is not None
+
+
+def test_bootstrap_por_cluster_alarga_o_ic_sob_efeito_de_chave():
+    """
+    **M1 (achado 2026-08-24).** O desenho é agrupado (100 slots por chave) e
+    todo o protocolo reconhece isso — menos o bootstrap, que reamostrava
+    amostras individuais. Sob sinal correlacionado à chave o IC i.i.d. sai
+    estreito demais, e o veredicto primário do projeto é "o IC 95% exclui o
+    acaso": erra na direção do falso positivo.
+
+    Sob H₀ pura os dois coincidem (é por isso que o bug era invisível);
+    com efeito de chave, o IC por cluster tem de ser sensivelmente mais
+    largo.
+    """
+    rng = np.random.default_rng(0)
+    n_keys, n_slots = 60, 100
+    key_effect = rng.normal(0, 0.10, n_keys)      # ICC ~ 0,01
+
+    y_true, y_pred, groups = [], [], []
+    for k in range(n_keys):
+        p_acc = float(np.clip(0.25 + key_effect[k], 0.05, 0.95))
+        for _ in range(n_slots):
+            t = int(rng.integers(0, 4))
+            hit = rng.random() < p_acc
+            y_true.append(t)
+            y_pred.append(t if hit else (t + int(rng.integers(1, 4))) % 4)
+            groups.append(f"k{k}")
+
+    y_true = np.array(y_true); y_pred = np.array(y_pred); groups = np.array(groups)
+    iid = compute_metrics(y_true, y_pred, labels=[0, 1, 2, 3], n_bootstrap=300)
+    clu = compute_metrics(y_true, y_pred, labels=[0, 1, 2, 3], n_bootstrap=300,
+                          groups=groups)
+
+    largura_iid = iid.f1_macro_ci[1] - iid.f1_macro_ci[0]
+    largura_clu = clu.f1_macro_ci[1] - clu.f1_macro_ci[0]
+    assert largura_clu > 1.5 * largura_iid, (
+        f"IC por cluster deveria ser bem mais largo sob efeito de chave: "
+        f"i.i.d.={largura_iid:.4f} cluster={largura_clu:.4f}")
+    # A estimativa pontual não muda — só a incerteza.
+    assert iid.f1_macro == clu.f1_macro
+
+
+def test_bootstrap_por_cluster_valida_tamanho_de_groups():
+    rng = np.random.default_rng(0)
+    y = rng.integers(0, 2, 50)
+    with pytest.raises(ValueError, match="groups"):
+        compute_metrics(y, y, labels=[0, 1], n_bootstrap=10,
+                        groups=np.array(["a"] * 10))

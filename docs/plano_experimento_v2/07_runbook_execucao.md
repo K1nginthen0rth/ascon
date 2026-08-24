@@ -17,7 +17,7 @@ estimados, exceto onde marcado.
 ```bash
 # extensões C (MSVC): Ascon, GIFT-COFB, Grain, Schwaemm
 build_cffi.bat && build_gift_cofb.bat && build_grain.bat && build_sparkle.bat
-pytest tests/ -q          # esperado: 253 passed
+pytest tests/ -q          # esperado: 256 passed
 ```
 
 Repos de referência C (`ascon-c/`, `gift-cofb/`, `grain-128aead/`,

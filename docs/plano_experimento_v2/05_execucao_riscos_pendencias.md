@@ -275,3 +275,141 @@ chave resolve. **Continua pendente de decisão** (§P do 06).
   resultado.
 
 253/253 testes.
+
+## 5.12 Sexta auditoria (2026-08-24) — IA/Ciência de Dados
+
+Auditoria feita direto no código, sem se apoiar em relatórios anteriores.
+Confirmou de forma independente: 253 testes, 641 features sem NaN/Inf,
+dataset 180k com encadeamento e nonces íntegros, decrypt 30/30, KAT
+1089/1089 nos 4, CAVP 240/240, folds disjuntos, e os 6 caminhos
+implementados. Também confirmou que **nenhum resultado experimental do v2
+existe no repositório** — a validação é de desenho e código.
+
+### Corrigido
+
+**B1 [BLOQUEADOR] — `train_cnn_fixed` quebrava em TODA retomada.**
+Desempacotava 3 valores de `_load_ckpt`, que devolve 4 desde a correção do
+`best_state`: `ValueError: too many values to unpack`. Reproduzi. É a
+função do modelo final de B/C/E, que grava checkpoint por época e roda em
+Kaggle/Colab — a primeira execução passava, qualquer retomada morria. O
+teste existente cobria `train_cnn`, não esta; por isso passou pelas 253.
+
+**M1 [o mais importante] — toda a inferência ignorava o agrupamento por
+chave.** O bootstrap reamostrava amostras individuais num desenho com 100
+slots por chave; `key_ids` chegava ao `report_eval` e era persistido, mas
+nunca usado. Reproduzi o impacto: com efeito de chave (ICC~0,01) o IC por
+cluster fica **2,25x mais largo** que o i.i.d. Sob H₀ pura os dois
+coincidem — ou seja, **o método antigo só estava correto sob a hipótese
+que um resultado positivo violaria**. Como o veredicto primário é "o IC
+95% exclui o acaso", errava na direção do falso positivo. `compute_metrics`
+ganhou `groups=`, e o `report_eval` passa `key_ids` automaticamente —
+todo caminho herda a correção sem mudar runner nenhum. Sem `groups`, o
+comportamento antigo é preservado.
+
+**M2 — o detector de artefato era cego ao artefato mais provável.** O
+runbook manda rodar `pairs`/`4class` no braço `cru`, e os 3 pares com
+Grain sairão com F1≈1,0 e `significativo_fdr=True` por separação de
+comprimento. A estratificação de erro não pega: um classificador que
+separa por comprimento acerta 100% em toda chave e toda fonte de
+plaintext, então dispersão e desvio são zero. Adicionada a coluna
+`artefato_conhecido` (braço `cru` + comparação com Grain) e um aviso no
+consolidado.
+
+**M3 — o teste de permutação não cobria a seleção de features.** O
+seletor era fitado uma vez com os rótulos VERDADEIROS e reusado nas 20
+permutações, então o nulo media a variabilidade do classificador sobre um
+conjunto de features já escolhido com informação do rótulo — não a da
+pipeline (Ojala & Garriga 2010). Corrigido: seletor refitado dentro de
+cada permutação. **N_PERM 20 → 200** (com 20 o menor p obtenível é
+1/21≈0,048, perto demais de α=0,05 para um nulo que sustenta a conclusão
+principal); o XGBoost saiu do laço para viabilizar o custo — a LR sozinha
+caracteriza o nulo.
+
+**M5 — os caminhos profundos rodavam sem controle positivo.** `--analysis`
+adicionado a `run_v2_caminhos_bce.py` (`4class` / `ecb_control` /
+`prng_control`). Sem isso, um F1≈0,25 em B/C/E não distinguia "não há
+sinal" de "esta arquitetura, com este orçamento, não aprende nada".
+Validado ponta a ponta.
+
+**N1** — `_prepare` do seletor imputava só NaN enquanto o `transform` já
+sanitizava NaN e ±inf; as duas metades agora concordam.
+
+### Registrado como limitação (não corrigido)
+
+**M4 — Caminho D treina em latentes in-sample.** O híbrido treina com
+`fold{fi}_train` (latentes da rede que viu aquelas amostras) e valida com
+`fold{fi}` (out-of-sample). A correção anterior resolveu um problema real
+(espaços latentes incompatíveis entre folds) mas trocou por outro: as
+colunas de treino são sistematicamente mais separáveis, o RF confia demais
+nelas e a métrica de validação fica **pessimista**. Sob H₀ enviesa na
+direção segura (erro tipo II), mas compromete a afirmação "o híbrido não
+agrega sinal" — pode ser desalinhamento de representação. O correto seria
+latentes OOF por split interno ao fold. **Precisa constar como limitação
+no texto.**
+
+**M6 — o ECE de LinearSVC/SVM-RBF não é medida de calibração.**
+`get_proba` converte `decision_function` por softmax: preserva ranking
+(AUC vale) mas a saída não é probabilidade, então o ECE mede a distância
+entre acurácia e uma margem reescalada arbitrariamente. O Caminho F
+recalibra explicitamente, então não se propaga — mas o ECE desses dois
+modelos no `.jsonl` e no console é ruído com aparência de métrica. Não
+citar.
+
+**§5 do relatório — o SVM-RBF é muito mais caro que o orçado.** O plano
+contabiliza a busca de hiperparâmetros (corrigida por subamostra) mas
+**não o fit final no fold completo**. Escalabilidade medida (150
+features): 2k→0,3s, 4k→1,3s, 8k→8,1s, 16k→58,5s, expoente empírico
+n^2,85. Extrapolando: ~1,4h por fold (76.800) e ~2,7h no modelo final
+(96.000) — só o SVM do 4-classes ≈10h, com os 6 pares ≈18h. Pior: o
+`StackingClassifier` inclui um SVC como base com `cv=3` → 4 fits de SVC
+por chamada × 36 rodadas ≈ mais 12-15h. **O Caminho A completo deve ficar
+entre 40 e 80h de CPU, não "na ordem de horas".** É decisão de
+planejamento: reduzir a grade, subamostrar também o fit final, ou aceitar
+o custo. **PENDENTE.**
+
+### Menores registrados
+
+**N2** — 3 features são estruturalmente constantes
+(`nist_overlapping_template`, `_valid`, `nist_linear_complexity_valid`):
+**638 efetivas**, não 641 (a auditoria anterior tinha contado 639;
+`linear_complexity_valid` também é constante em 64KB).
+**N3** — vazamento leve de comprimento sobrevive no braço primário via
+`tag_region` (que por desenho usa o CT cru): d≈0,03σ em
+`payload_rest_max_freq`, AUC≈0,508. Detectável por teste t com 30k
+amostras, irrelevante para classificação — mas é assimetria sistemática de
+comprimento no braço que existe para eliminá-la.
+**N4** — o HP search de B/C/E usa o fold 0, que depois volta como fold de
+CV; o fold 0 fica otimista (não contamina o teste).
+**N5** — o split do smoke não respeita chave (é gate de tempo/VRAM, mas
+grava métrica).
+**N6** — no Caminho F o calibrador isotônico e o meta-modelo compartilham
+as mesmas linhas; enviesa para pessimista.
+**N7** — McNemar usa χ² com correção de continuidade mesmo com poucas
+discordâncias; o recomendado é binomial exato para n<25.
+**N8** — o parquet `..._features_sintetico.parquet` não tem script
+versionado que o gere, e seus valores são N(0,1) puro (o real é ~0,0039 no
+`byte_hist_000`): valida encanamento, não o comportamento numérico do
+VT/mRMR nas escalas reais.
+
+### Observações de desenho (entram nas limitações do texto)
+
+- **O Caminho E é cego para a tag** (`max_len=65536` = só payload),
+  enquanto o próprio projeto argumenta que a tag é o lugar mais provável
+  de assinatura residual. O caminho de maior capacidade é o único sem
+  acesso a ela.
+- **A co-ocorrência 256×256 tem SNR estruturalmente ruim**: 65.543
+  bigramas em 65.536 células ≈ 1 contagem/célula, ruído de Poisson puro.
+  As 4 variantes de condicionamento corrigem escala, não SNR. Um nulo no
+  Caminho C pode ser propriedade da representação.
+- **`hamming` é derivável linearmente do histograma** — colinearidade
+  perfeita com 256 features já presentes. É escolha de fidelidade à
+  réplica E07; o texto não deve tratá-la como família independente.
+- **Nonces de baixa entropia**: o contador global vai a 30.000, então todo
+  nonce de 16 bytes tem 14 bytes zerados (30 de 32 no Schwaemm). Isso é
+  FAVORÁVEL ao atacante — mais estrutura compartilhada. Um nulo sob essa
+  condição é mais forte, não mais fraco; e não se transporta
+  automaticamente para nonces aleatórios. Vale dizer as duas coisas.
+- **2 plaintexts sobrepostos** entre trainval e teste (0,03%): o texto
+  deve dar o número, não "sem sobreposição".
+
+254/254 testes.

@@ -919,7 +919,13 @@ def analysis_family_ablation(df, folds, branch, out_dir, classes=None, n_bootstr
 # Teste de permutação — nulo empírico (06 Fase 6.8)
 # ---------------------------------------------------------------------------
 
-N_PERM = 20
+# 200 permutações: com 20, o menor p-valor obtenível é 1/21 ≈ 0,048 — perto
+# demais de α=0,05 para um nulo que sustenta a conclusão principal — e
+# estimar o percentil 97,5 com 20 pontos é muito instável. Com 200, o piso
+# cai para ~0,005. O XGBoost foi retirado do laço (500 árvores x 200
+# permutações x 2 esquemas era proibitivo); a LR sozinha basta para
+# caracterizar o nulo, e o XGBoost segue reportado nas análises normais.
+N_PERM = 200
 SEED_PERM = 101
 
 
@@ -982,34 +988,41 @@ def analysis_permutation(df, folds, branch, out_dir, classes=None,
     groups = trainval_df["key_id"].to_numpy()
     uniq_keys = np.unique(groups)
 
-    sel = LWCFeatureSelector(_selector_config())
-    sel.fit(X_tv_raw, y_tv, feature_names=feat_cols)
-    X_tv, X_te = sel.transform(X_tv_raw), sel.transform(X_te_raw)
-    scaler = StandardScaler().fit(X_tv)
-    X_tv_s, X_te_s = scaler.transform(X_tv), scaler.transform(X_te)
-
     rng = np.random.default_rng(SEED_PERM)
     results: dict[str, dict] = {}
     for scheme in ("by_key", "within_key"):
         print(f"\n{'=' * 70}\nTESTE DE PERMUTAÇÃO — esquema '{scheme}' "
-              f"({N_PERM} repetições)\n{'=' * 70}")
-        null_f1: dict[str, list[float]] = {"LogisticRegression": [], "XGBoost": []}
+              f"({N_PERM} repetições, pipeline COMPLETA por permutação)"
+              f"\n{'=' * 70}")
+        null_f1: dict[str, list[float]] = {"LogisticRegression": []}
         for rep in range(N_PERM):
             if scheme == "by_key":
                 y_shuf = _shuffle_by_key(rng, groups, uniq_keys, len(classes))
             else:
                 y_shuf = _shuffle_within_key(rng, groups, y_tv)
 
-            lr = LogisticRegression(max_iter=2000, random_state=SEED_MODEL).fit(X_tv_s, y_shuf)
-            xg = XGBClassifier(n_estimators=500, max_depth=6, learning_rate=0.1,
-                               random_state=SEED_MODEL, n_jobs=-1, eval_metric="mlogloss",
-                               tree_method="hist").fit(X_tv, y_shuf)
+            # **Seletor refitado DENTRO da permutação** (correção 2026-08-24).
+            # A versão anterior fitava o seletor UMA vez com os rótulos
+            # VERDADEIROS e reusava nas 20 permutações — o nulo media então a
+            # variabilidade do classificador sobre um conjunto de features já
+            # escolhido com informação do rótulo, não a variabilidade da
+            # PIPELINE. Ojala & Garriga (2010) exigem refazer todo o
+            # procedimento sob rótulos permutados; do contrário o nulo sai
+            # otimista e o teste perde justamente o que deveria capturar (o
+            # seletor "encontrar" sinal em ruído).
+            sel_perm = LWCFeatureSelector(_selector_config())
+            sel_perm.fit(X_tv_raw, y_shuf, feature_names=feat_cols)
+            X_tv_p = sel_perm.transform(X_tv_raw)
+            X_te_p = sel_perm.transform(X_te_raw)
+            scaler_p = StandardScaler().fit(X_tv_p)
 
-            f_lr = float(f1_score(y_te, lr.predict(X_te_s), average="macro", zero_division=0))
-            f_xg = float(f1_score(y_te, xg.predict(X_te), average="macro", zero_division=0))
+            lr = LogisticRegression(max_iter=2000, random_state=SEED_MODEL).fit(
+                scaler_p.transform(X_tv_p), y_shuf)
+            f_lr = float(f1_score(y_te, lr.predict(scaler_p.transform(X_te_p)),
+                                  average="macro", zero_division=0))
             null_f1["LogisticRegression"].append(f_lr)
-            null_f1["XGBoost"].append(f_xg)
-            print(f"  [perm {rep + 1:02d}/{N_PERM}] LR={f_lr:.4f}  XGB={f_xg:.4f}")
+            if (rep + 1) % 10 == 0 or rep == 0:
+                print(f"  [perm {rep + 1:03d}/{N_PERM}] LR={f_lr:.4f}", flush=True)
 
         results[scheme] = {
             m: {"mean": float(np.mean(v)), "std": float(np.std(v)),
@@ -1021,10 +1034,15 @@ def analysis_permutation(df, folds, branch, out_dir, classes=None,
     out_path = out_dir / f"{DATASET_ID}_permutation_null.json"
     out_path.write_text(
         json.dumps({"n_perm": N_PERM, "seed": SEED_PERM, "classes": classes,
+                   "p_minimo_obtenivel": round(1.0 / (N_PERM + 1), 5),
+                   "pipeline_refitada_por_permutacao": True,
+                   "modelos": ["LogisticRegression"],
                    "schemes": results}, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
     print(f"\nNulo empírico salvo em {out_path}")
+    print(f"  menor p-valor obtenível com N_PERM={N_PERM}: "
+          f"{1.0 / (N_PERM + 1):.5f}")
 
 
 ANALYSES = {

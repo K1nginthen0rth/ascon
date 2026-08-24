@@ -59,6 +59,20 @@ FOLDS_JSON = PROCESSED / "v2_folds.json"
 OUT_ROOT = REPO_ROOT / "reports" / "v2"
 
 REAL_ALGORITHMS = ["Ascon-AEAD128", "GIFT-COFB", "Grain-128AEAD", "Schwaemm256-128"]
+
+# **Controle positivo dos caminhos profundos** (adicionado 2026-08-24). O
+# AES-ECB valida a pipeline do Caminho A, mas nada validava que CNN1D/CNN2D/
+# Transformer detectariam sinal SE ele existisse: se B/C/E derem F1≈0,25, não
+# havia como distinguir "não há sinal" de "esta arquitetura, com este
+# orçamento de treino, não aprende nada". O AES-ECB tem fraqueza estrutural
+# conhecida (codebook determinístico), então uma rede que não o separa do
+# Ascon está quebrada ou subtreinada — e um nulo nos 4 algoritmos reais
+# passa a ser defensável em vez de frágil.
+ANALISES_BCE = {
+    "4class": REAL_ALGORITHMS,
+    "ecb_control": ["AES-128-ECB", "Ascon-AEAD128"],
+    "prng_control": ["PRNG", "Ascon-AEAD128"],
+}
 CONTROLLED_LEN = 65544
 MAX_LEN_FULL = 65552
 
@@ -351,12 +365,13 @@ def run_smoke_cnn2d_conditioning(
 
 
 def run_smoke(path: str, branch: str, device: str, out_dir: Path,
-              n_samples: int, epochs: int, batch_size: int, cond: str = "sum1") -> None:
+              n_samples: int, epochs: int, batch_size: int, cond: str = "sum1", classes: list[str] | None = None) -> None:
     """Gate: mede tempo/VRAM/param antes de comprometer GPU em CV longa."""
+    classes = classes or classes
     folds = load_folds()
     keys = set(folds["folds"][0]["train_keys"][:6]) | set(folds["folds"][0]["val_keys"][:3])
     print(f"[smoke {path}] carregando até {n_samples} amostras de {len(keys)} chaves...")
-    cts, y, sids, kids = load_cts(keys, REAL_ALGORITHMS, branch, max_samples=n_samples)
+    cts, y, sids, kids = load_cts(keys, classes, branch, max_samples=n_samples)
     print(f"[smoke {path}] {len(cts)} amostras, classes={np.bincount(y).tolist()}")
 
     n_val = max(1, len(cts) // 5)
@@ -364,7 +379,7 @@ def run_smoke(path: str, branch: str, device: str, out_dir: Path,
     tr_ds = make_dataset(path, cts[n_val:], y[n_val:], branch, cond=cond, cond_stats=cond_stats)
     va_ds = make_dataset(path, cts[:n_val], y[:n_val], branch, cond=cond, cond_stats=cond_stats)
 
-    model = build_model(path, len(REAL_ALGORITHMS), branch).to(device)
+    model = build_model(path, len(classes), branch).to(device)
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"[smoke {path}] parâmetros treináveis: {n_params:,}")
 
@@ -393,7 +408,7 @@ def run_smoke(path: str, branch: str, device: str, out_dir: Path,
         braco=branch, fold="smoke",
         y_true=y[:n_val], y_pred=logits.argmax(1), y_proba=softmax(logits),
         sample_ids=sids[:n_val], key_ids=kids[:n_val],
-        class_names=REAL_ALGORITHMS, labels=list(range(len(REAL_ALGORITHMS))),
+        class_names=classes, labels=list(range(len(classes))),
         out_dir=out_dir, n_bootstrap=200,
         extra={"n_params": n_params, "s_per_epoch": round(per_epoch, 1),
                "est_cv_hours": round(est_cv_h, 2), "best_epoch": best_ep,
@@ -403,16 +418,17 @@ def run_smoke(path: str, branch: str, device: str, out_dir: Path,
 
 def run_cv(path: str, branch: str, device: str, out_dir: Path,
            epochs: int, batch_size: int, hp: dict | None = None,
-           max_train: int | None = None, cond: str = "sum1") -> None:
+           max_train: int | None = None, cond: str = "sum1", classes: list[str] | None = None) -> None:
+    classes = classes or classes
     folds = load_folds()
     for fold_spec in folds["folds"]:
         fi = fold_spec["fold"]
         tr_keys, va_keys = set(fold_spec["train_keys"]), set(fold_spec["val_keys"])
         print(f"\n[{path} fold {fi}] carregando {len(tr_keys)} chaves treino / "
               f"{len(va_keys)} val...")
-        cts_tr, y_tr, sid_tr, kid_tr = load_cts(tr_keys, REAL_ALGORITHMS, branch,
+        cts_tr, y_tr, sid_tr, kid_tr = load_cts(tr_keys, classes, branch,
                                       max_samples=max_train)
-        cts_va, y_va, sid_va, kid_va = load_cts(va_keys, REAL_ALGORITHMS, branch)
+        cts_va, y_va, sid_va, kid_va = load_cts(va_keys, classes, branch)
         print(f"  treino={len(cts_tr)} val={len(cts_va)} "
               f"(~{len(cts_tr) * 65552 / 1e9:.1f} GB de CT em RAM no treino)")
 
@@ -420,7 +436,7 @@ def run_cv(path: str, branch: str, device: str, out_dir: Path,
                      if (path == "C" and cond == "standardized") else (0.0, 1.0))
         tr_ds = make_dataset(path, cts_tr, y_tr, branch, cond=cond, cond_stats=cond_stats)
         va_ds = make_dataset(path, cts_va, y_va, branch, cond=cond, cond_stats=cond_stats)
-        model = build_model(path, len(REAL_ALGORITHMS), branch, hp).to(device)
+        model = build_model(path, len(classes), branch, hp).to(device)
         n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
         t0 = time.perf_counter()
@@ -439,7 +455,7 @@ def run_cv(path: str, branch: str, device: str, out_dir: Path,
             braco=branch, fold=fi,
             y_true=y_va, y_pred=logits.argmax(1), y_proba=softmax(logits),
             sample_ids=sid_va, key_ids=kid_va,
-            class_names=REAL_ALGORITHMS, labels=list(range(len(REAL_ALGORITHMS))),
+            class_names=classes, labels=list(range(len(classes))),
             out_dir=out_dir, extra={
                 "n_params": n_params, "best_epoch": best_ep,
                 "train_time_s": round(time.perf_counter() - t0, 1),
@@ -470,7 +486,7 @@ def run_cv(path: str, branch: str, device: str, out_dir: Path,
 
 def run_final(path: str, branch: str, device: str, out_dir: Path,
               epochs: int, batch_size: int, hp: dict | None = None,
-              max_train: int | None = None, cond: str = "sum1") -> None:
+              max_train: int | None = None, cond: str = "sum1", classes: list[str] | None = None) -> None:
     """
     Modelo final: trainval completo -> teste. 3 seeds só no braço
     controlado (primário); no cru, seed 7 apenas.
@@ -490,9 +506,9 @@ def run_final(path: str, branch: str, device: str, out_dir: Path,
     """
     folds = load_folds()
     tv_keys, te_keys = set(folds["trainval_keys"]), set(folds["test_keys"])
-    cts_tv, y_tv, sid_tv, kid_tv = load_cts(tv_keys, REAL_ALGORITHMS, branch,
+    cts_tv, y_tv, sid_tv, kid_tv = load_cts(tv_keys, classes, branch,
                                             max_samples=max_train)
-    cts_te, y_te, sid_te, kid_te = load_cts(te_keys, REAL_ALGORITHMS, branch)
+    cts_te, y_te, sid_te, kid_te = load_cts(te_keys, classes, branch)
     cond_stats = (fit_standardization_stats(cts_tv)
                  if (path == "C" and cond == "standardized") else (0.0, 1.0))
     tr_ds = make_dataset(path, cts_tv, y_tv, branch, cond=cond, cond_stats=cond_stats)
@@ -501,7 +517,7 @@ def run_final(path: str, branch: str, device: str, out_dir: Path,
 
     seeds = FINAL_SEEDS if branch == "controlado" else [SEED_MODEL]
     for seed in seeds:
-        model = build_model(path, len(REAL_ALGORITHMS), branch, hp).to(device)
+        model = build_model(path, len(classes), branch, hp).to(device)
         n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
         t0 = time.perf_counter()
         model = train_cnn_fixed(
@@ -519,7 +535,7 @@ def run_final(path: str, branch: str, device: str, out_dir: Path,
             braco=branch, fold=f"final_seed{seed}",
             y_true=y_te, y_pred=logits.argmax(1), y_proba=softmax(logits),
             sample_ids=sid_te, key_ids=kid_te,
-            class_names=REAL_ALGORITHMS, labels=list(range(len(REAL_ALGORITHMS))),
+            class_names=classes, labels=list(range(len(classes))),
             out_dir=out_dir, extra={
                 "n_params": n_params, "seed": seed, "n_epochs_fixed": n_epochs,
                 "train_time_s": round(time.perf_counter() - t0, 1),
@@ -544,7 +560,7 @@ def run_final(path: str, branch: str, device: str, out_dir: Path,
 
 def run_hpsearch(path: str, branch: str, device: str, out_dir: Path,
                  epochs: int, batch_size: int, n_configs: int,
-                 cond: str = "sum1") -> None:
+                 cond: str = "sum1", classes: list[str] | None = None) -> None:
     """8-12 configs aleatórias x 1 fold (decisão C3 do planejamento).
     Registra todas; a vencedora por F1 de validação vai para a CV.
 
@@ -556,8 +572,8 @@ def run_hpsearch(path: str, branch: str, device: str, out_dir: Path,
     rng = np.random.default_rng(SEED_MODEL)
     folds = load_folds()
     fold_spec = folds["folds"][0]
-    cts_tr, y_tr, _, _ = load_cts(set(fold_spec["train_keys"]), REAL_ALGORITHMS, branch)
-    cts_va, y_va, sid_va, kid_va = load_cts(set(fold_spec["val_keys"]), REAL_ALGORITHMS, branch)
+    cts_tr, y_tr, _, _ = load_cts(set(fold_spec["train_keys"]), classes, branch)
+    cts_va, y_va, sid_va, kid_va = load_cts(set(fold_spec["val_keys"]), classes, branch)
     cond_stats = (fit_standardization_stats(cts_tr)
                  if (path == "C" and cond == "standardized") else (0.0, 1.0))
     tr_ds = make_dataset(path, cts_tr, y_tr, branch, cond=cond, cond_stats=cond_stats)
@@ -581,7 +597,7 @@ def run_hpsearch(path: str, branch: str, device: str, out_dir: Path,
         lr = float(rng.choice([1e-3, 5e-4, 1e-4]))
         print(f"\n[hpsearch {path} cfg {ci}] {hp} lr={lr}")
 
-        model = build_model(path, len(REAL_ALGORITHMS), branch, hp).to(device)
+        model = build_model(path, len(classes), branch, hp).to(device)
         model, best_ep = train_cnn(
             model, tr_ds, va_ds, device=device, lr=lr, n_epochs=epochs, patience=3,
             seed=SEED_MODEL, cnn_id=f"hp_{path}_{ci}", batch_size=batch_size,
@@ -593,7 +609,7 @@ def run_hpsearch(path: str, branch: str, device: str, out_dir: Path,
             modelo=f"{path}_cfg{ci}", braco=branch, fold=0,
             y_true=y_va, y_pred=logits.argmax(1), y_proba=softmax(logits),
             sample_ids=sid_va, key_ids=kid_va,
-            class_names=REAL_ALGORITHMS, labels=list(range(len(REAL_ALGORITHMS))),
+            class_names=classes, labels=list(range(len(classes))),
             out_dir=out_dir, n_bootstrap=200,
             extra={"hp": hp, "lr": lr, "best_epoch": best_ep, "cond": cond,
                    "n_params": sum(p.numel() for p in model.parameters())},
@@ -731,6 +747,12 @@ def main() -> None:
                         "de 13-16GB. O valor usado é registrado no relatório.")
     p.add_argument("--hp-json", default=None,
                    help="JSON com a config vencedora do hpsearch (modo cv/final).")
+    p.add_argument("--analysis", default="4class", choices=list(ANALISES_BCE),
+                   help="Conjunto de classes. `ecb_control` (AES-ECB vs Ascon) é "
+                        "o CONTROLE POSITIVO dos caminhos profundos: sem ele, um "
+                        "F1≈0,25 em B/C/E não distingue 'não há sinal' de 'esta "
+                        "arquitetura não aprende nada'. Rode-o antes de reportar "
+                        "qualquer nulo.")
     p.add_argument("--cond", default="sum1", choices=list(COND_VARIANTS),
                    help="Variante de condicionamento do Caminho C (06 Fase 7). "
                         "Ignorado para B/E. Com --mode smoke e --path C, "
@@ -751,6 +773,11 @@ def main() -> None:
         print("[AVISO] rodando em CPU — os caminhos profundos foram planejados "
               "para GPU (Kaggle T4 / Colab). Use só para smoke.")
 
+    classes = ANALISES_BCE[args.analysis]
+    if args.analysis != "4class":
+        print(f"[análise={args.analysis}] classes={classes} — controle, não a "
+              f"comparação principal")
+
     t0 = time.perf_counter()
     if args.path == "E05":
         print("[AVISO] --path E05 ignora --mode: roda CV + final de uma vez "
@@ -761,16 +788,20 @@ def main() -> None:
                                      args.smoke_samples, epochs, args.batch_size)
     elif args.mode == "smoke":
         run_smoke(args.path, args.branch, args.device, out_dir,
-                  args.smoke_samples, epochs, args.batch_size, cond=args.cond)
+                  args.smoke_samples, epochs, args.batch_size, cond=args.cond,
+                  classes=classes)
     elif args.mode == "hpsearch":
         run_hpsearch(args.path, args.branch, args.device, out_dir,
-                     epochs, args.batch_size, args.n_configs, cond=args.cond)
+                     epochs, args.batch_size, args.n_configs, cond=args.cond,
+                     classes=classes)
     elif args.mode == "cv":
         run_cv(args.path, args.branch, args.device, out_dir, epochs,
-               args.batch_size, hp, max_train=args.max_train_samples, cond=args.cond)
+               args.batch_size, hp, max_train=args.max_train_samples, cond=args.cond,
+               classes=classes)
     else:
         run_final(args.path, args.branch, args.device, out_dir, epochs,
-                  args.batch_size, hp, max_train=args.max_train_samples, cond=args.cond)
+                  args.batch_size, hp, max_train=args.max_train_samples, cond=args.cond,
+                  classes=classes)
     print(f"\nConcluído em {(time.perf_counter() - t0) / 60:.1f}min — {out_dir}")
 
 

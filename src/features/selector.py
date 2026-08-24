@@ -337,12 +337,20 @@ class LWCFeatureSelector:
                 f"X.shape[0]={Xa.shape[0]} != y.shape[0]={ya.shape[0]}"
             )
 
-        # NaN -> 0 (features de autocorrelacao com CT curto retornam NaN; tratar
-        # como "sem informacao"). Imputacao mais sofisticada e' overkill aqui.
-        if np.isnan(Xa).any():
-            Xa = np.where(np.isnan(Xa), 0.0, Xa)
+        # NaN e ±inf -> 0 (features de autocorrelacao com CT curto retornam
+        # NaN; tratar como "sem informacao"). Imputacao mais sofisticada e'
+        # overkill aqui.
+        #
+        # **±inf incluído em 2026-08-24:** o `fit` imputava só NaN e o
+        # `transform` já sanitizava NaN E inf — divergência da mesma classe
+        # que a de NaN já corrigida antes. Com um inf na matriz, o `fit`
+        # emitia RuntimeWarning e a feature era silenciosamente descartada
+        # pelo VT, enquanto o `transform` a teria imputado como 0. Latente
+        # hoje (0 inf medido em CT real), mas as duas metades precisam
+        # concordar.
+        Xa = np.nan_to_num(Xa.astype(np.float64), nan=0.0, posinf=0.0, neginf=0.0)
 
-        return Xa.astype(np.float64), ya, names
+        return Xa, ya, names
 
     def _run_mrmr(
         self,

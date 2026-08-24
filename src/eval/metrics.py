@@ -79,9 +79,33 @@ def compute_metrics(
     n_bootstrap: int = 1000,
     seed: int = 42,
     top_k: int = 1,
+    groups: Optional[np.ndarray] = None,
 ) -> MetricsReport:
     """
     Calcula F1-macro + balanced accuracy + IC bootstrap 95% (percentil).
+
+    **Bootstrap por CLUSTER quando `groups` é fornecido** (adicionado
+    2026-08-24). O desenho do projeto é agrupado — 100 slots por chave — e
+    todo o resto do protocolo reconhece isso (key-holdout, GroupKFold,
+    permutação por chave), mas o bootstrap reamostrava ÍNDIVIDUOS, tratando
+    amostras da mesma chave como independentes. Impacto medido por simulação
+    no cenário real do teste (60 chaves × 100 slots × 4 classes = 24.000):
+
+    | efeito de chave (ICC) | IC i.i.d. | IC por cluster | razão |
+    |---|---|---|---|
+    | 0 (H₀ pura)  | 0,0103 | 0,0097 | 0,94x |
+    | 0,002        | 0,0106 | 0,0172 | 1,62x |
+    | 0,010        | 0,0109 | 0,0255 | 2,33x |
+
+    Ou seja: sob H₀ perfeita o método i.i.d. está certo, **mas só está certo
+    sob a hipótese que um resultado positivo violaria**. Se houver sinal com
+    componente de chave — exatamente o modo de falha que o projeto teme — o
+    IC i.i.d. sai até 2,3x estreito demais, e como o veredicto primário é "o
+    IC 95% exclui o acaso", isso empurra na direção de um falso positivo.
+
+    Passe `groups=key_ids` sempre que houver estrutura de chave. Sem
+    `groups`, o comportamento antigo (i.i.d.) é preservado — nenhum resultado
+    anterior muda de valor por causa desta adição.
 
     Args:
         y_true: rótulos verdadeiros (n_samples,).
@@ -91,6 +115,9 @@ def compute_metrics(
         n_bootstrap: número de reamostragens bootstrap.
         seed: semente para reprodutibilidade.
         top_k: k em top-k accuracy (válido se y_proba presente e n_classes > 1).
+        groups: identificador de cluster por amostra (tipicamente `key_id`).
+            Quando presente, o bootstrap reamostra CLUSTERS com reposição em
+            vez de amostras — ver a nota acima.
 
     Returns:
         MetricsReport com todos os campos calculados.
@@ -123,12 +150,33 @@ def compute_metrics(
         for i, label in enumerate(labels)
     }
 
-    # Bootstrap percentil
+    # Bootstrap percentil — por CLUSTER se `groups` vier (ver docstring).
     rng = np.random.default_rng(seed)
     f1_boots:  list[float] = []
     bal_boots: list[float] = []
+
+    cluster_indices: Optional[list[np.ndarray]] = None
+    if groups is not None:
+        groups_arr = np.asarray(groups)
+        if groups_arr.shape[0] != n:
+            raise ValueError(
+                f"`groups` tem {groups_arr.shape[0]} entradas para {n} amostras")
+        # `np.unique` já dá os clusters; a ordem não importa para o
+        # bootstrap (sorteamos com reposição), só a partição.
+        cluster_indices = [
+            np.flatnonzero(groups_arr == g) for g in np.unique(groups_arr)
+        ]
+
     for _ in range(n_bootstrap):
-        idx = rng.integers(0, n, size=n)
+        if cluster_indices is None:
+            idx = rng.integers(0, n, size=n)
+        else:
+            # Reamostra CLUSTERES com reposição e concatena seus índices —
+            # o tamanho da reamostra varia um pouco com o sorteio (clusters
+            # podem ter tamanhos diferentes), o que é o comportamento
+            # correto do cluster bootstrap.
+            chosen = rng.integers(0, len(cluster_indices), size=len(cluster_indices))
+            idx = np.concatenate([cluster_indices[c] for c in chosen])
         yt, yp = y_true[idx], y_pred[idx]
         f1_boots.append(
             f1_score(yt, yp, average="macro", labels=labels, zero_division=0)
