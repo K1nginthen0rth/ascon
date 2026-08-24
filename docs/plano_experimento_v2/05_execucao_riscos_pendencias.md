@@ -176,3 +176,102 @@ em features informadas pelos próprios rótulos. Cross-fitting por chave
 resolve; fica registrado como pendência.
 
 253/253 testes.
+
+## 5.11 Quinta auditoria (2026-08-24) — proveniência falsa e ressalvas de escopo
+
+Auditoria independente que reexecutou tudo que era verificável e construiu
+âncoras externas onde a validação era circular. **A maior parte do relatório
+é confirmação** — camada cripto, dataset, folds, Regras de Ouro 1/5/7,
+os 7 desvios do `nistrng`, e o braço `controlado` limpo de vazamento por
+comprimento, tudo verificado de forma independente. Os achados:
+
+**A1 [CRÍTICO, documentação] — a proveniência do KAT do GIFT-COFB estava
+declarada de forma FALSA, e a afirmação era minha.** `data/kat/README.md`
+atribuía o arquivo ao "pacote de submissão NIST LWC". Não é: ele é
+produzido por `scripts/generate_gift_cofb_kat.py`, que importa a própria
+`_gift_cofb_ref` e chama `crypto_aead_encrypt` para gerar os 1089 vetores
+— **o KAT valida a implementação contra ela mesma**. O repo vendorizado
+(`github.com/aadomn/gift`, de terceiro) não contém KAT algum. Ou seja,
+"GIFT-COFB: 1089/1089" era tautologia: teria passado igual com a
+implementação errada.
+
+A auditoria construiu a âncora que faltava: implementou GIFT-128 do zero a
+partir da especificação (S-box, P128, LFSR das constantes, key schedule),
+conferiu contra os 3 vetores de `test_vectors.c`, estabeleceu a ponte
+`giftb128`↔`gift128` e implementou COFB com os macros upstream — **13/13
+batem com o wrapper**, incluindo `Count=1`. A implementação está correta;
+o que não se sustentava era a frase. Corrigido em `data/kat/README.md`,
+`CLAUDE.md` e no banner do próprio gerador.
+
+**A2 — Random Excursion e Variant valem em ~46-48% das amostras.** Medido
+em ciphertexts reais: J tem mediana ~450-490 contra o teórico 578, e o
+corte J≥500 cai praticamente sobre a mediana. Equilibrado entre os 6
+algoritmos (40-50%), então não é vazamento — mas 2 dos 15 testes NIST são
+avaliados em pouco menos da metade do dataset, e 4 features ficam
+constantes em 0,5 no restante. "Rodamos a suíte NIST completa" precisa
+dessa ressalva.
+
+**A3 — o v1 não é reproduzível bit a bit a partir do HEAD.** Os parquets
+do v1 têm 307 features; o código de hoje produz 308 para a mesma lista de
+famílias — `compression_ratio_lzma` entrou em `9012c55` (Fase 2 do v2),
+depois do v1 rodar. Nada registrava a divergência. Registrado em
+`CLAUDE.md`; não afeta o v2.
+
+**A4 — a docstring do `consolidate_v2.py` descrevia um teste diferente do
+implementado.** Dizia "fração de reamostragens em que F1 ≤ acaso, ×2"
+(p-value percentílico); o código faz aproximação normal a partir da
+semilargura do IC. O comentário inline estava honesto; a docstring — que é
+o que vira seção de métodos — não. Alinhado, com a limitação declarada e a
+migração para o percentílico registrada como melhoria (exige guardar as
+reamostragens, hoje só os percentis são persistidos).
+
+**A6 — duas features são constantes por construção.** Overlapping Template
+é estruturalmente inelegível em 64KB. **O número informativo é 639, não
+641** — o VT as descarta, então o efeito prático é nulo, mas é 639 que vai
+para o texto.
+
+**A7 — os números do Maurer na docstring estavam no L errado.** Citavam
+c=0,5904 / K=73.636 / "~460x", que são os valores de L=7. Para o n real a
+§2.9.5 manda L=6 (c=0,5688, K=86.762, fator 517,9x). O **código** sempre
+escolheu L=6 corretamente; era só a documentação.
+
+**A8 — ApEn roda sempre com m=2, e não por escolha do n.** A expressão do
+`nistrng`, `min(2, max(3, floor(log2 n) − 6))`, é malformada: `max(3,·)`
+nunca é < 3, então o `min(2,·)` devolve 2 para qualquer entrada. A norma
+permitiria m até ~13 para n≈524k. **Decisão: manter m=2** (é o que já foi
+validado bit-a-bit e mudar tornaria a feature incomparável), mas agora
+como constante literal `_APEN_BLOCK_LEN` com a escolha registrada, em vez
+de uma aritmética enganosa que ninguém tinha lido.
+
+**A9** — o índice do plano ainda dizia 150k amostras e ~400+ features
+enquanto a seção logo abaixo, no mesmo arquivo, já dizia 180k. Corrigido
+para 180k / 641 (639 informativas).
+
+**A10** — `_random_excursion_variant_fixed` iterava sobre `np.unique`, o
+que **omitia** um estado nunca visitado em vez de deixá-lo contribuir com
+ξ=0; os 18 estados são fixos pela especificação. Corrigido. Banner de
+obsolescência adicionado ao próprio `benchmark_extracao.md`.
+
+**A5 — elevado de bullet a pendência com peso próprio.** O IC bootstrap
+reamostra índices i.i.d. num desenho agrupado por chave (100 amostras por
+chave). Sob sinal correlacionado à chave o IC sai **estreito demais**, e o
+veredicto primário do projeto inteiro é "o IC 95% exclui o acaso" — é a
+única pendência aberta que afeta diretamente a conclusão principal, e
+estava listada como um item entre cinco em §5.4. Bootstrap por cluster de
+chave resolve. **Continua pendente de decisão** (§P do 06).
+
+### O que a auditoria NÃO conseguiu fechar (registrado como limitação)
+
+- **Grain-128AEAD e Schwaemm256-128:** os KAT vêm de arquivos de terceiros
+  já versionados; não houve reimplementação independente como a feita para
+  o GIFT-COFB. A proveniência declarada é plausível e os formatos batem,
+  mas não é âncora externa no mesmo nível.
+- **Ascon:** o KAT é byte-idêntico ao do repo oficial (SHA-256
+  `068f4e25…`), o que É âncora genuína — mas num clone limpo ela depende
+  do arquivo em `data/kat/`, cuja integridade só o SHA-256 do README
+  garante.
+- Nenhum Caminho foi executado sobre features reais (a extração não
+  rodou), então a validação dos caminhos é de **encanamento**, não de
+  resultado.
+
+253/253 testes.

@@ -1,6 +1,18 @@
 """
 Gera o arquivo KAT (Known Answer Test) para GIFT-COFB no formato NIST LWC.
 
+⚠️ **ATENÇÃO — este KAT é AUTOGERADO, não oficial.** Os vetores saem da
+própria `_gift_cofb_ref` que o teste depois valida, então
+`test_gift_cofb_wrapper.py::test_kat` confirma apenas que a implementação
+concorda consigo mesma — passaria igual se ela estivesse errada. Existe
+porque o repositório vendorizado (`github.com/aadomn/gift`, de terceiro)
+não traz KAT algum. A validação EXTERNA do GIFT-COFB é outra: uma
+reimplementação independente de GIFT-128 a partir da especificação,
+conferida contra os vetores de `test_vectors.c` e depois contra o wrapper
+(13/13). Ver `data/kat/README.md`. Nunca descreva este arquivo como "KAT
+oficial" — os outros três algoritmos do projeto têm KAT oficial de
+verdade; este não.
+
 Padrão NIST genkat: 1089 vetores (mlen 0..32 x adlen 0..32).
   key   = bytes(range(16))
   nonce = bytes(range(16))

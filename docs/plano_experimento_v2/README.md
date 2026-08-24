@@ -26,10 +26,10 @@ concluído).
 | Pergunta | Ascon vs GIFT-COFB (binário) | 4 LWC multiclasse + controle separado |
 | Algoritmos | 2 | 4 principais + AES-ECB (controle) |
 | Parametrização do Ascon | `ascon128v13` (taxa 64 bits, pré-padrão) | `ascon128av13` (taxa 128 bits = NIST SP 800-232 final) |
-| Dataset | 60k amostras, 100% SPGC | 150k encadeado (5 algs × 30k), 80% texto / 20% imagem |
+| Dataset | 60k amostras, 100% SPGC | **180k** encadeado (6 "algoritmos" × 30k, incluindo PRNG), 80% texto / 20% imagem |
 | RNG de geração | NumPy PCG64 | CTR_DRBG AES (NIST SP 800-90A), validado por CAVP |
 | Caminhos | A–D | A–F (novo: E=Transformer, F=meta-classificador) |
-| Features | 307 | ~400+ (NIST SP 800-22 completo + 5 da literatura + tag/payload, janela comum de 8 bytes) |
+| Features | 307 | **641 medidas** (a estimativa de projeto era ~400+): NIST SP 800-22 completo + 5 da literatura + tag/payload, janela comum de 8 bytes. Duas são constantes por construção (Overlapping Template, estruturalmente inelegível em 64KB) — **639 informativas** |
 | Seletor | VT bruto → MI top-k → mRMR → Boruta(diag) | z-score → VT → MI (corte generoso, não-estatístico) → mRMR → Boruta(diag) |
 | Controle positivo | Vigenère | AES-128-ECB vs Ascon (resposta direta ao SBSeg) |
 | Controles negativos | — (nunca executados) | 🔶 PRNG puro + embaralhamento de bytes |

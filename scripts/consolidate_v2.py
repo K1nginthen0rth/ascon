@@ -17,9 +17,20 @@ métricas do projeto) e produz:
    é isso que transforma um nulo em "tínhamos poder para detectar X e não
    detectamos".
 
-p-value de cada comparação: teste bilateral sobre a distribuição bootstrap
-de F1 — a fração de reamostragens em que F1 <= acaso, x2 (bicaudal). É o
-mesmo bootstrap que já gera o IC, então não introduz suposição nova.
+p-value de cada comparação: **aproximação normal a partir do IC 95%
+bootstrap** — a semilargura do IC vira erro padrão (`SE = meia_largura /
+1,96`) e aplica-se o z usual, bicaudal. Ver `add_verdicts`.
+
+> **Correção de 2026-08-24:** este cabeçalho descrevia um teste diferente
+> do implementado ("a fração de reamostragens em que F1 <= acaso, ×2"),
+> que é o p-value percentílico do bootstrap. O código sempre fez a
+> aproximação normal; só o comentário inline estava honesto. Como esta
+> docstring é o que vira seção de métodos, a divergência ia parar no
+> texto. O método percentílico é mais defensável para bootstrap (não
+> supõe normalidade da distribuição amostral de F1), mas exige guardar as
+> reamostragens — hoje `report_eval` persiste só os percentis 2,5/97,5.
+> Migrar é possível e está registrado como melhoria; enquanto não migra,
+> a aproximação normal fica DECLARADA, não descrita como outra coisa.
 
 **Antes de uma rodada OFICIAL, limpe `reports/v2/`.** Os `.jsonl` são
 append-only (de propósito — gravação incremental sobrevive a queda de

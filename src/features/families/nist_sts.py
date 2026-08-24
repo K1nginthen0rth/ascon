@@ -108,12 +108,28 @@ mesmo assim produziria lixo, não sinal fraco. Mantido no vetor de features
 por consistência de dimensão, sempre com `nist_overlapping_template_valid=0`
 e p-value imputado em 0,5 (neutro) — nunca contribui variância real.
 
-**Excursões (Random Excursion / Variant):** o padrão recomenda só
-interpretar o teste com J (nº de ciclos/cruzamentos por zero) ≥ 500;
-`nistrng` sempre calcula um p-value independente disso. Aqui calculamos J
-nós mesmos e, se J < 500, marcamos `nist_excursions_valid`/
-`nist_excursions_variant_valid = 0` e imputamos p-value 0,5 (neutro) —
-nunca 0 (zero seria estatisticamente "falha", não "não aplicável").
+**Excursões (Random Excursion / Variant) — o corte J≥500 elimina METADE
+das amostras, não uma minoria.** O padrão recomenda só interpretar o teste
+com J (nº de ciclos/cruzamentos por zero) ≥ 500; `nistrng` sempre calcula
+um p-value independente disso. Aqui calculamos J nós mesmos e, se J < 500,
+marcamos `nist_excursions_valid`/`nist_excursions_variant_valid = 0` e
+imputamos p-value 0,5 (neutro) — nunca 0 (zero seria "falha", não "não
+aplicável").
+
+**Medido em ciphertexts reais do v2 (2026-08-24):** J tem mediana ~450-490
+contra o valor teórico sqrt(2n/π)=578, e a **taxa de validade fica em
+~46-48%** — equilibrada entre os 6 algoritmos (40% a 50%), então não é
+vazamento, mas significa que os dois testes de excursão são avaliados em
+**pouco menos da metade do dataset**, e 4 das 641 features ficam
+constantes em 0,5 nas demais. O corte cai praticamente sobre a mediana da
+distribuição real de J.
+
+**Consequência para o texto:** "rodamos a suíte NIST SP 800-22 completa"
+precisa da ressalva de que 2 dos 15 testes valem em ~metade das amostras,
+e 1 (Overlapping Template) em nenhuma. **Features informativas reais: 639
+de 641** — `nist_overlapping_template` e `_valid` são constantes por
+construção (o VT as descarta, então o efeito prático é nulo, mas o número
+que vai para o texto é 639).
 
 **Templates: estatísticas agregadas, não 158 colunas** — média, desvio
 padrão e mínimo do p-value entre templates, como decidido em
@@ -131,6 +147,7 @@ opera inteiramente sobre os bits do ciphertext.
 """
 from __future__ import annotations
 
+import collections
 import math
 
 import numba
@@ -141,7 +158,11 @@ from nistrng.sp800_22r1a import NonOverlappingTemplateMatchingTest as _NOTMTest
 
 _NAN = float("nan")
 _NEUTRAL_P = 0.5  # imputação p/ teste inaplicável — nunca 0.0 (seria "reprovou")
-_MIN_CYCLES_FOR_EXCURSIONS = 500  # recomendação do próprio SP 800-22
+_MIN_CYCLES_FOR_EXCURSIONS = 500
+# Comprimento de bloco do Approximate Entropy. Literal de propósito — a
+# expressão do nistrng que "calculava" isto era malformada e devolvia 2
+# sempre (ver `_approximate_entropy_vectorized`).
+_APEN_BLOCK_LEN = 2  # recomendação do próprio SP 800-22
 
 _battery = SP800_22R1A_BATTERY  # instâncias reaproveitadas entre chamadas (stateless o bastante)
 
@@ -354,12 +375,26 @@ def _approximate_entropy_vectorized(bits: np.ndarray) -> float:
     """
     Reimplementação vetorizada de Approximate Entropy (ver ponto 3a do
     docstring do módulo) — validada bit-a-bit idêntica ao `nistrng`
-    original antes da troca. `blocks_length` replica a fórmula original
-    do pacote (`min(2, max(3, floor(log2(n))-6))` — na prática sempre 2
-    para qualquer n realista, mas mantido fiel à fórmula original).
+    original antes da troca.
+
+    **m = 2, SEMPRE — e não por escolha do n.** A expressão do `nistrng`,
+    `min(2, max(3, floor(log2(n)) − 6))`, é malformada: `max(3, ·)` nunca
+    é menor que 3, então `min(2, ·)` devolve 2 para QUALQUER entrada. Não
+    é "na prática sempre 2 para n realista" (como esta nota dizia antes da
+    auditoria de 2026-08-24) — é estruturalmente impossível dar outra
+    coisa. A SP 800-22 §2.12 permitiria m até ~13 para n≈524k
+    (recomendação: m < log2(n) − 5), então m=2 custa sensibilidade.
+
+    **Decisão: manter m=2** — é o que o `nistrng` computa, é o que já foi
+    validado bit-a-bit, e mudar agora tornaria a feature incomparável com
+    qualquer resultado anterior. Mas fica registrado como escolha
+    consciente, não como consequência de uma fórmula que ninguém leu:
+    `_APEN_BLOCK_LEN` abaixo é literal, sem a aritmética enganosa. Se o
+    Nycolas quiser mais sensibilidade, é só subir a constante — o resto do
+    código já é paramétrico nela.
     """
     n = bits.size
-    blocks_length = min(2, max(3, int(math.floor(math.log(n, 2))) - 6))
+    blocks_length = _APEN_BLOCK_LEN
     phi_m = []
     for iteration in (blocks_length, blocks_length + 1):
         padded = np.concatenate((bits, bits[0:iteration - 1]))
@@ -657,10 +692,17 @@ def _maurers_universal_fixed(bits: np.ndarray) -> tuple[float, bool]:
         c = 0,7 − 0,8/L + (4 + 32/L)·K^(−3/L)/15
 
     Faltam o fator de correção `c` E a divisão por √K — o denominador sai
-    ~460x maior que o correto (medido: 2,500 contra 0,00544 num CT de
-    64KB, c=0,5904, K=73.636), e o p-value é empurrado para perto de 1
-    em qualquer entrada. Numa sequência aleatória: 0,99951 (pacote)
-    contra 0,58961 (especificação).
+    ~518x maior que o correto e o p-value é empurrado para perto de 1 em
+    qualquer entrada. Medido num CT de 64KB (524.416 bits), com o L que a
+    §2.9.5 manda para essa faixa de n — **L=6**, K=86.762, c=0,5688:
+    denominador 2,500 contra 0,00483 (razão 517,9x); p-value 0,99951
+    (pacote) contra 0,75268 (especificação).
+
+    **Cuidado com o L:** a primeira versão desta nota citava c=0,5904,
+    K=73.636 e "~460x" — são os valores de **L=7**, que é a faixa a
+    partir de 904.960 bits, não a nossa. O CÓDIGO sempre escolheu L=6
+    corretamente; era só a documentação que estava no L errado (e uma
+    verificação escrita com L=7 chega a acusar divergência falsa).
 
     Como é transformação monótona de |fn − EV|, RF/XGBoost são
     invariantes — mas LinearSVC/SVM/LR sofrem, e a AFIRMAÇÃO quebra: a
@@ -746,17 +788,21 @@ def _random_excursion_variant_fixed(bits: np.ndarray) -> np.ndarray:
     cycles_size = int(np.count_nonzero(sum_prime[1:] == 0))
     if cycles_size == 0:
         return np.array([])
+    # Os 18 estados x ∈ {−9..−1, 1..9} são FIXOS pela especificação. Iterar
+    # sobre `np.unique(...)` — como a versão anterior fazia — omitia um
+    # estado nunca visitado em vez de deixá-lo contribuir com ξ=0, o que
+    # mudaria o nº de p-values devolvidos e, portanto, a média/mínimo
+    # agregados. Latente com J≥500 (todos os estados costumam ser
+    # visitados), mas é desvio da especificação; corrigido em 2026-08-24.
     restricted = sum_prime[np.abs(sum_prime) < 10]
-    unique, counts = np.unique(restricted, return_counts=True)
+    counts_by_state = collections.Counter(int(v) for v in restricted)
     scores = []
-    for key, value in zip(unique, counts):
-        if key == 0:
-            continue
+    for state in (*range(-9, 0), *range(1, 10)):
+        xi = counts_by_state.get(state, 0)          # 0 se nunca visitado
         # `denom` JÁ é o sqrt(2·J·(4|x|−2)) da especificação — o erfc recebe
         # o quociente direto, sem nenhuma divisão adicional por sqrt(2).
-        denom = math.sqrt(2.0 * cycles_size * ((4.0 * abs(int(key))) - 2.0))
-        z = abs(int(value) - cycles_size) / denom
-        scores.append(math.erfc(z))
+        denom = math.sqrt(2.0 * cycles_size * ((4.0 * abs(state)) - 2.0))
+        scores.append(math.erfc(abs(xi - cycles_size) / denom))
     return np.array(scores)
 
 

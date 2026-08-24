@@ -145,7 +145,7 @@ Plaintexts e chaves NÃO ficam no parquet final — ficam em `data/interim/` só
 
 ### `src/crypto/`
 - **ascon_wrapper.py** — CFFI binding para Ascon-AEAD128 (`ascon128av13`, taxa 128/SP 800-232 final). API: `AsconAEAD128.encrypt()`, `.decrypt()`, `.validate_kat()`. 1089 KATs validados.
-- **gift_cofb_wrapper.py** — Idem para GIFT-COFB (`opt32`).
+- **gift_cofb_wrapper.py** — Idem para GIFT-COFB (`opt32`). ⚠️ **O KAT deste algoritmo é AUTOGERADO** (`scripts/generate_gift_cofb_kat.py`, a partir da própria `.pyd`) — o repo vendorizado não traz KAT oficial, então "1089/1089" aqui é tautológico. A validação externa real é a reimplementação independente de GIFT-128 a partir da especificação (13/13 casos batem) — ver `data/kat/README.md`. Não citar como "validado contra KAT oficial".
 - **grain_wrapper.py** — Idem para Grain-128AEAD (cifra de fluxo LFSR+NFSR; `KEYBYTES=16, NPUBBYTES=12, ABYTES=8` — nonce/tag menores que os demais). 1089 KATs oficiais validados.
 - **sparkle_wrapper.py** — Idem para Schwaemm256-128 (esponja ARX, família SPARKLE; `NPUBBYTES=32, ABYTES=16` — maior nonce do conjunto). KAT oficial (submissão NIST) 1089/1089 validado, não autogerado.
 - **aes_ecb_wrapper.py** — AES-128-ECB (controle positivo — modo inseguro, deliberado). Interface: `.encrypt()/.decrypt()` com PKCS7; sem nonce/tag.
@@ -168,8 +168,17 @@ Plaintexts e chaves NÃO ficam no parquet final — ficam em `data/interim/` só
 | Entropia | 4 | Shannon, χ² vs. uniforme |
 | N-gramas | 15 | Bigrama/trigrama/4-grama agregados |
 | Autocorrelação | 18 | ACF lags 1-16 + Runs test |
-| Complexidade | 4 | LZ76 + razões zlib/bz2/lzma |
+| Complexidade | 4 | LZ76 + razões zlib/bz2 (v1 **não** tinha lzma — ver nota abaixo) |
 | FFT | 10 | 8 bandas de energia + pico + entropia espectral |
+
+⚠️ **O v1 não é reproduzível bit a bit a partir do HEAD** (achado
+2026-08-24). Os parquets do v1 têm 307 features; o código de hoje, para a
+MESMA lista de 6 famílias, produz **308** — `compression_ratio_lzma`
+entrou em `9012c55` (Fase 2 do v2), depois do v1 já ter rodado. A tabela
+acima descreve o **v1-como-executado**, que não é mais o que `src/`
+produz. Os resultados de `docs/analise_completa/07_resultados.md` seguem
+válidos como registro histórico, mas regenerá-los exigiria reverter essa
+adição. Não afeta o v2 (que usa as 12 famílias/641 features).
 
 ### `src/models/`
 - **classical.py** — Pipeline scikit-learn: Dummy, RF, SVM, XGBoost. Scripts de produção (`run_experiment_60k_cv.py`, `run_hybrid_60k.py`) acrescentam LinearSVC; `run_extra_lr_60k.py` acrescenta LogisticRegression reaproveitando os mesmos folds.
