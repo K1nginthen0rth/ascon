@@ -35,7 +35,7 @@ dimensões medidas), seletor redesenhado, RNG de geração CTR_DRBG
 `07_runbook_execucao.md` para a sequência exata de comandos.
 **Todo o código dos 6 caminhos + extração de features + consolidação
 estatística (BH-FDR, McNemar+Bonferroni, estratificação de erro) está
-implementado e testado (256/256 testes).** Pendente: rodar a extração de
+implementado e testado (265/265 testes).** Pendente: rodar a extração de
 features nas 180k amostras reais (~20h por braço) e os Caminhos B/C/E em
 GPU (Kaggle/Colab) — ver `06_implementacao_passo_a_passo.md` para o
 estado fase-a-fase.
@@ -55,15 +55,27 @@ build_sparkle.bat       :: Compila Schwaemm256-128 → src/crypto/_sparkle_ref.c
 
 Requer MSVC 2022 Build Tools e venv ativado. Os `.pyd` já compilados estão em `src/crypto/`.
 
+As fontes C de referência (`ascon-c/`, `gift-cofb/`, `grain-128aead/`, `sparkle/`)
+são gitignored e **não** existem em cópia amalgamada dentro de `src/crypto/` — os
+`_*_ref.c` de lá são só o glue do cffi. Para restaurá-las num clone limpo, nos
+commits e SHA-256 fixados:
+
+```bash
+python scripts/vendor_sources.py            # confere o que está em disco (4/4 OK)
+python scripts/vendor_sources.py --fetch    # clona/baixa nos pinos
+```
+
 ### Testes
 
 ```bash
-pytest tests/ -v                                      # todos os 256 testes
+pytest tests/ -v                                      # todos os 265 testes
 pytest tests/test_ascon_wrapper.py -v                 # um módulo
 pytest tests/test_extractor.py::test_histogram -v     # um teste específico
 pytest tests/ -x                                      # para no 1o erro
 # (--timeout=N exige `pip install pytest-timeout`, NÃO instalado por padrão)
 ```
+
+`tests/test_crypto_independente.py` reimplementa Ascon-AEAD128 (SP 800-232) e GIFT-128/COFB (CHES 2017 + submissão) do zero, em Python puro, e usa as duas como oráculo contra os binários — é a **âncora externa** do GIFT-COFB, cujo KAT é autogerado. Autocontido de propósito (os 3 vetores oficiais do cifrador de bloco estão embutidos como literais), roda em ~1 s.
 
 `conftest.py` na raiz adiciona `src/` e `src/crypto/` ao `sys.path` — nenhuma instalação necessária.
 
@@ -105,7 +117,7 @@ abaixo) estão em `scripts/validate_2class_60k.py` (dataset principal) e
 5. **len_pt/len_ct NÃO são features:** são metadados, nunca entram no modelo
 6. **Mesmos plaintexts, chaves e nonces** para TODOS os algoritmos comparados (encadeamento)
 7. **Relato imediato (pedido do orientador):** toda métrica é impressa no console assim que calculada, e matriz de confusão é SEMPRE gerada (console + JSON + PNG), em todo modelo/fold/caminho — via função de relato única, com gravação incremental em disco
-8. **Geração pseudoaleatória (v2):** chaves e amostragem de plaintext via CTR_DRBG (NIST SP 800-90A, AES, seed fixa), validado contra vetores CAVP — não usar NumPy para material criptográfico de teste
+8. **Geração pseudoaleatória (v2):** chaves e amostragem de plaintext via CTR_DRBG (NIST SP 800-90A, AES, seed fixa), validado contra vetores CAVP — não usar NumPy para material criptográfico de teste. **Vale só para o v2:** o v1 (60k) derivou chaves com `np.random.default_rng` (PCG64), e o texto da dissertação precisa dizer isso, em vez de deixar implícito que a disciplina do CTR_DRBG vale para tudo. Não é problema de correção — as chaves só precisam ser distintas e independentes do rótulo, e são.
 
 ---
 
@@ -145,7 +157,7 @@ Plaintexts e chaves NÃO ficam no parquet final — ficam em `data/interim/` só
 
 ### `src/crypto/`
 - **ascon_wrapper.py** — CFFI binding para Ascon-AEAD128 (`ascon128av13`, taxa 128/SP 800-232 final). API: `AsconAEAD128.encrypt()`, `.decrypt()`, `.validate_kat()`. 1089 KATs validados.
-- **gift_cofb_wrapper.py** — Idem para GIFT-COFB (`opt32`). ⚠️ **O KAT deste algoritmo é AUTOGERADO** (`scripts/generate_gift_cofb_kat.py`, a partir da própria `.pyd`) — o repo vendorizado não traz KAT oficial, então "1089/1089" aqui é tautológico. A validação externa real é a reimplementação independente de GIFT-128 a partir da especificação (13/13 casos batem) — ver `data/kat/README.md`. Não citar como "validado contra KAT oficial".
+- **gift_cofb_wrapper.py** — Idem para GIFT-COFB (`opt32`, finalista da **Rodada 3** do NIST LWC — não Rodada 2). ⚠️ O KAT em `data/kat/` é **autogerado** a partir do próprio `.pyd` (o repo vendorizado não traz KAT), logo é circular: quem sustenta a corretude é a implementação independente em `tests/test_crypto_independente.py`. Ver `data/kat/README.md`.
 - **grain_wrapper.py** — Idem para Grain-128AEAD (cifra de fluxo LFSR+NFSR; `KEYBYTES=16, NPUBBYTES=12, ABYTES=8` — nonce/tag menores que os demais). 1089 KATs oficiais validados.
 - **sparkle_wrapper.py** — Idem para Schwaemm256-128 (esponja ARX, família SPARKLE; `NPUBBYTES=32, ABYTES=16` — maior nonce do conjunto). KAT oficial (submissão NIST) 1089/1089 validado, não autogerado.
 - **aes_ecb_wrapper.py** — AES-128-ECB (controle positivo — modo inseguro, deliberado). Interface: `.encrypt()/.decrypt()` com PKCS7; sem nonce/tag.

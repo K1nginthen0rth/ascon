@@ -5,9 +5,11 @@ docs/plano_experimento_v2/06_implementacao_passo_a_passo.md Fase 4.3.
 
 Sanity checks:
   1. Totais por algoritmo (30.000 cada dos 5 reais + 30.000 PRNG = 180.000)
-  2. Nonces únicos por (chave, algoritmo) — ciente: Grain usa 96 bits
-     (derivados do mesmo contador de 128 bits — únicos na prática, contador
-     nunca passa de 30.000 << 2^96), AES-ECB e PRNG não usam nonce
+  2. Unicidade dos BYTES de nonce derivados (não do rótulo `nonce_id`, que é
+     único por construção): reconstrói o nonce de cada algoritmo a partir do
+     contador e mede colisões globais e reuso dentro de uma mesma chave. É no
+     Grain-128AEAD que isso tem conteúdo — o contador de 128 bits vira 12
+     bytes por truncamento. AES-ECB e PRNG não usam nonce
   3. χ² de uniformidade + compressibilidade — desvio ESPERADO no AES-ECB
      (reportado, não faz a validação falhar — é o controle positivo)
   4. Decrypt spot-check (100 amostras/algoritmo real; PRNG pulado — não
@@ -170,21 +172,59 @@ def _check_encadeamento(df: pd.DataFrame) -> dict:
     }
 
 
+_NPUB_POR_ALGORITMO = {
+    "Ascon-AEAD128": AsconAEAD128.NPUBBYTES,
+    "GIFT-COFB": GiftCOFB.NPUBBYTES,
+    "Grain-128AEAD": Grain128AEAD.NPUBBYTES,
+    "Schwaemm256-128": Schwaemm256_128.NPUBBYTES,
+}
+
+
 def _check_nonce_uniqueness(df: pd.DataFrame) -> dict:
-    """Únicos por (chave, algoritmo) — AES-ECB e PRNG não usam nonce real
-    (não entram nesta checagem)."""
+    """Unicidade dos BYTES de nonce derivados, não do rótulo `nonce_id`.
+
+    A versão anterior contava duplicatas de (key_id, nonce_id). `nonce_id` é a
+    string do contador global, então era única POR CONSTRUÇÃO e a checagem
+    passava sem olhar o que de fato entrou na cifra. O que importa é se os
+    bytes colidem — em particular no Grain-128AEAD, onde o contador de 128 bits
+    vira 12 bytes por truncamento. Achado na auditoria criptográfica de
+    2026-08-24.
+
+    AES-128-ECB e PRNG não usam nonce e ficam de fora.
+    """
     ok = True
-    details = {}
-    for algo in REAL_ALGORITHMS:
-        if algo == "AES-128-ECB":
+    detalhes: dict[str, dict] = {}
+
+    for algo, npub in _NPUB_POR_ALGORITMO.items():
+        sub_idx = df.index[df["algorithm"] == algo]
+        if len(sub_idx) == 0:
             continue
-        sub = df[df["algorithm"] == algo]
-        dup = sub.groupby("key_id")["nonce_id"].apply(lambda s: s.duplicated().any())
-        n_bad = int(dup.sum())
-        details[algo] = n_bad
-        if n_bad > 0:
+        # int() do Python, não int64: o contador é um rótulo e não deve estourar
+        # em silêncio. Só as linhas deste algoritmo — o PRNG grava nonce_id="n/a".
+        derivados = [
+            _nonce_for_algorithm(int(str(s).removeprefix("nonce_")).to_bytes(16, "big"), npub)
+            for s in df.loc[sub_idx, "nonce_id"]
+        ]
+        n_total = len(derivados)
+        n_distintos = len(set(derivados))
+        comprimentos = {len(b) for b in derivados}
+        # reuso DENTRO de uma mesma chave é o caso fatal para AEAD
+        por_chave = pd.DataFrame({"key_id": df.loc[sub_idx, "key_id"].to_numpy(),
+                                  "nonce": derivados})
+        chaves_com_reuso = int(
+            por_chave.groupby("key_id")["nonce"].apply(lambda s: s.duplicated().any()).sum()
+        )
+        detalhes[algo] = {
+            "npub_bytes": sorted(comprimentos),
+            "nonces_derivados": n_total,
+            "distintos": n_distintos,
+            "colisoes_globais": n_total - n_distintos,
+            "chaves_com_reuso": chaves_com_reuso,
+        }
+        if n_distintos != n_total or chaves_com_reuso > 0 or comprimentos != {npub}:
             ok = False
-    return {"ok": ok, "duplicates_per_algorithm": details}
+
+    return {"ok": ok, "por_algoritmo": detalhes}
 
 
 def _check_plaintext_source_ratio(df: pd.DataFrame, folds: dict | None) -> dict:
@@ -256,8 +296,12 @@ def main() -> None:
 
     # --- Nonces ---
     nonce_check = _check_nonce_uniqueness(df)
-    print(f"  Nonces únicos por (chave, algoritmo): {'OK' if nonce_check['ok'] else 'FAIL'} "
-          f"({nonce_check['duplicates_per_algorithm']})")
+    print(f"  Bytes de nonce derivados, únicos por algoritmo e sem reuso por chave: "
+          f"{'OK' if nonce_check['ok'] else 'FAIL'}")
+    for _algo, _d in nonce_check["por_algoritmo"].items():
+        print(f"    {_algo:18s} npub={_d['npub_bytes']} distintos="
+              f"{_d['distintos']}/{_d['nonces_derivados']} "
+              f"chaves_com_reuso={_d['chaves_com_reuso']}")
 
     # --- Encadeamento ---
     chain_check = _check_encadeamento(df)

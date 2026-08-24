@@ -1,5 +1,5 @@
 """
-Compilador cffi para GIFT-COFB (opt32, NIST LWC Round 2 finalist).
+Compilador cffi para GIFT-COFB (opt32, NIST LWC Round 3 finalist).
 
 Uso (execução direta, uma vez):
     python src/crypto/_gift_cofb_cffi_build.py

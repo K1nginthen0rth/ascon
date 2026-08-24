@@ -203,6 +203,12 @@ batem com o wrapper**, incluindo `Count=1`. A implementação está correta;
 o que não se sustentava era a frase. Corrigido em `data/kat/README.md`,
 `CLAUDE.md` e no banner do próprio gerador.
 
+> **Substituído por algo mais forte em §5.13**: aquela verificação foi
+> feita numa sessão e não ficou versionada, e o COFB dela reusava os macros
+> do `cofb.h` upstream. A sétima auditoria escreveu o modo COFB inteiro da
+> especificação e o resultado virou `tests/test_crypto_independente.py`:
+> **1089 + 60 casos**, rodando no CI de testes.
+
 **A2 — Random Excursion e Variant valem em ~46-48% das amostras.** Medido
 em ciphertexts reais: J tem mediana ~450-490 contra o teórico 578, e o
 corte J≥500 cai praticamente sobre a mediana. Equilibrado entre os 6
@@ -412,4 +418,176 @@ VT/mRMR nas escalas reais.
 - **2 plaintexts sobrepostos** entre trainval e teste (0,03%): o texto
   deve dar o número, não "sem sobreposição".
 
-254/254 testes.
+256/256 testes.
+
+
+---
+
+## 5.13 Sétima auditoria (2026-08-24) — criptográfica, por reimplementação
+
+Auditoria feita **reimplementando do zero, da especificação**, os dois
+algoritmos cuja cadeia de evidência não fechava por proveniência externa
+(GIFT-COFB e Ascon-AEAD128), e usando essas implementações como oráculo
+contra os binários. Depois validou o artefato real de 11,8 GB decifrando
+amostras dele.
+
+O veredicto separa duas coisas que vinham juntas: **a criptografia está
+certa; a cadeia de evidência é que não estava.** Um dos quatro pilares era
+circular e documentado como se não fosse, e a reprodutibilidade que o repo
+declarava ter, ele não tinha.
+
+### Confirmado independentemente (não é achado — é o que passou)
+
+- **Ascon-AEAD128 é mesmo o SP 800-232.** `ascon-c/` está no commit
+  `b7ca60b` ("Change Ascon version from v1.2 to v1.3"), que já adota as
+  convenções do padrão final. As três diferenças contra o Ascon-128a v1.2
+  foram conferidas uma a uma: IV `0x00001000808c0001` (era
+  `0x80800c0800000000`), carga little-endian (era big-endian), padding
+  `0x01` (era `0x80`) e separação de domínio no MSB (era LSB).
+  Ancoragem cruzada que fixa a variante: o binário dá **0/1089** contra
+  `ascon-c/LWC_AEAD_KAT_128_128.txt` (raiz), cujo SHA-256 é idêntico ao de
+  `ascon128v13/` — Ascon-128, taxa 64. Confirmado aqui.
+- **A porta MSVC do GIFT-COFB é fiel.** `cofb.h` e `giftb128.h` são macro a
+  macro idênticos aos originais, só trocando `({...})` por `do{...}while(0)`;
+  em `key_schedule.h`, `REARRANGE_RKEY_0..3` viraram `static __inline` com
+  `tmp` local — semanticamente equivalente nos pontos de uso.
+- **O dataset de 180k é criptograficamente sólido**: 153 amostras
+  decifradas com SHA-256 do plaintext conferindo, nonces sem duplicata,
+  encadeamento real, e os SHA-256 dos quatro `.pyd` batendo com o manifesto.
+- **Os quatro AEAD rejeitam** payload, tag, AD, nonce e chave adulterados.
+- **CTR_DRBG conferido linha a linha** contra o SP 800-90A §10.2.1, com
+  `randint` por rejection sampling (sem viés de módulo) e os 240 vetores
+  CAVP genuínos.
+
+### Corrigido
+
+**2.1 [ALTA] — o KAT do GIFT-COFB é autogerado; a tabela de proveniência
+afirmava o contrário.** Já havia sido corrigido no texto do
+`data/kat/README.md` (§5.11/A1), mas a correção deixava a lacuna aberta:
+não existia âncora externa versionada. Agora existe.
+
+`tests/test_crypto_independente.py` (≈450 linhas) reimplementa
+**Ascon-AEAD128 do SP 800-232** e **GIFT-128/COFB da especificação** em
+Python puro e roda os dois contra os binários. A cadeia do GIFT-COFB passou
+a ser:
+
+> 3 vetores **oficiais** do cifrador de bloco (embutidos como literais,
+> porque `gift-cofb/` é gitignored) → validam o GIFT-128 independente →
+> que sustenta o GIFTb-128 e o COFB escritos da especificação → que
+> concordam com `_gift_cofb_ref.pyd` em **1089 + 60 casos aleatórios**.
+
+Reproduzido aqui do zero, sem copiar o C: a fórmula `P128`, o LFSR de 6
+bits das constantes, o key schedule `k1>>>2 ‖ k0>>>12 ‖ k7 ‖ …`, a dobra em
+GF(2⁶⁴) com `0x1b`, `G(Y1‖Y2) = Y2‖(Y1<<<1)` e o expoente
+`3^(1 + [A_a parcial] + 2·[M vazio])` antes do último bloco de AD. O único
+elemento tomado da implementação — e não do papel — é a convenção de
+ordenação de bits da interface do GIFTb-128 (representação bitsliced
+`W_j[i] = b_{4i+j}` do paper Fixslicing): uma escolha entre duas
+alternativas naturais, fixada empiricamente e documentada em `_rho_in`.
+
+O arquivo é **autocontido de propósito** e roda em 1,06 s.
+
+**2.2 [ALTA] — nenhuma extensão era reconstruível num clone limpo.** O
+`.gitignore` afirmava que "o C amalgamado para rebuild fica em
+`src/crypto/`". Era falso: os `_*_ref.c` de lá são só o glue do cffi, sem
+nenhum símbolo dos algoritmos. Isso derrubava o objetivo declarado do
+próprio `data/kat/README.md` — num clone limpo os testes falhavam no
+import, não na comparação.
+
+- `scripts/vendor_sources.py` (novo): fixa as quatro árvores por **commit**
+  (as três com git) e por **SHA-256 de cada arquivo efetivamente
+  compilado** (as quatro). `--check` (padrão) confere o que está em disco;
+  `--fetch` clona/baixa nos pinos. Roda em 4/4 OK hoje.
+- Comentário do `.gitignore` corrigido, apontando para o script.
+- O modo de falha era feio de propósito nenhum: `spec.loader.exec_module()`
+  ficava FORA do `try`, então o `FileNotFoundError` levantado no nível de
+  módulo do script de build escapava cru em vez do `ImportError` com
+  instruções. Corrigido nos quatro wrappers, com a dica do
+  `vendor_sources.py --fetch` na mensagem.
+
+**2.3 [MÉDIA] — GIFT-COFB não é "Round 2 finalist".** Foi finalista da
+**Rodada 3** (um dos 10 anunciados em março de 2021); na Rodada 2 havia
+candidatos, não finalistas. O rótulo estava em duas docstrings e — o que
+pesa — em `metadata["standard"]`, de onde foi copiado literalmente para
+`keyholdout_5class_v2_manifest.json`. Corrigido no código, no manifesto (só
+o rótulo descritivo; hashes, seeds e parâmetros intactos) e em
+`01_criptografia.md`. Grain e Schwaemm já estavam certos.
+
+**2.5 [BAIXA] — as docstrings apontavam para o KAT da variante errada do
+Ascon.** `validate_kat` e `parse_kat_file` davam como exemplo
+`ascon-c/LWC_AEAD_KAT_128_128.txt`, que é o da taxa 64. Nada estava
+quebrado (os testes usam o caminho certo), mas era armadilha ativa:
+qualquer script novo que copiasse o exemplo "falharia a validação KAT" de
+um algoritmo correto. Corrigido em `ascon_wrapper.py`, `kat_parser.py`,
+`01_criptografia.md` e `CONTEXTO_ARTIGO.md`, com a explicação do porquê.
+
+**2.6 [BAIXA] — a checagem de nonce validava o rótulo, não o nonce.**
+`_check_nonce_uniqueness` contava duplicatas de `(key_id, nonce_id)`, e
+`nonce_id` é a string do contador — única **por construção**. O que
+interessa é se os BYTES colidem, especialmente no Grain, onde 16 bytes
+viram 12 por truncamento. Reescrita: reconstrói o nonce derivado de cada
+algoritmo e mede colisões globais e reuso dentro de uma mesma chave.
+Testada com uma colisão de truncamento proposital (dois contadores que só
+diferem acima do byte 12) — a versão antiga dava OK, a nova acusa.
+No dataset real: 30.000/30.000 distintos nos três comprimentos
+(npub 16, 12 e 32), zero reuso por chave.
+
+**2.7 [BAIXA] — o controle "PRNG" é AES-CTR.** É saída de
+`CTRDRBG.generate()`, ou seja, AES-128 em modo contador; e os 30.000
+vetores saem de **uma** instanciação em fluxo contíguo (~2 GB), enquanto
+cada cifra usa 300 chaves independentes. Como controle negativo é válido
+(saída de AES-CTR é indistinguível de aleatório sob as hipóteses padrão, e
+2 GB está muito abaixo dos limites do SP 800-90A), mas a dissertação não
+pode chamá-lo de "PRNG" genérico. O rótulo no parquet **não** muda (é chave
+de dados, de que tudo depende); o `consolidate_v2.py` passou a emitir uma
+seção *"Como nomear as classes na dissertação"*, que é de onde o texto
+copia.
+
+**2.8 [BAIXA] — `_compute_binary_hash` dependia da ordem do filesystem.**
+Os quatro wrappers faziam `list(glob(pat))[0]`: com dois builds para ABIs
+diferentes convivendo, o hash gravado no manifesto passava a ser o que o
+sistema listasse primeiro. Agora hasheia o `__file__` do módulo **de fato
+importado**; o glob virou fallback ordenado que devolve `"ambiguo:..."` em
+vez de escolher em silêncio. Verificado: os quatro hashes continuam
+idênticos aos do manifesto do dataset.
+
+### Registrado, não corrigido
+
+**2.4 [MÉDIA] — `sparkle/` é a única árvore sem proveniência verificável.**
+Não tem `.git`; a origem é uma afirmação em docstring (pacote de submissão
+`sparkle.zip`) e o SHA-256 do zip **não foi registrado na época**. Os
+parâmetros conferem (estado 384, taxa 256, capacidade 128, passos 7/11, as
+oito constantes RCON) e o KAT bate — mas o KAT veio do mesmo zip que o
+código, então se o zip não fosse autêntico nada aqui detectaria.
+
+Fecha-se **para frente, não para trás**: `vendor_sources.py` pina os
+SHA-256 dos arquivos em disco e o `--fetch` baixa da URL oficial do NIST e
+confere arquivo a arquivo. O que não dá para reconstruir é a autenticidade
+do download original — e o script diz isso, em vez de fingir que pina.
+
+**2.9 [OBSERVAÇÃO] — o v1 gerou chaves com NumPy.**
+`dataset_generator.py` deriva chaves com `np.random.default_rng` (PCG64) —
+exatamente a prática que a Regra de Ouro 8 criou o CTR_DRBG para
+substituir. A Regra 8 vale só para o v2, então não há violação; e não é
+problema de correção (as chaves só precisam ser distintas e independentes
+do rótulo, e são). Mas os resultados do v1 que estão na dissertação foram
+gerados assim, e **o texto precisa dizer isso explicitamente** em vez de
+deixar implícito que a disciplina do CTR_DRBG vale para tudo.
+
+### Pontos de desenho que estão certos e valem uma frase no texto
+
+- **Nonce contador de 128 bits** ⇒ 14 bytes zerados à esquerda. É nonce
+  estruturado e de baixa entropia. Legal para os quatro (exigem unicidade,
+  não imprevisibilidade) e **idêntico entre algoritmos**, logo não pode
+  discriminar. Um avaliador vai perguntar — melhor antecipar. (Reforça o
+  que já estava em §5.12: um nulo sob essa condição é mais forte.)
+- **Reúso de chave entre algoritmos** (os mesmos 16 bytes para os 5 no
+  slot) é a Regra 6 e é criptograficamente inócuo: cifras distintas com a
+  mesma chave não se relacionam.
+- **`feature_columns()` impõe a Regra 5 com `AssertionError`**, e a rodada
+  `sanity_lenct` inclui `len_ct` de propósito para provar que o encanamento
+  detecta o sinal trivial.
+- **O truncamento do braço controlado** para 65.544 elimina o comprimento
+  como discriminador, e o `shuffled` trunca antes de embaralhar.
+
+265/265 testes.

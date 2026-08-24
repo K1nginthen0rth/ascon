@@ -1,5 +1,5 @@
 """
-Wrapper Python para GIFT-COFB (opt32, NIST LWC Round 2 finalist) via cffi.
+Wrapper Python para GIFT-COFB (opt32, NIST LWC Round 3 finalist) via cffi.
 
 Interface pública idêntica a AsconAEAD128:
     GiftCOFB  — classe principal (encrypt / decrypt / validate_kat)
@@ -56,15 +56,22 @@ def _load_cffi_module():
         raise ImportError("Não foi possível carregar o script de build cffi.")
 
     builder = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(builder)  # type: ignore[union-attr]
 
+    # exec_module tem de ficar DENTRO do try: as fontes C de referência são
+    # gitignored e o script de build resolve os caminhos no nível de módulo, então
+    # num clone limpo o FileNotFoundError escapava cru em vez do ImportError com
+    # instruções. Achado na auditoria criptográfica de 2026-08-24.
     try:
+        spec.loader.exec_module(builder)  # type: ignore[union-attr]
         builder.build(verbose=True)
     except Exception as exc:
         raise ImportError(
             f"Falha ao compilar extensão GIFT-COFB via cffi: {exc}\n\n"
             "Windows: execute build_gift_cofb.bat com MSVC x64 no PATH.\n"
             "Manual: python src/crypto/_gift_cofb_cffi_build.py"
+            "\n"
+            "Se a árvore C de referência estiver ausente (são gitignored),\n"
+            "restaure-a nos pinos: python scripts/vendor_sources.py --fetch"
         ) from exc
 
     importlib.invalidate_caches()
@@ -83,7 +90,7 @@ def _load_cffi_module():
 
 class GiftCOFB:
     """
-    Wrapper Python para GIFT-COFB (opt32, NIST LWC Round 2 finalist).
+    Wrapper Python para GIFT-COFB (opt32, NIST LWC Round 3 finalist).
 
     GIFT-COFB usa GIFT-128 como permutação subjacente com o modo COFB
     (Combined FeedBack). Parâmetros: chave 128 bits, nonce 128 bits, tag 128 bits.
@@ -256,7 +263,7 @@ class GiftCOFB:
         """Metadados para rastreabilidade de experimentos."""
         return {
             "algo": "GIFT-COFB",
-            "standard": "NIST LWC Round 2 finalist",
+            "standard": "NIST LWC Round 3 finalist",
             "crypto_version": "giftcofb128v1",
             "impl": self.impl,
             "backend": "cffi",
@@ -281,9 +288,21 @@ class GiftCOFB:
             )
 
     def _compute_binary_hash(self) -> str:
+        """SHA256 do binário carregado, para rastreabilidade no manifesto."""
         patterns = ["_gift_cofb_ref*.pyd", "_gift_cofb_ref*.so"]
-        for pat in patterns:
-            hits = list(_CRYPTO_DIR.glob(pat))
-            if hits:
-                return hashlib.sha256(hits[0].read_bytes()).hexdigest()
+        # Preferimos o __file__ do módulo JÁ IMPORTADO: com dois builds para
+        # ABIs diferentes de Python convivendo em src/crypto/, o glob devolvia
+        # o que o sistema de arquivos listasse primeiro, e o manifesto do
+        # dataset — que é registro de proveniência — passava a depender da
+        # ordem de listagem. Achado na auditoria criptográfica de 2026-08-24.
+        carregado = getattr(self._mod, "__file__", None)
+        if carregado and Path(carregado).is_file():
+            return hashlib.sha256(Path(carregado).read_bytes()).hexdigest()
+
+        hits = sorted(h for pat in patterns for h in _CRYPTO_DIR.glob(pat))
+        if len(hits) == 1:
+            return hashlib.sha256(hits[0].read_bytes()).hexdigest()
+        if len(hits) > 1:
+            # nunca escolher em silêncio: o valor vai para o manifesto
+            return "ambiguo:" + ",".join(h.name for h in hits)
         return "unknown"

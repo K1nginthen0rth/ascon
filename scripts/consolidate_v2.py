@@ -504,6 +504,30 @@ def main() -> None:
                 "são detectáveis nesta escala — limitação declarada, não "
                 "prova de ausência.\n")
 
+        # Os rotulos do parquet sao chaves de dados, nao nomes para o texto:
+        # o "PRNG" e saida de AES-128 em modo contador, e descreve-lo como
+        # gerador generico na dissertacao seria impreciso. Achado na auditoria
+        # criptografica de 2026-08-24.
+        f.write("\n### Como nomear as classes na dissertação\n\n")
+        f.write("| Rótulo no parquet | Nome correto no texto | Observação |\n")
+        f.write("|---|---|---|\n")
+        f.write("| `PRNG` | **AES-CTR (CTR_DRBG, SP 800-90A)** | Não é um "
+                "gerador genérico: é AES-128 em modo contador. Os 30.000 "
+                "vetores saem de UMA instanciação, em fluxo contíguo (~2 GB), "
+                "enquanto cada cifra usa 300 chaves independentes — a diferença "
+                "de estrutura de chave precisa ser declarada. Como controle "
+                "negativo é válido: saída de AES-CTR é indistinguível de "
+                "aleatório sob as hipóteses padrão, e 2 GB está muito abaixo "
+                "dos limites do SP 800-90A. |\n")
+        f.write("| `AES-128-ECB` | **AES-128-ECB (FIPS 197)** | Controle "
+                "positivo; modo inseguro por construção, escolhido de "
+                "propósito. |\n")
+        f.write("| `Ascon-AEAD128` | **Ascon-AEAD128 (NIST SP 800-232)** | "
+                "`ascon128av13`, taxa 128 — não o Ascon-128a v1.2. |\n")
+        f.write("| `GIFT-COFB` | **GIFT-COFB (finalista da Rodada 3 do NIST "
+                "LWC)** | Rodada 3, não Rodada 2 — na Rodada 2 havia "
+                "candidatos, não finalistas. |\n")
+
         f.write("\n## 4. McNemar pareado entre modelos (família primária, "
                 "Bonferroni)\n\n")
         f.write("Comparação pareada modelo-a-modelo, SÓ dentro da mesma "

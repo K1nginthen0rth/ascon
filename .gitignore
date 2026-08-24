@@ -28,8 +28,11 @@ src/crypto/Release/
 *.exe
 *.pyd
 
-# Repos C de referencia aninhados (so usados para gerar dataset/KAT localmente;
-# o C amalgamado para rebuild fica em src/crypto/. Nao sao necessarios no Kaggle).
+# Repos C de referencia aninhados. NAO ha copia amalgamada em src/crypto/ --
+# os _*_ref.c de la sao so o glue do cffi, sem nenhum simbolo dos algoritmos.
+# Para reconstruir num clone limpo, nos commits/hashes fixados:
+#   python scripts/vendor_sources.py --fetch
+# (o comentario anterior afirmava o contrario; era falso -- auditoria 2026-08-24)
 ascon-c/
 gift-cofb/
 grain-128aead/

@@ -17,12 +17,18 @@ estimados, exceto onde marcado.
 ```bash
 # extensões C (MSVC): Ascon, GIFT-COFB, Grain, Schwaemm
 build_cffi.bat && build_gift_cofb.bat && build_grain.bat && build_sparkle.bat
-pytest tests/ -q          # esperado: 256 passed
+pytest tests/ -q          # esperado: 265 passed
 ```
 
 Repos de referência C (`ascon-c/`, `gift-cofb/`, `grain-128aead/`,
-`sparkle/`) são gitignored — se o ambiente for recriado, veja as fontes
-em `06_implementacao_passo_a_passo.md` Fase 1.
+`sparkle/`) são gitignored e **não** têm cópia amalgamada em `src/crypto/`.
+Num ambiente recriado, restaure-os nos commits e SHA-256 fixados **antes**
+de compilar:
+
+```bash
+python scripts/vendor_sources.py            # confere (esperado: 4/4 OK)
+python scripts/vendor_sources.py --fetch    # clona/baixa nos pinos
+```
 
 ---
 

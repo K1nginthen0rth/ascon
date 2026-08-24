@@ -11,7 +11,8 @@ controle AES-ECB).
 | `generate_2class_50k.py` | 50 | 🟢 | **Gera o dataset principal** `keyholdout_2class_60k_v1` (nome do arquivo desatualizado) |
 | `generate_vigenere_64k.py` | 245 | 🟢 | Gera `control_vigenere_64k_v1` (controle 3-classes) |
 | `generate_vigenere_random_dataset.py` | 221 | 🟢 | Gera `vigenere_vs_random_v1` (reaproveita linhas do dataset acima) |
-| `generate_gift_cofb_kat.py` | 69 | 🟢 | Gera o arquivo KAT do GIFT-COFB (utilitário de correção, não de dataset ML) |
+| `generate_gift_cofb_kat.py` | 69 | 🟢 | Gera o arquivo KAT do GIFT-COFB a partir da própria `.pyd` — ⚠️ **autogerado, logo circular**; a âncora externa é `tests/test_crypto_independente.py` |
+| `vendor_sources.py` | 312 | 🟢 | Fixa e reconstrói as 4 árvores C de referência por commit + SHA-256 por arquivo (`--check` / `--fetch` / `--pins`) |
 | `generate_2class_dataset.py` | 358 | 🟡 misto | `TwoClassConfig`/`generate_2class()` são importados por outros scripts (vivo como biblioteca); seu `__main__` gera `pilot_2class_v1`/`keyholdout_2class_v1` (legados) |
 | `generate_pilot_dataset.py` | 140 | ⚪ | `ascon_aead128_pilot_v2` / `_keyholdout_v2` (single-class) |
 | `generate_ascon_parquet.py` | 174 | ⚪ | `ascon_aead128_base_v1` — 1 única chave, via `ascon_cli_ref.exe` |

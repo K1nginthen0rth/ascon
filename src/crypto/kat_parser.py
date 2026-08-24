@@ -52,7 +52,10 @@ def parse_kat_file(path: str | Path) -> list[KATVector]:
 
     Args:
         path: Caminho para o arquivo .txt de KAT
-              (ex.: "ascon-c/LWC_AEAD_KAT_128_128.txt").
+              (ex.: "data/kat/LWC_AEAD_KAT_ASCON128AV13.txt").
+              Atenção: `ascon-c/LWC_AEAD_KAT_128_128.txt` na raiz do
+              repo vendorizado é o KAT do Ascon-128 (taxa 64), não
+              o do Ascon-AEAD128 usado aqui.
 
     Returns:
         Lista de KATVector com todos os vetores do arquivo, em ordem.
@@ -63,7 +66,7 @@ def parse_kat_file(path: str | Path) -> list[KATVector]:
                     ausente em algum bloco.
 
     Example:
-        >>> vectors = parse_kat_file("ascon-c/LWC_AEAD_KAT_128_128.txt")
+        >>> vectors = parse_kat_file("data/kat/LWC_AEAD_KAT_ASCON128AV13.txt")
         >>> len(vectors)
         1089
         >>> vectors[0].key.hex()

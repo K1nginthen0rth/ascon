@@ -72,9 +72,13 @@ def _compile_and_import():
         raise ImportError("Não foi possível carregar o script de build cffi.")
 
     builder = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(builder)  # type: ignore[union-attr]
 
+    # exec_module tem de ficar DENTRO do try: as fontes C de referência são
+    # gitignored e o script de build resolve os caminhos no nível de módulo, então
+    # num clone limpo o FileNotFoundError escapava cru em vez do ImportError com
+    # instruções. Achado na auditoria criptográfica de 2026-08-24.
     try:
+        spec.loader.exec_module(builder)  # type: ignore[union-attr]
         builder.build(verbose=True)
     except Exception as exc:
         raise ImportError(
@@ -85,6 +89,9 @@ def _compile_and_import():
             "  Linux/Mac: gcc ou clang\n\n"
             "Compilação manual:\n"
             "  python src/crypto/_ascon_cffi_build.py"
+            "\n"
+            "Se a árvore C de referência estiver ausente (são gitignored),\n"
+            "restaure-a nos pinos: python scripts/vendor_sources.py --fetch"
         ) from exc
 
     # Invalida cache de importação (necessário em alguns sistemas)
@@ -266,7 +273,11 @@ class AsconAEAD128:
         resultado com o CT esperado. Um vetor falha se os bytes diferirem.
 
         Args:
-            kat_path: Caminho para LWC_AEAD_KAT_128_128.txt.
+            kat_path: Caminho para o KAT do Ascon-AEAD128 — use
+                `data/kat/LWC_AEAD_KAT_ASCON128AV13.txt`. NÃO use
+                `ascon-c/LWC_AEAD_KAT_128_128.txt` (raiz): é byte a
+                byte o de `ascon128v13/`, ou seja, Ascon-128 taxa
+                64, e esta implementação dá 0/1089 contra ele.
 
         Returns:
             Tupla (total, passed, failed_indices) onde:
@@ -276,7 +287,7 @@ class AsconAEAD128:
 
         Example:
             >>> total, passed, failed = ascon.validate_kat(
-            ...     "ascon-c/LWC_AEAD_KAT_128_128.txt"
+            ...     "data/kat/LWC_AEAD_KAT_ASCON128AV13.txt"
             ... )
             >>> assert passed == total and failed == []
         """
@@ -335,8 +346,19 @@ class AsconAEAD128:
     def _compute_binary_hash(self) -> str:
         """Retorna SHA256 do binário compilado para rastreabilidade."""
         patterns = ["_ascon_ref*.pyd", "_ascon_ref*.so", "_ascon_ref*.dylib"]
-        for pat in patterns:
-            hits = list(_CRYPTO_DIR.glob(pat))
-            if hits:
-                return hashlib.sha256(hits[0].read_bytes()).hexdigest()
+        # Preferimos o __file__ do módulo JÁ IMPORTADO: com dois builds para
+        # ABIs diferentes de Python convivendo em src/crypto/, o glob devolvia
+        # o que o sistema de arquivos listasse primeiro, e o manifesto do
+        # dataset — que é registro de proveniência — passava a depender da
+        # ordem de listagem. Achado na auditoria criptográfica de 2026-08-24.
+        carregado = getattr(self._mod, "__file__", None)
+        if carregado and Path(carregado).is_file():
+            return hashlib.sha256(Path(carregado).read_bytes()).hexdigest()
+
+        hits = sorted(h for pat in patterns for h in _CRYPTO_DIR.glob(pat))
+        if len(hits) == 1:
+            return hashlib.sha256(hits[0].read_bytes()).hexdigest()
+        if len(hits) > 1:
+            # nunca escolher em silêncio: o valor vai para o manifesto
+            return "ambiguo:" + ",".join(h.name for h in hits)
         return "unknown"

@@ -9,7 +9,7 @@ Quatro cifras, todas atrás de uma interface uniforme:
 | Arquivo | Classe | Papel | Backend |
 |---|---|---|---|
 | `ascon_wrapper.py` (343 linhas) | `AsconAEAD128` | Classe-alvo 1 (NIST SP 800-232) | C via cffi (`_ascon_ref`), impl `ref` |
-| `gift_cofb_wrapper.py` (290 linhas) | `GiftCOFB` | Classe-alvo 2 (NIST LWC Round 2 finalist) | C via cffi (`_gift_cofb_ref`), impl `opt32` |
+| `gift_cofb_wrapper.py` (290 linhas) | `GiftCOFB` | Classe-alvo 2 (NIST LWC Round 3 finalist) | C via cffi (`_gift_cofb_ref`), impl `opt32` |
 | `aes_ecb_wrapper.py` (133 linhas) | `AES128ECB` | Controle positivo legado (protocolo antigo com AES-ECB) | `cryptography` (OpenSSL) |
 | `vigenere_wrapper.py` (107 linhas) | `VigenereWrapper` | Controle positivo atual | Python puro |
 | `kat_parser.py` (115 linhas) | `parse_kat_file` / `KATVector` | Parser do formato NIST KAT | — |
@@ -25,7 +25,10 @@ Quatro cifras, todas atrás de uma interface uniforme:
 - `.metadata["binary_sha256"]` — hash do binário compilado, registrado no
   manifesto de cada dataset para rastreabilidade (garante que todos os
   criptogramas de um dataset vieram do mesmo binário).
-- `validate_kat()`: itera todos os vetores de `ascon-c/LWC_AEAD_KAT_128_128.txt`
+- `validate_kat()`: itera todos os vetores de
+  `data/kat/LWC_AEAD_KAT_ASCON128AV13.txt` (cópia versionada de
+  `ascon-c/crypto_aead/ascon128av13/`; o arquivo homônimo na RAIZ do
+  `ascon-c/` é o da taxa 64 e não serve)
   (1089 vetores), chama `encrypt(key, nonce, pt, ad)` e compara byte a byte com
   o CT esperado. **1089/1089 passam** — coberto por `tests/test_ascon_wrapper.py`.
 - Erros: `ValueError` para key/nonce de tamanho errado; `AuthenticationError`

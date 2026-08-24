@@ -123,7 +123,7 @@ Requer MSVC 2022 Build Tools. Os `.pyd` compilam-se automaticamente na 1ª impor
 
 | Algoritmo | Arquivo KAT | Registros | Resultado |
 |-----------|-------------|-----------|-----------|
-| Ascon-AEAD128 | `ascon-c/LWC_AEAD_KAT_128_128.txt` | 1089 | **1089/1089 passed** (registrado no manifesto) |
+| Ascon-AEAD128 | `data/kat/LWC_AEAD_KAT_ASCON128AV13.txt` | 1089 | **1089/1089 passed** (registrado no manifesto) |
 | GIFT-COFB | `data/kat/LWC_AEAD_KAT_GIFTCOFB128_128.txt` | **1089** (`grep -c "^Count = "`) | validado pelo wrapper `.validate_kat()` |
 
 Método: `AsconAEAD128.validate_kat(kat_path)` retorna `(total, passed, failed)`. Testado em `tests/test_ascon_wrapper.py` (15 testes) e `tests/test_gift_cofb_wrapper.py` (16 testes).
