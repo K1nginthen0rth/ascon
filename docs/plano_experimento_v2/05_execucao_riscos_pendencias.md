@@ -591,3 +591,362 @@ deixar implícito que a disciplina do CTR_DRBG vale para tudo.
   como discriminador, e o `shuffled` trunca antes de embaralhar.
 
 265/265 testes.
+
+
+---
+
+## 5.14 Sessão autônoma (2026-08-26/28) — extração completa + achado de vazamento em Grain
+
+Sessão sem supervisão (Nycolas em viagem, 24h de janela, checagem horária).
+Concluiu a Etapa 3 do runbook e, no tempo excedente, achou um vazamento real
+que **contamina qualquer comparação envolvendo Grain-128AEAD no braço
+`controlado`**.
+
+### O que foi executado
+
+1. **Extração completa dos 3 braços** (`controlado`, `cru`, `shuffled`) —
+   180k amostras × 641 features cada, ~20h/braço. Uma queda de energia
+   real interrompeu a extração do `controlado` na hora ~11 (20/30 row
+   groups) — a retomada por chunk atômico funcionou exatamente como
+   projetado, zero perda, zero `.tmp` corrompido. Os 3 parquets de
+   features estão consolidados e validados (837 NaN esparsos em 115,7M
+   valores, 0 Inf, 0 colunas 100% NaN, 300 chaves, balanceado).
+2. **Diagnósticos planejados** (não dependiam de decisão do Nycolas):
+   `sanity_lenct` no braço `cru` — F1=1,0000 como esperado (RF, Grain vs
+   Ascon, comprimento cru inclui `len_ct` de propósito). `learning_curve`
+   no braço `controlado` — é aqui que o achado começa.
+
+### O achado: RF e XGBoost distinguem Grain-128AEAD no braço `controlado` — sem nenhuma feature individual mostrar separação
+
+`learning_curve` (RF + LogisticRegression, 4/60/120/240 chaves de treino,
+4 classes reais) mostrou LogisticRegression travada em F1≈0,25 (acaso) em
+todo ponto, mas RandomForest **crescendo** de 0,249 (30 chaves) até 0,353
+(240 chaves) — com o ganho quase todo em identificar corretamente
+Grain-128AEAD (recall 0,247→0,592), enquanto os outros 3 permanecem perto
+do acaso entre si.
+
+Investigação (reproduzida fielmente fora do `learning_curve`, confirmando
+F1=0,3533 com as mesmas 150 features do seletor mRMR):
+- **Nenhuma feature individual separa** — maior |Cohen's d| entre Grain e
+  o resto é ≈0,018 (ruído), espalhado por famílias não relacionadas
+  (histograma, autocorrelação, NIST STS). As features de `tag_region`
+  (`tag8_*`) têm d≈0,02 — consistente com o resíduo já documentado em
+  §5.11/§5.12 (d≈0,03σ), mas pequeno demais para explicar sozinho o que
+  segue.
+- **Reformular como binário "Grain vs. os outros 3 combinados", com as
+  MESMAS 150 features, zera o sinal (F1=0,00, recall de Grain = 0)** —
+  ou seja, o RF multiclasse não estava achando "assinatura do Grain"; a
+  hipótese de trabalho passou a ser "Grain só parece diferente por não
+  participar da confusão mútua entre os outros 3".
+- **Essa hipótese caiu ao testar o par de verdade.** Rodando
+  `run_analysis` real (a mesma função que `pairs` usa) para o par
+  Grain-vs-Ascon isolado, sem SVM (orçamento pendente) e sem réplicas
+  (`run_replicas=False` — exploração, nunca oficial):
+
+  | Modelo | F1-macro (fold final, n=12.000) |
+  |---|---|
+  | LogisticRegression | 0,4971 (acaso) |
+  | LinearSVC | 0,4970 (acaso) |
+  | RandomForest | 0,6944 |
+  | **XGBoost** | **0,9994** (IC95%=[0,9990, 0,9998]) |
+
+  Consistente nos 5 folds de CV (0,9976–0,9994), não é artefato de um
+  fold só.
+
+- **A feature que o XGBoost usa é `payload_rest_max_freq`, com
+  importância 0,42 — 22× a segunda colocada (0,019)** — mas o Cohen's d
+  DESSA MESMA feature é 0,007 (médias iguais a 5 casas decimais, std
+  minúsculo em ambas as classes; percentis 1–99% quase idênticos). Ou
+  seja: nenhuma feature isolada é fraudulentamente forte — o que quer que
+  o XGBoost esteja explorando é uma combinação não-linear fraca e difusa
+  entre muitas features (bitblock, histograma), do tipo que boosting
+  sequencial é excelente em amplificar e que bagging (RF, capturou só
+  parte: 0,69) e modelos lineares (não capturam nada: 0,50) não
+  conseguem.
+
+### O controle que isola a causa
+
+Se o mecanismo fosse geral (falha do pipeline, ou XGBoost "trapaceando"
+de alguma forma universal), o mesmo padrão apareceria em QUALQUER par.
+Testado nos 3 pares entre os algoritmos com ABYTES=16 (Ascon, GIFT-COFB,
+Schwaemm256-128 — os únicos SEM a assimetria abaixo):
+
+| Par | F1 XGBoost | Feature dominante |
+|---|---|---|
+| Ascon vs GIFT-COFB | 0,4959 | nenhuma (top ≈0,012) |
+| Ascon vs Schwaemm | 0,4957 | nenhuma (top ≈0,013) |
+| GIFT-COFB vs Schwaemm | 0,5011 | nenhuma (top ≈0,009) |
+
+**Acaso puro nos três, mesmo com XGBoost.** O efeito é específico a
+comparações que envolvem Grain — o único dos 4 algoritmos com ABYTES=8 em
+vez de 16.
+
+### Causa — confirmada por experimento, não só por inferência (2026-08-28, tarde)
+
+`src/features/families/tag_region.py`: `payload_rest = ct[:-8]` (janela
+comum de 8 bytes, decisão de desenho documentada — usar o `ABYTES` real
+teria comparado tags de tamanhos diferentes entre si). E `_extract_row`
+em `extract_features_v2.py` computa a família `tag_region` sobre
+`ct_raw` (o CT ORIGINAL, não o truncado do braço) — decisão também
+documentada, para não cortar a tag do Ascon ao meio (achado da auditoria
+de 2026-08-23, comentário no código).
+
+A combinação das duas decisões — cada uma correta isoladamente — cria uma
+assimetria não coberta por nenhuma auditoria anterior: **`payload_rest`
+do Ascon/GIFT-COFB/Schwaemm (ABYTES=16) sobra com 8 bytes residuais da
+PRÓPRIA tag dentro da janela "payload"; o de Grain (ABYTES=8) é payload
+puro, zero bytes de tag misturados.**
+
+**Teste decisivo, pedido pelo Nycolas ("será que a costura em si não
+carrega sinal de verdade?").** Reconstruí a fronteira payload/tag usando
+o `ABYTES` REAL de cada algoritmo (não os 8 bytes fixos), lendo o parquet
+de 11,8GB em streaming (nunca inteiro em memória):
+
+1. **Payload puro** (`ct_raw[:-ABYTES]`, zero bytes de tag para os dois —
+   e como os dois cifram o mesmo plaintext de 64KB, dá exatamente 65.536
+   bytes para ambos, sem precisar normalizar nada): histograma de bytes
+   → XGBoost → **F1=0,4943** (acaso).
+2. **Costura simétrica de verdade** (8 bytes finais do payload real + 8
+   bytes iniciais da tag real, ancorados na fronteira genuína de cada
+   algoritmo — sempre 16 bytes, não importa se a tag é de 8 ou 16):
+   XGBoost sobre os 16 bytes crus → **F1=0,4960** (acaso).
+
+**Conclusão fechada: não existe nenhum sinal real, nem na fronteira, nem
+no payload.** A hipótese de efeito de fronteira/finalização (squeeze do
+sponge vs. keystream contínuo) está DESCARTADA — quando a régua mede
+igual pros dois, mesmo o XGBoost (o método que achou F1=0,9994 com a
+régua torta) não acha absolutamente nada. O F1=0,9994 original era
+100% explicado pela assimetria de medição; não sobra resíduo nenhum de
+uma propriedade real dos algoritmos. Script:
+`.autonomo_logs/teste_costura_justa.py` (não versionado — reproduzir se
+necessário, é ~25s de I/O).
+
+### Por que isso importa — e o que NÃO fazer com o resultado
+
+**Isto não é o "cenário demonstrável de distinguibilidade" que se buscava
+(ver conversa de 2026-08-25)** — não é uma propriedade do Grain como
+algoritmo correto e bem implementado; é uma assimetria de instrumentação
+específica do braço `controlado` que só se manifesta contra o único
+algoritmo com ABYTES diferente. Reportar F1=0,9994 como "Grain é
+distinguível" seria repetir, numa forma mais sutil, o mesmo erro que o
+braço `controlado` inteiro foi desenhado para evitar (comparar
+comprimentos, não criptografia).
+
+**Consequência prática, urgente:** qualquer rodada da `pairs`/`4class`
+OFICIAL no braço `controlado`, como o código está HOJE, vai produzir
+resultados contaminados nos 3 pares que envolvem Grain (e no `4class`
+geral, via ele). **Não rodar `pairs`/`4class` oficial antes de decidir o
+que fazer com isto** — ficou de fora do trabalho autônomo de propósito
+(não é uma correção que dá pra fazer sem julgamento: mexer em
+`tag_region`/`payload_rest` afeta o braço `cru` também, que sanity_lenct
+depende do comportamento atual).
+
+### Pendente — decisão do Nycolas
+
+1. Como corrigir a assimetria: (a) usar `ct_branch` para TUDO, aceitando
+   que a tag do Ascon fica pela metade nas famílias afetadas [ver o
+   próprio comentário no código sobre por que isso foi rejeitado antes];
+   (b) mudar `payload_rest` para excluir SEMPRE os últimos
+   `max(ABYTES)=16` bytes do `ct_raw`, não um número fixo de 8 —
+   simétrico para todos, mas passa a excluir metade do payload real do
+   Grain também; (c) outra normalização. Cada opção tem trade-off e é
+   decisão de desenho, não bug de código a corrigir sozinho.
+2. Vale rastrear o mecanismo byte a byte antes de decidir, ou a
+   caracterização acima (real, específica a ABYTES≠16, robusta ao
+   controle) já é suficiente para agir?
+3. Depois de corrigida (ou conscientemente aceita), a `pairs`/`4class`
+   oficial precisa rodar de novo — o resultado de hoje não é utilizável
+   como está.
+
+265/265 testes (nenhum teste novo — investigação, não implementação;
+nenhum código de produção foi alterado nesta sessão).
+
+### Correção implementada (2026-08-28, à tarde, com o Nycolas de volta)
+
+Decisão tomada em conversa: `payload_rest` passa a excluir sempre um
+comprimento FIXO (`_PAYLOAD_REST_LEN = 65528`, derivado do menor
+comprimento cru entre as 6 classes menos o maior ABYTES real), nunca
+consultando o algoritmo da amostra para decidir quanto cortar — ponto
+levantado pelo próprio Nycolas ("a régua não pode perguntar de quem é a
+carta antes de medir"). `tag8` não muda (já era comum e comparável, é o
+`payload_rest` que reusava a mesma janela por engano).
+
+- `src/features/families/tag_region.py`: `payload_rest = ct[:-8]` →
+  `ct[:_PAYLOAD_REST_LEN]`. Docstring do módulo reescrita para explicar o
+  bug, a diferença entre o argumento do `tag8` (janela pequena e
+  COMPARÁVEL, evita viés de amostra pequena) e o do `payload_rest`
+  (janela GRANDE e FIXA, evita qualquer resíduo de tag — os dois
+  argumentos são opostos, e a versão antiga aplicava o do `tag8` nos
+  dois lugares por engano).
+- `tests/test_tag_region.py` (novo, 8 testes) — o módulo não tinha
+  NENHUM teste direto antes; é por isso que o bug sobreviveu a 7
+  auditorias. Regressão específica: CT sintético com payload e tag em
+  bytes diferentes (0x00 vs 0xFF), confere que `payload_rest` não tem
+  NENHUM byte de tag para ABYTES=8 e ABYTES=16, e que o comprimento do
+  `payload_rest` não muda com ABYTES (senão reintroduz comprimento como
+  discriminador escondido).
+- **Confirmado em dado real, não só no teste sintético**: recomputando
+  só as 8 features de `tag_region` sobre os ciphertexts crus reais de
+  Grain e Ascon (60.000 amostras, via streaming do parquet de 11,8GB),
+  XGBoost volta a **F1=0,4949** (era 0,9994). `payload_rest_max_freq`,
+  que antes sozinho valia importância 0,42 no modelo de 150 features,
+  deixa de carregar qualquer sinal.
+
+277/277 testes (269 + 8 novos de `tag_region`).
+
+### Pendente: reextração
+
+O `payload_rest` errado já está gravado nos 3 parquets de features
+extraídos (`controlado`, `cru`, `shuffled` — os dois primeiros usam
+`ct_raw` para `tag_region`, então têm o bug; `shuffled` usa `ct_branch`
+já truncado e embaralhado, efeito ainda não confirmado — o conteúdo
+residual da tag sobrevive ao embaralhamento em estatísticas de
+frequência, mas a posição não, então pode ou não ter o mesmo problema
+pra features que dependem de posição). Rodar `pairs`/`4class` oficial
+exige reextrair pelo menos `controlado` e `cru` (~20h cada) com o código
+corrigido. Decisão do Nycolas: reextrair agora, ou esperar juntar com a
+decisão do orçamento do SVM pra não gastar a máquina duas vezes.
+
+
+### Reextração concluída (2026-09-02) + decisão do orçamento do SVM
+
+`controlado` e `cru` reextraídos com o `payload_rest` corrigido — 30/30
+row groups cada, consolidados, e reconfirmados no dado final: F1=0,4949
+(acaso) nas 8 features de `tag_region` para Grain-vs-Ascon, nos dois
+braços. `shuffled` não precisou (já estava limpo — embaralhamento destrói
+a posição fixa do vazamento antigo). Os 3 braços agora estão íntegros.
+
+**Decisão do orçamento do SVM (Nycolas, 2026-09-02): subamostrar também o
+fit final**, não só a busca de hiperparâmetros. `scripts/run_v2_caminho_a.py`:
+
+- `SVM_SEARCH_SUBSAMPLE = 6000` (já existia) — busca de hiperparâmetros.
+- `SVM_FINAL_FIT_SUBSAMPLE = 20000` (novo) — o fit que produz o modelo
+  reportado passa a rodar numa subamostra de 20 mil, não no fold completo
+  (que passava de 70 mil em algumas comparações). Com a escala medida de
+  n^2,85, isso reduz o custo do fit final por várias dezenas de vezes.
+  Vale só para o SVM-RBF — os outros 4 modelos (RandomForest, LinearSVC,
+  XGBoost, LogisticRegression) continuam no fold completo, sem alteração.
+- Custo aceito: um pouco menos de poder estatístico no resultado do SVM
+  especificamente. Registrado nos metadados de cada fit
+  (`final_fit_subsample` no dict retornado por `fit_svm_with_search`),
+  então qualquer leitura do resultado sabe quantas amostras sustentaram
+  aquele SVM em particular.
+- 4 testes novos em `tests/test_v2_runners.py` (dataset sintético,
+  confere que o fit final trunca para `SVM_FINAL_FIT_SUBSAMPLE`, que o
+  caminho de fallback com poucos grupos também respeita o teto, e que
+  nada trunca quando o fold já é menor que o alvo). 281/281 testes.
+
+Com isso, os dois bloqueios da `pairs`/`4class` oficial (o vazamento do
+`payload_rest` e o orçamento do SVM) estão resolvidos. Rodando agora a
+sequência completa da Etapa 4 do runbook.
+
+### Dois bugs achados AO VIVO rodando o Caminho A completo pela primeira vez (2026-09-02)
+
+Nenhum dos dois apareceu em teste sintético nem no benchmark rápido de
+57,3s citado acima — só rodando em dado real, no tamanho real, é que se
+manifestaram. Registro para o texto: a suíte de 284 testes garante que o
+código faz o que foi desenhado pra fazer, não que os hiperparâmetros
+escolhidos se comportam bem em TODO tamanho de amostra — isso só se
+descobre rodando.
+
+**1. O SVM-RBF dentro do `StackingClassifier` também precisava de
+subamostra — não só o SVM-RBF principal.** `fit_svm_with_search` (a
+correção da tarde) só cobria o modelo "SVM-RBF" isolado. O Stacking cria
+seu PRÓPRIO SVM-RBF, com hiperparâmetros fixos por desenho (documentado:
+buscar hiperparâmetros dentro de cada split interno do stacking
+multiplicaria o custo da busca pelo nº de splits). Esse SVM interno é
+ajustado ~4 vezes por fold (3 splits internos de CV + 1 no treino
+completo), sem NENHUMA subamostra — sozinho, travou um fold real por mais
+de 2h20 sem produzir nenhuma linha de log nova, rodando a sequência
+completa pela primeira vez. `SubsampledSVC` (novo, em
+`scripts/run_v2_caminho_a.py`): wrapper de `SVC` que aplica
+`SVM_FINAL_FIT_SUBSAMPLE` antes do `.fit()`, plugado no lugar do `SVC` cru
+dentro de `build_stacking_model`. Confirmado em dado real: 57,3s por fold
+(era >2h20 e ainda não tinha terminado).
+
+**2. `gamma="scale"` degenera na subamostra — achado DEPOIS de corrigir o
+#1.** Com o SVM do Stacking agora rodando rápido, os 3 primeiros pares
+completaram — e o modelo "Stacking" deu F1≈0,33-0,40 em vez de ≈0,50,
+sistematicamente. Investigado com o confusion matrix salvo: **previa uma
+única classe para as 12.000 amostras de teste, nas duas classes
+verdadeiras.** Isolado experimentalmente: com a subamostra de 20.000, os
+2 valores de C testados (1 e 10) davam o MESMO resultado degenerado com
+`gamma="scale"` (todos os 20.000 pontos da subamostra viravam vetor de
+suporte — kernel achatado a ponto de virar quase constante), e o MESMO
+resultado saudável com `gamma=0.01` ou `gamma="auto"`. `gamma="scale"` é
+calculado a partir de `1/(n_features×X.var())` — depende da variância da
+amostra que recebe; no fold/trainval completo (48 mil, sem subamostra)
+isso nunca tinha dado problema, porque a variância medida ali era
+diferente o suficiente para não cair nessa zona degenerada. Corrigido:
+`gamma=0.01` fixo (o mesmo valor já testado em `SVM_GRID`) em vez de
+`"scale"`. Confirmado em dado real, no trainval completo (n=48.000):
+F1=0,4971, previsões balanceadas [5967, 6033] contra real [6000, 6000].
+
+**2 testes novos** (`tests/test_v2_runners.py`) travam os dois achados:
+`SubsampledSVC` de fato trunca e não define `predict_proba` (evitaria o
+custo de calibração Platt); `build_stacking_model` nunca mais usa
+`gamma="scale"`. 284/284 testes.
+
+**As 3 primeiras execuções de `pairs controlado` (Ascon-GIFT, Ascon-Grain,
+Ascon-Schwaemm) ficaram contaminadas com o resultado degenerado do
+Stacking** — os JSONL de métrica são append-only, então as duas rodadas
+(antes e depois da correção do `gamma`) ficaram misturadas no mesmo
+arquivo, distinguíveis só por timestamp. **Apagados e a sequência inteira
+relançada do zero** depois da segunda correção — os números anteriores
+citados nesta seção vieram de scripts de diagnóstico isolados, não da
+rodada oficial, que não deve ser lida até terminar limpa.
+
+### Etapas 1-6 concluídas (2026-09-03) — resultados primários + 1 observação
+
+`pairs` e `4class` (a família primária) completos, sem o problema de
+degeneração se repetir. `ecb_control` (F1=0,9773, RF) e `prng_control`
+(F1≈0,50 nos 4) confirmam que o pipeline detecta sinal quando ele existe e
+fica no acaso quando não existe — os dois controles funcionando como
+esperado.
+
+**Observação, não bug: instabilidade pontual do Stacking em 1 dos 6 pares.**
+GIFT-COFB vs Schwaemm256, modelo `Stacking`, `fold=final`: F1=0,3955
+(cm=[[5545,455],[5511,489]] — víes de 92%/8% entre as classes), destoando
+dos outros 5 pares (todos ~0,49-0,51). Investigado:
+
+- Os 5 folds de CV desse MESMO par, MESMO modelo Stacking: todos normais
+  (~0,50, matrizes balanceadas). Só o ajuste final (o único que passa pela
+  subamostra de 20 mil) mostra o desvio.
+- Todos os OUTROS 8 modelos desse par no ajuste final — incluindo o
+  SVM-RBF isolado e o **RandomForest, que é o modelo oficial da
+  comparação** — deram resultado normal (~0,49-0,51).
+
+Ou seja: não é um hiperparâmetro errado nem um mecanismo quebrado (como os
+dois achados anteriores) — parece ruído genuíno do meta-modelo do
+Stacking numa única instância da subamostra, quando a base inteira é H0.
+**Não afeta o resultado primário do par** (RandomForest normal). Registrado
+como limitação observada da réplica de Stacking sob subamostra — não
+refeito, porque forçar até sair diferente seria manipular o resultado, não
+corrigir um bug.
+
+### Escopo da Etapa 4 reduzido por decisão do Nycolas (2026-09-04)
+
+Debatido em conversa, depois de ver os custos reais (~11h por análise tipo
+`pairs`) e os resultados das etapas 1-8 já rodadas:
+
+- **`shuffled` (etapas 9 e 10, controle negativo) — descartado.** Já tinha
+  rodado o `4class` (etapa 9) antes da decisão; o `pairs` (etapa 10) foi
+  interrompido no meio (só o par Ascon-vs-GIFT parcial, descartado). Meu
+  argumento contra descartar: é a defesa contra exatamente a CLASSE de bug
+  que o `payload_rest` já mostrou existir (um artefato de posição/conteúdo
+  que sobrevive a leitura casual do resultado) — mas é uma decisão de
+  escopo legítima do Nycolas, não um erro. Registrado aqui para quem ler
+  os resultados depois: **as etapas 1-8 e 11-12 não têm o controle negativo
+  de embaralhamento como respaldo.** Se um resultado de `pairs`/`4class`
+  vier positivo, essa lacuna deveria ser reaberta antes de reportar o
+  achado como definitivo (rodar 9/10 especificamente para o par/cenário
+  positivo, não a suíte inteira de novo).
+- **`family_ablation` (etapa 13) e `permutation` (etapa 14) — adiadas, não
+  descartadas.** Ficam para depois, principalmente se a `4class` oficial
+  vier positiva — description do porquê (qual família carrega o sinal;
+  validação estatística formal contra o nulo empírico) na conversa que
+  gerou esta decisão.
+- **Etapa 11 (4class sem key-holdout) mantida** — o Nycolas concordou que
+  essa continua necessária.
+
+Sequência final rodada oficialmente: 1, 2, 3, 4, 5, 6, 7, 8, 11, 12.

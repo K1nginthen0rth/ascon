@@ -44,3 +44,21 @@ sparkle/
 # OS
 .DS_Store
 Thumbs.db
+.autonomo_logs/
+
+# Artefatos de build do LaTeX (dissertacao/)
+dissertacao/*.aux
+dissertacao/*.bbl
+dissertacao/*.blg
+dissertacao/*.fdb_latexmk
+dissertacao/*.fls
+dissertacao/*.idx
+dissertacao/*.ilg
+dissertacao/*.ind
+dissertacao/*.lof
+dissertacao/*.lot
+dissertacao/*.loq
+dissertacao/*.out
+dissertacao/*.synctex.gz
+dissertacao/*.toc
+dissertacao/*.pdf

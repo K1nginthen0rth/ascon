@@ -224,6 +224,107 @@ def test_permutacao_recebe_keyholdout_em_vez_de_ignorar():
 
 
 # ---------------------------------------------------------------------------
+# ITEM 7 — fit final do SVM-RBF também subamostrado (decisão de 2026-09-02)
+# ---------------------------------------------------------------------------
+
+def _dataset_sintetico_svm(n_keys: int, samples_por_chave: int, seed: int = 0):
+    rng = np.random.default_rng(seed)
+    n = n_keys * samples_por_chave
+    X = rng.normal(size=(n, 5))
+    y = rng.integers(0, 2, size=n)
+    groups = np.repeat([f"key_{i}" for i in range(n_keys)], samples_por_chave)
+    return X, y, groups
+
+
+def test_svm_subsample_respeita_o_tamanho_pedido():
+    """`_svm_subsample` é o bloco que faltava: antes desta correção o fit
+    final usava `X_train`/`y_train` inteiros, sem nenhum corte — daí o
+    orçamento de 40-80h medido pela 6a auditoria (escala n^2,85)."""
+    X, y, groups = _dataset_sintetico_svm(n_keys=50, samples_por_chave=200)  # 10.000
+    Xs, ys, gs = caminho_a._svm_subsample(X, y, groups, size=1000, seed=7)
+    assert len(ys) == 1000
+    assert Xs.shape == (1000, X.shape[1])
+    assert len(gs) == 1000
+
+
+def test_svm_subsample_nao_corta_se_ja_menor_que_o_alvo():
+    X, y, groups = _dataset_sintetico_svm(n_keys=5, samples_por_chave=10)  # 50
+    Xs, ys, gs = caminho_a._svm_subsample(X, y, groups, size=1000, seed=7)
+    assert len(ys) == 50  # devolve tudo, não estoura pedindo mais do que existe
+
+
+def test_fit_svm_with_search_fit_final_usa_subamostra_nao_o_fold_inteiro():
+    """Regressão do orçamento de 40-80h: o fit final tem que rodar em
+    `SVM_FINAL_FIT_SUBSAMPLE` amostras, não nas 10.000 do fold completo —
+    e isso precisa aparecer registrado no dict de metadados retornado,
+    não só acontecer em silêncio."""
+    X, y, groups = _dataset_sintetico_svm(n_keys=50, samples_por_chave=500)  # 25.000
+    modelo, meta = caminho_a.fit_svm_with_search(X, y, groups, seed=7)
+    assert meta["final_fit_subsample"] == caminho_a.SVM_FINAL_FIT_SUBSAMPLE
+    assert meta["final_fit_subsample"] < len(y)
+    # o SVM ajustado de fato viu poucas amostras de suporte, nao 10.000
+    assert modelo.support_.shape[0] <= meta["final_fit_subsample"]
+
+
+def test_fit_svm_with_search_grupos_insuficientes_tambem_subamostra():
+    """O caminho de fallback (poucos grupos para CV interna) também
+    precisa respeitar `SVM_FINAL_FIT_SUBSAMPLE` — não só o caminho
+    principal da busca de hiperparâmetros."""
+    X, y, groups = _dataset_sintetico_svm(n_keys=1, samples_por_chave=25000)
+    _, meta = caminho_a.fit_svm_with_search(X, y, groups, seed=7)
+    assert meta["search"] == "pulada (grupos insuficientes)"
+    assert meta["final_fit_subsample"] == caminho_a.SVM_FINAL_FIT_SUBSAMPLE
+    assert meta["final_fit_subsample"] < len(y)
+
+
+def test_subsampled_svc_trunca_o_fit():
+    """Achado ao vivo (2026-09-02): o SVM-RBF DENTRO do Stacking não
+    passava por `fit_svm_with_search` — era um `SVC` cru, sem nenhuma
+    subamostra, ajustado várias vezes por fold pela CV interna do
+    `StackingClassifier`. Rodando o Caminho A completo pela primeira vez
+    com dado real, isso sozinho travou um fold por horas."""
+    X, y, groups = _dataset_sintetico_svm(n_keys=50, samples_por_chave=500)  # 25.000
+    modelo = caminho_a.SubsampledSVC(C=1.0, gamma="scale", random_state=7)
+    modelo.fit(X, y)
+    assert modelo._svc.support_vectors_.shape[0] <= caminho_a.SVM_FINAL_FIT_SUBSAMPLE
+    modelo.predict(X[:10])  # não levanta
+    modelo.decision_function(X[:10])  # não levanta
+    assert not hasattr(modelo, "predict_proba"), (
+        "predict_proba não pode existir sem probability=True — "
+        "senão o StackingClassifier tenta chamar e quebra em runtime, "
+        "e probability=True adiciona sua PRÓPRIA CV interna (Platt scaling), "
+        "reintroduzindo o mesmo tipo de custo que esta classe existe para evitar."
+    )
+
+
+def test_build_stacking_model_usa_svm_subamostrado():
+    """Trava a troca do SVC cru pelo SubsampledSVC dentro do Stacking —
+    sem isso, o teste anterior não garante nada sobre o pipeline real."""
+    groups = np.repeat([f"key_{i}" for i in range(10)], 5)
+    stack = caminho_a.build_stacking_model(seed=7, groups=groups)
+    svm_estimator = dict(stack.estimators)["svm"]
+    assert isinstance(svm_estimator, caminho_a.SubsampledSVC)
+
+
+def test_build_stacking_model_nao_usa_gamma_scale():
+    """Regressão do achado ao vivo de 2026-09-02: `gamma="scale"` (o
+    default do sklearn, calculado a partir de 1/(n_features*X.var())) fez
+    o SVM do Stacking prever UMA ÚNICA classe sempre em dado real, nos 3
+    primeiros pares rodados (Ascon-vs-GIFT, Ascon-vs-Grain,
+    Ascon-vs-Schwaemm) — os 20.000 pontos da subamostra viraram vetor de
+    suporte inteiros (kernel achatado a ponto de virar quase constante).
+    `gamma=0.01` (valor fixo, não depende da variância da amostra) não
+    reproduz o problema. Não é sobre estabilidade sintética — é travar que
+    ninguém troque de volta pro default sem repetir a verificação em dado
+    real."""
+    groups = np.repeat([f"key_{i}" for i in range(10)], 5)
+    stack = caminho_a.build_stacking_model(seed=7, groups=groups)
+    svm_estimator = dict(stack.estimators)["svm"]
+    assert svm_estimator.gamma != "scale"
+    assert svm_estimator.gamma == 0.01
+
+
+# ---------------------------------------------------------------------------
 # ITEM 6 — `--max-train-samples` colapsava a diversidade de chaves
 # ---------------------------------------------------------------------------
 

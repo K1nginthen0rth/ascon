@@ -42,6 +42,7 @@ sys.path.insert(0, str(REPO_ROOT))
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 from lightgbm import LGBMClassifier  # noqa: E402
+from sklearn.base import BaseEstimator, ClassifierMixin, clone  # noqa: E402
 from sklearn.ensemble import (  # noqa: E402
     RandomForestClassifier, StackingClassifier, VotingClassifier,
 )
@@ -88,9 +89,22 @@ _NON_FEATURE_COLS = {
 
 # Subamostra para a busca de hiperparâmetros do SVM. Motivo (dado real do
 # v1): a busca em grade completa custou 139min a 38.400 amostras/fold;
-# no v2 (76.800/fold) extrapolaria para 15-30h+. Busca em subamostra +
-# fit final único no fold completo — decisão aceita no planejamento.
+# no v2 (76.800/fold) extrapolaria para 15-30h+.
 SVM_SEARCH_SUBSAMPLE = 6000
+
+# Subamostra também para o FIT FINAL (não só a busca) — decisão do
+# Nycolas em 2026-09-02. O plano original só subamostrava a busca de
+# hiperparâmetros e fazia o ajuste final no fold completo; a 6a auditoria
+# mediu escala empírica de n^2,85 para o SVM-RBF e projetou 40-80h de CPU
+# só para essa etapa no Caminho A inteiro — orçamento que nunca tinha
+# sido contabilizado. Com escala n^2,85, subamostrar o fit final para
+# 20.000 (>3x a subamostra da busca, para não jogar fora toda a vantagem
+# de mais dados) reduz o custo do fit final por um fator de
+# aproximadamente (N_fold/20000)^2,85 em relação ao fold completo — dezenas
+# de vezes mais rápido. Custo: menos poder estatístico no resultado do
+# SVM especificamente. Os outros 4 modelos (RandomForest, LinearSVC,
+# XGBoost, LogisticRegression) continuam no fold completo, sem alteração.
+SVM_FINAL_FIT_SUBSAMPLE = 20000
 SVM_GRID = [
     {"C": c, "gamma": g}
     for c in (1.0, 10.0)
@@ -190,13 +204,75 @@ def build_models(seed: int = SEED_MODEL) -> dict:
     }
 
 
+def _svm_subsample(
+    X: np.ndarray, y: np.ndarray, groups: np.ndarray, size: int, seed: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Subamostra aleatória por amostra (não por chave — não há CV nem
+    key-holdout dentro desta subamostra, só um `.fit()` direto, então não
+    há vazamento a evitar aqui)."""
+    n = len(y)
+    if n <= size:
+        return X, y, np.asarray(groups)
+    rng = np.random.default_rng(seed)
+    idx = rng.choice(n, size=size, replace=False)
+    return X[idx], y[idx], np.asarray(groups)[idx]
+
+
+class SubsampledSVC(BaseEstimator, ClassifierMixin):
+    """SVC(kernel="rbf") que subamostra para `SVM_FINAL_FIT_SUBSAMPLE`
+    antes de ajustar — achado de 2026-09-02.
+
+    O `StackingClassifier` chama `.fit()` no SVM-RBF de `base_estimator`
+    uma vez por split da CV interna (para gerar as features OOF do
+    meta-modelo) MAIS uma vez no treino completo — no fold inteiro
+    (~9.600 amostras) ou no trainval inteiro do modelo final (~48.000+),
+    SEM NENHUMA subamostra. É um SVM-RBF diferente do "SVM-RBF" isolado
+    que `fit_svm_with_search` já corrigia; a correção daquele não cobria
+    este, escondido dentro de `build_stacking_model`. Com a escala n^2,85
+    medida pela 6a auditoria, isso sozinho travou uma rodada real por
+    horas num fold só (achado ao vivo rodando o Caminho A completo).
+    Mesmo tratamento aqui: subamostra por amostra (sem CV própria dentro
+    do `.fit()`, então não há vazamento de chave a evitar na subamostra
+    em si)."""
+
+    def __init__(self, C: float = 1.0, gamma="scale", random_state: int = SEED_MODEL):
+        self.C = C
+        self.gamma = gamma
+        self.random_state = random_state
+
+    def fit(self, X, y):
+        Xs, ys, _ = _svm_subsample(
+            np.asarray(X), np.asarray(y), np.zeros(len(y)),
+            SVM_FINAL_FIT_SUBSAMPLE, self.random_state,
+        )
+        # SEM probability=True de propósito, igual ao SVC original que
+        # substitui: Platt scaling roda sua PRÓPRIA CV interna dentro do
+        # .fit(), multiplicando o custo de novo. StackingClassifier cai
+        # para decision_function automaticamente quando predict_proba
+        # não existe (por isso esta classe não define esse método).
+        self._svc = SVC(kernel="rbf", C=self.C, gamma=self.gamma,
+                        random_state=self.random_state)
+        self._svc.fit(Xs, ys)
+        self.classes_ = self._svc.classes_
+        return self
+
+    def predict(self, X):
+        return self._svc.predict(X)
+
+    def decision_function(self, X):
+        return self._svc.decision_function(X)
+
+
 def fit_svm_with_search(
     X_train: np.ndarray, y_train: np.ndarray, groups: np.ndarray,
     seed: int = SEED_MODEL,
 ) -> tuple[SVC, dict]:
     """
-    SVM-RBF com busca de hiperparâmetros em SUBAMOSTRA e fit final no
-    fold completo (ver constante SVM_SEARCH_SUBSAMPLE para o motivo).
+    SVM-RBF com busca de hiperparâmetros em SUBAMOSTRA e fit final TAMBÉM
+    em subamostra (ver `SVM_SEARCH_SUBSAMPLE`/`SVM_FINAL_FIT_SUBSAMPLE`
+    para o motivo e o custo — decisão do Nycolas em 2026-09-02, resolvendo
+    o orçamento medido pela 6a auditoria em 40-80h para o fit final sozinho
+    no fold completo).
 
     **CV interna GROUP-AWARE (por `key_id`), não estratificada simples.**
     O plano exige isso explicitamente e a diferença é real: com
@@ -206,22 +282,20 @@ def fit_svm_with_search(
     com key-holdout íntegro), mas escolheria hiperparâmetros calibrados
     para um cenário que não existe no teste.
     """
-    rng = np.random.default_rng(seed)
-    n = len(y_train)
-    if n > SVM_SEARCH_SUBSAMPLE:
-        idx = rng.choice(n, size=SVM_SEARCH_SUBSAMPLE, replace=False)
-        Xs, ys, gs = X_train[idx], y_train[idx], np.asarray(groups)[idx]
-    else:
-        Xs, ys, gs = X_train, y_train, np.asarray(groups)
+    Xs, ys, gs = _svm_subsample(X_train, y_train, groups, SVM_SEARCH_SUBSAMPLE, seed)
 
     n_groups = len(np.unique(gs))
     n_splits = min(3, n_groups)
     if n_splits < 2:
-        # Chaves demais de menos para CV group-aware: usa a grade default
-        # em vez de cair silenciosamente numa CV que vaza por chave.
+        # Chaves de menos para CV group-aware: usa a grade default em vez
+        # de cair silenciosamente numa CV que vaza por chave. O fit final
+        # ainda respeita a subamostra — esse caminho é raro (poucos grupos
+        # no treino), não o custo dominante do Caminho A.
+        Xf, yf, _ = _svm_subsample(X_train, y_train, groups, SVM_FINAL_FIT_SUBSAMPLE, seed)
         final = SVC(kernel="rbf", random_state=seed, **SVM_GRID[0])
-        final.fit(X_train, y_train)
-        return final, {**SVM_GRID[0], "search": "pulada (grupos insuficientes)"}
+        final.fit(Xf, yf)
+        return final, {**SVM_GRID[0], "search": "pulada (grupos insuficientes)",
+                       "final_fit_subsample": len(yf)}
 
     best_score, best_params = -np.inf, SVM_GRID[0]
     inner_cv = GroupKFold(n_splits=n_splits)
@@ -235,9 +309,12 @@ def fit_svm_with_search(
         if mean_score > best_score:
             best_score, best_params = mean_score, params
 
+    Xf, yf, _ = _svm_subsample(X_train, y_train, groups, SVM_FINAL_FIT_SUBSAMPLE, seed)
     final = SVC(kernel="rbf", random_state=seed, probability=False, **best_params)
-    final.fit(X_train, y_train)
-    return final, {**best_params, "search_subsample": min(n, SVM_SEARCH_SUBSAMPLE),
+    final.fit(Xf, yf)
+    return final, {**best_params,
+                   "search_subsample": len(ys),
+                   "final_fit_subsample": len(yf),
                    "inner_cv": f"GroupKFold({n_splits}) por key_id",
                    "inner_cv_score": round(best_score, 4)}
 
@@ -301,7 +378,13 @@ def build_stacking_model(seed: int, groups: np.ndarray) -> StackingClassifier:
                               tree_method="hist")),
         ("lr", Pipeline([("scaler", StandardScaler()),
                          ("clf", LogisticRegression(max_iter=2000, random_state=seed))])),
-        ("svm", SVC(kernel="rbf", C=1.0, gamma="scale", random_state=seed)),
+        # gamma="scale" (não fixo -- calculado a partir de 1/(n_features*X.var()))
+        # colapsa nesta subamostra: medido, os 20.000 pontos viram vetor de
+        # suporte inteiros e o modelo passa a prever uma única classe sempre
+        # (achado ao vivo, 2026-09-02, rodando o Caminho A completo pela
+        # primeira vez em dado real -- ver SubsampledSVC). gamma=0.01 (o
+        # mesmo valor já testado em SVM_GRID) não degenera.
+        ("svm", SubsampledSVC(C=1.0, gamma=0.01, random_state=seed)),
     ]
     return StackingClassifier(
         estimators=estimators, final_estimator=LogisticRegression(max_iter=2000, random_state=seed),
