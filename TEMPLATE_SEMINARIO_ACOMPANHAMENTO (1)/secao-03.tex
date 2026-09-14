@@ -1,0 +1,99 @@
+% -----
+% ARQUIVO: secao-03.tex
+% VERSÃO: 1.1
+% DATA: Abril de 2016
+%
+% SEÇÃO DE ACOMPANHAMENTO DO TRABALHO DE DISSERTAÇÃO
+%
+% NÃO MEXA NAS SEÇÕES, SOMENTE EDITE O CONTEÚDO.
+% -----
+
+\chapter{Acompanhamento do Trabalho}
+Esta seção detalha as tarefas já realizadas, as tarefas em andamento e a cumprir, os resultados parciais e a avaliação do andamento do trabalho.
+
+
+\begin{tarefac} Revisão de literatura 
+A tarefa inicial foi a condução de duas revisões de literaturas, a primeira, com o foco na precisão teve o objetivo de mapear o problema especifico que seria alvo da atual dissertação. Seu objetivo foi mapear artigos sobre identificação algorítmica de cifras a partir de criptogramas, organizada em quatro eixos: estudos que estabelecem, com classificadores clássicos, que descritores de bytes cifrados carregam informação suficiente para distinguir algoritmos; a transição para arquiteturas de aprendizado profundo nessa mesma tarefa; um eixo transversal sobre mecanismos de vazamento em protocolos de avaliação; e a lacuna que a dissertação ocupa. Seis trabalhos foram revisados em profundidade: \citet{mello_xexeo_2018}, sete algoritmos de bloco clássicos em ECB/CBC; \citet{yuan2022}, o ensemble HKNNRF sobre estatísticas NIST SP 800-22; \citet{sikdar_kule_2024}, um transformador BERT sobre cifras majoritariamente clássicas; e, na linha de distinguishers neurais para criptanálise diferencial, \citet{gohr_2019}, \citet{benamira_2021} e \citet{su2025neural}. Nenhum dos seis trabalhos avalia o par Ascon-AEAD128/GIFT-COFB nem esquemas AEAD padronizados, o que estabeleceu a lacuna inicial de cobertura desta pesquisa.
+
+A segunda RSL teve como objetivo fortalecer a dissertação, ao buscar novas técnicas e possibilidades de melhoria, ampliando a fundamentação teórica e fornecendo maior respaldo científico às escolhas metodológicas adotadas na pesquisa. Foi conduzida, segundo o protocolo de \citet{kitchenham_charters_2007} e relatada conforme o PRISMA 2020, sobre identificação de algoritmos criptográficos por aprendizado de máquina a partir de ciphertexts. A busca cobriu cinco bases (Scopus, IEEE Xplore, ACM Digital Library, SpringerLink e Web of Science) e foi encerrada em agosto de 2026. Após deduplicação, 864 registros únicos foram triados por título e resumo no Rayyan, dos quais 51 avançaram para leitura de texto completo e 21 estudos, publicados entre 2016 e 2026, foram incluídos na análise, os 30 restantes foram considerados adjacentes, sendo separados para estudo futuro. A extração cobriu objetivo, algoritmos avaliados, modelos, representação, protocolo experimental e limitações de cada estudo, sem meta-análise, já que os trabalhos usam datasets, algoritmos e definições de classe distintos entre si. O achado central é a ausência de cobertura: nenhum dos 21 estudos avalia Ascon, GIFT-COFB ou as demais finalistas do processo de padronização de criptografia leve do NIST, e nenhum avalia modo de criptografia autenticada. Um segundo achado, transversal a oito dos estudos incluídos, é a degradação de desempenho por granularidade da tarefa, com indício, levantado por \citet{tan_ji_2016}, de que o comprimento de bloco compartilhado entre algoritmos, não sua identidade, é o que efetivamente se separa nesses experimentos.
+
+
+\end{tarefac}
+
+
+
+
+
+
+\begin{tarefac}Implementação da infraestrutura criptográfica de referência
+Foram implementados wrappers em Python, Interface) no modo API out-of-line, para as implementações de referência em C do Ascon-AE via CFFI (C Foreign FunctionAD128 e do GIFT-COFB. Essa abordagem permite invocar diretamente as funções de cifragem e decifragem sem o overhead de gerenciamento de processos externos, ao mesmo tempo em que preserva integralmente o código de referência oficial, sem qualquer modificação. A corretude de ambas as implementações foi validada por meio dos vetores de teste oficiais (Known Answer Tests, KATs) distribuídos pelo NIST. 
+
+Posteriormente infraestrutura de wrappers foi estendida para mais dois algoritmos de criptografia leve, que foram selecionados entre os 10 finalistas NIST, por terem uma arquitetura diferente dos já implementados, trazendo assim uma maior diversidade, ambos foram implementados seguindo a mesma abordagem via CFFI sobre as implementações de referência em C. Grain-128AEAD, uma cifra de fluxo baseada em LFSR e NFSR, difere dos dois algoritmos anteriores por ter nonce e tag menores, 96 e 64 bits respectivamente. Schwaemm256-128, uma construção em esponja da família SPARKLE baseada em operações ARX, tem o maior nonce do conjunto, 256 bits. Os 1.089 vetores de teste dos quatro algoritmos foram validados com sucesso em sua totalidade, com tempo de execução inferior a 10 milissegundos.  
+\end{tarefac}
+ 
+\begin{tarefac}
+ Foi construído um dataset encadeado de 180.000 criptogramas, a partir de 300 chaves e 100 amostras de texto em claro por chave, cifradas pelos quatro algoritmos de criptografia leve avaliados e por dois controles, AES-ECB e um gerador de números pseudoaleatórios, com a mesma chave, o mesmo nonce e o mesmo texto em claro entre os seis. O texto em claro é fixo em 64 KB por amostra, com 80\% extraído do Standardized Project Gutenberg Corpus e 20\% de imagens em tons de cinza do ImageNet-1k, sorteados por amostra. As chaves foram geradas por um mecanismo determinístico validado contra vetores de teste oficiais (CAVP). O dataset foi submetido a cinco verificações de integridade: unicidade de nonces por chave, uniformidade de bytes por teste qui-quadrado (taxa de rejeição abaixo de 10\% ao nível de significância de 5\%), taxa de compressão média próxima de 1,0, verificação de decifragem ponta a ponta sobre 100 amostras aleatórias e manifesto com hash SHA-256 dos binários, seeds e parâmetros de geração. O veredito da validação foi de aprovação em todos os critérios.
+
+
+\end{tarefac}
+ 
+ 
+ 
+\begin{tarefac}Extração e seleção de características estatísticas
+
+O extrator de características foi ampliado de seis para doze famílias e de 307 para 641 dimensões medidas, mantendo as seis famílias originais, histograma de bytes, entropia, n-gramas, autocorrelação, complexidade e espectro de Fourier, e acrescentando seis novas: suíte completa de testes de aleatoriedade do NIST SP 800-22, momentos estatísticos, distribuição de peso de Hamming, densidade espectral por Welch, blocos de bits e características da região da tag de autenticação. A extração foi reimplementada para processar o dataset em fluxo, em vez de carregar o parquet inteiro em memória, viabilizando sua aplicação às 180.000 amostras do v2. Sobre esse vetor ampliado, foi implementado um pipeline de seleção em cinco estágios, aplicado exclusivamente à partição de treinamento de cada fold da validação cruzada. O primeiro normaliza cada característica por z-score, corrigindo o viés que famílias de escalas absolutas muito diferentes, como contagens de histograma e valores de entropia, introduziam no estágio seguinte. O segundo aplica um limiar de variância, descartando características quase constantes entre as amostras. O terceiro ordena as características por informação mútua com o rótulo. O quarto aplica mRMR (minimum Redundancy Maximum Relevance), que define o conjunto final ao equilibrar relevância individual para o rótulo e redundância mínima entre as características escolhidas entre si. O quinto é o Boruta, que compara a importância de cada característica real contra cópias embaralhadas dela mesma.
+\end{tarefac}
+ 
+ 
+ 
+\begin{tarefac}
+Modelagem e avaliação experimental - características estatísticas clássicas:
+Foram avaliados quatro classificadores sobre as 307 características estatísticas (Caminho A): Random Forest, SVM com kernel RBF (otimizado por busca em grade sobre 16 combinações de hiperparâmetros), LinearSVC e XGBoost. A avaliação seguiu protocolo estatístico rigoroso, incluindo F1-macro como métrica principal, intervalos de confiança via bootstrap (1.000 reamostragens) e teste de McNemar para comparações pareadas entre modelos, com correção de Bonferroni. Os quatro classificadores convergiram para F1-macro próximo de 0,50, compatível com a hipótese nula de indistinguibilidade.
+\end{tarefac}
+ 
+ 
+ 
+\begin{tarefac} Implementação dos caminhos experimentais e da consolidação estatística
+Foram implementados os seis caminhos experimentais do protocolo v2 e o script de consolidação estatística entre eles. O Caminho A reúne os classificadores clássicos (Random Forest, SVM RBF, LinearSVC, XGBoost, Regressão Logística) sobre as 641 características extraídas, acrescidos de réplicas fiéis de três técnicas publicadas na literatura, o ensemble HKNNRF de \citet{yuan2022}, o XGB-LGBM sobre peso de Hamming de \citet{zhao_hamming_2023} e o Transformer E20 de \citet{yuan_e20_2026}. Os Caminhos B e C extraem representações latentes por CNN unidimensional e bidimensional, respectivamente; o Caminho D combina as três representações, estatística e as duas latentes, em um classificador híbrido; o Caminho E é um Transformer hierárquico com atenção local e global sobre os bytes crus; e o Caminho F é um meta-classificador por stacking sobre as saídas dos cinco caminhos anteriores. 
+\end{tarefac}
+
+
+
+
+
+ 
+\section{Tarefas a Cumprir}
+ \begin{tarefanc}Execução dos Caminhos B, C e E
+ 
+ Está planejada a execução dos Caminhos B, C e E, que extraem e classificam a partir de representações latentes de CNN unidimensional, CNN bidimensional e do Transformer hierárquico próprio, respectivamente, sobre as 180.000 amostras de criptogramas.
+\end{tarefanc}
+
+\begin{tarefanc}Execução dos Caminhos D e F
+Os Caminhos D e F, o classificador híbrido sobre a concatenação das representações estatística e latentes, e o meta-classificador por stacking sobre as saídas dos cinco caminhos anteriores, dependem da conclusão dos Caminhos B, C e E e serão executados na sequência.
+\end{tarefanc}
+ 
+\begin{tarefanc}Consolidação estatística e redação final
+
+Após a execução dos seis caminhos, será realizada a consolidação estatística entre eles, com correção de Benjamini-Hochberg para taxa de descoberta falsa entre as múltiplas comparações, teste de McNemar pareado com correção de Bonferroni e estratificação de erro por classe. Os capítulos da dissertação relativos a resultados, discussão e conclusão serão redigidos a partir dessa consolidação, hoje pendente da execução completa dos caminhos experimentais.
+\end{tarefanc}
+ 
+
+
+\section{Resultados Parciais}
+Nos experimentos de classificação conduzidos, nenhum modelo atingiu desempenho estatisticamente superior ao acaso (F1-macro $\approx$ 0,50) na tarefa de distinguir Ascon-AEAD128 de GIFT-COFB, com intervalos de confiança bootstrap consistentemente cobrindo o valor de referência do acaso. Esse resultado confirma a hipótese nula (H0) e é consistente com as garantias teóricas de segurança esperadas para esquemas AEAD modernos.
+
+
+
+\section{Cronograma Atualizado}
+
+O cronograma para o desenvolvimento das atividades relacionadas a este trabalho de dissertação de mestrado pode ser visto na Figura 3.1.
+
+% #CRONOGRAMA
+\begin{figure}[!h]
+	\centering
+	\includegraphics[width=0.9\textwidth]{img/x.png}
+	\caption{Cronograma de Disserta\c{c}\~{a}o.}
+	\label{fig:cronograma}
+\end{figure}
+
+\section{Avaliação do Andamento do Trabalho}

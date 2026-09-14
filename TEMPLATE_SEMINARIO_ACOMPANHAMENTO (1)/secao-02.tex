@@ -1,0 +1,65 @@
+% -----
+% ARQUIVO: secao-02.tex
+% VERSÃO: 1.1
+% DATA: Abril de 2016
+%
+% SEÇÃO DE INTRODUÇÃO DO RELATÓRIO DO TRABALHO DE ACOMPANHAMENTO
+%
+% NÃO MEXA NAS SEÇÕES, SOMENTE EDITE O CONTEÚDO.
+% -----
+
+\chapter{Introdu\c{c}\~{a}o}
+
+Este relatório descreve a trajetória completa das atividades de pesquisa desenvolvidas até o momento na dissertação de mestrado. A pesquisa investiga se criptogramas produzidos por quatro algoritmos de criptografia leve, padronizados ou finalistas do processo do NIST, Ascon-AEAD128, GIFT-COFB, Grain-128AEAD e Schwaemm256-128, podem ser atribuídos ao algoritmo que os gerou por meio de aprendizado de máquina, quando o observador dispõe apenas do texto cifrado, sem acesso à chave, ao nonce ou ao texto em claro. O conjunto de algoritmos candidatos é conhecido de antemão, de modo que a tarefa consiste em decidir qual entre os quatro produziu um determinado criptograma.
+
+Essa tarefa se situa entre outras que a literatura também trata como distinção, e que diferem entre si pela distribuição de referência adotada em cada caso. O distinguisher de indistinguibilidade compara a saída de uma cifra com uma sequência uniformemente aleatória, e corresponde à própria definição de segurança do esquema. O distinguisher diferencial compara pares de criptogramas gerados a partir de textos em claro com diferença conhecida contra pares aleatórios, e pressupõe que o adversário conheça ou controle a relação entre as entradas; \citet{gohr_2019} introduziu a versão neural dessa abordagem sobre Speck32/64, e \citet{shen_2024_giftascon} a aplicaram a GIFT-128 e Ascon, com acurácia de 99,36\% sobre 7 das 40 rodadas do GIFT-128 e de 69,25\% sobre 4 das 12 rodadas da permutação do Ascon, em ambos os casos sobre a primitiva isolada e com rodadas reduzidas. Os testes estatísticos de aleatoriedade, como a suíte NIST SP 800-22, comparam uma sequência isolada com a hipótese de uniformidade; oito dos vinte e um estudos mapeados na revisão sistemática desta pesquisa os empregam como extratores de características para identificação de algoritmo, uso que pressupõe que cada cifra se afaste da aleatoriedade de maneira própria e reprodutível.
+
+A tarefa desta dissertação adota uma referência distinta das três anteriores: a comparação é feita entre as saídas de dois algoritmos, cada uma individualmente indistinguível de uma sequência aleatória, sobre as primitivas completas e no modo de criptografia autenticada em que operam na prática. Como a indistinguibilidade computacional é transitiva, criptogramas individualmente indistinguíveis de uma sequência uniforme também o são entre si, de modo que a hipótese nula corresponde à previsão teórica para o cenário avaliado. Um resultado positivo, nesse enquadramento, apontaria para a presença de assinaturas estruturais ou de implementação situadas fora do modelo idealizado, como diferenças de comprimento de tag e de nonce, padding ou particularidades do código de referência, possibilidades que o protocolo experimental precisa controlar.
+
+As atividades realizadas incluem: (i) implementação e validação de wrappers criptográficos de referência para os quatro algoritmos
+
+
+
+As atividades realizadas incluem: (i) implementação e validação de wrappers criptográficos de referência para os quatro algoritmos: Ascon, GIFT-COFB, Grain-128AEAD e Schwaemm256-128; (ii) construção de um pipeline de geração de datasets de 180.000 amostras encadeadas entre os quatro algoritmos e dois controles; (iii) extração de 641 características estatísticas dos criptogramas, organizadas em doze famílias, e implementação de um pipeline de seleção em múltiplos estágios; (iv) condução de experimentos de classificação sobre os algoritmos criptograficos leves, com múltiplos modelos e representações, abrangendo características estatísticas clássicas (Random Forest, SVM, LinearSVC e XGBoost), representações latentes extraídas por redes neurais convolucionais unidimensionais e bidimensionais, e uma estratégia híbrida que combina ambas as fontes de informação; (v) implementação de controles positivos e negativos para validar a capacidade do pipeline de detectar sinais estruturais quando presentes;  
+
+O resultado central obtido até o momento, no recorte submetido ao SBSeg 2026, é a confirmação da hipótese nula (H0) em todas as quatro frentes experimentais conduzidas: sob protocolo experimental rigoroso, nenhum dos modelos avaliados, independentemente da representação utilizada, foi capaz de distinguir criptogramas com desempenho estatisticamente superior ao acaso. 
+ 
+
+Nota: Foi utilizada Inteligência Artificial Generativa (ChatGPT ) como ferramenta de apoio na redação e atualização deste relatório.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+\section{Objetivo}
+a dissertação tem como objetivo identificar, entre Ascon-AEAD128, GIFT-
+COFB, Grain-128AEAD e Schwaemm256-128, o algoritmo de criptografia leve (LWC)
+gerador de um criptograma observado, considerando exclusivamente o modelo de acesso
+somente a criptogramas.
+Como objetivos específicos, pretende-se:
+
+\begin{enumerate}
+\item  desenvolver a cadeia de processamento de atribuição algorítmica (pré-processamento,
+extração/seleção de características e treinamento de modelos) para classificar a
+origem do criptograma;
+\item construir um dataset reprodutível de benchmark para aprendizado de máquina.
+
+\end{enumerate}
+
+\section{Problemas de Pesquisa}
+Diferenças de projeto e de implementação entre algoritmos de criptografia leve podem deixar assinaturas estatísticas residuais no criptograma, exploráveis por aprendizado de máquina. Se essas assinaturas permitirem identificar o algoritmo gerador a partir do tráfego cifrado observado passivamente, um atacante reduz seu espaço de busca, direciona a exploração de vulnerabilidades específicas e pode realizar fingerprinting de dispositivos em ecossistemas IoT heterogêneos, mesmo sem acesso à chave. A literatura de identificação de algoritmos criptográficos por ML reporta acurácias elevadas para cifras convencionais, mas poucos estudos avaliam esquemas AEAD leves padronizados por entidades internacionalmente reconhecidas, e principalmente algoritmos selecionados pelo NIST.
+
+\section{Contribuições Esperadas}
+Esta dissertação contribui em três frentes. A primeira é metodológica: um protocolo de geração e avaliação que neutraliza os mecanismos de vazamento identificados na revisão de literatura, reaproveitamento de chave entre treino e teste e seleção de características fora do laço de validação cruzada, aplicado a quatro algoritmos e dois controles cifrados de forma encadeada com a mesma chave, o mesmo nonce e o mesmo texto em claro. A segunda é a evidência empírica: cinco representações independentes do criptograma, descritores estatísticos, duas representações aprendidas por CNN, fusão híbrida e um Transformer hierárquico, entre elas réplicas fiéis de técnicas documentadas na literatura para outros cenários de classificação de cifras, agora testadas em um cenário mais realista e sem vazamento entre treino e teste, avaliadas sob os mesmos controles positivo e negativo, o que configura uma verificação de segurança ampla, sensível a diferentes tipos de assinatura residual que uma única representação poderia deixar passar, e permite comparar a sensibilidade de cada uma em vez de depender de um único classificador para sustentar a conclusão. A terceira é o artefato: um dataset reprodutível de 180.000 criptogramas, com manifesto de geração e validação de integridade documentada, disponível como benchmark para trabalhos futuros de identificação algorítmica, independentemente do resultado encontrado aqui.

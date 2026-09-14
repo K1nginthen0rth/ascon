@@ -1,0 +1,132 @@
+%%
+%
+% ARQUIVO: main.tex
+%
+% VERSÃO: 1.1
+% DATA: Abril de 2016
+% AUTOR: Coordenação PPgSC
+% 
+%  Arquivo tex principal relatório de Avaliação de Trabalho de Dissertação.
+%  Este arquivo SÓ PRECISA SER MODIFICADO NA PARTE DE CONTEÚDO:
+%
+%    a. arquivos secao-02.tex; secao-03.tex; refs.bib.
+%
+%%
+
+% -----
+% CLASSE DO DOCUMENTO DO RELATÓRIO DE TRABALHO DE DISSERTAÇÃO
+% -----
+\documentclass{seminario}
+
+% -----
+% PACOTES LATEX USADOS NO RELATÓRIO DE TRABALHO DE DISSERTAÇÃO
+% -----
+\usepackage[brazilian]{babel}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{tabularx}
+\usepackage{float}
+\usepackage{color}
+\usepackage{amsfonts,amssymb}
+\usepackage[authoryear]{natbib}
+
+\usepackage{enumitem}
+\usepackage{rotating}
+\usepackage{lipsum}
+\usepackage{lastpage}
+\usepackage{stringstrings}
+\usepackage{pgffor}
+
+% -----
+% MARGENS DO DOCUMENTO DO RELATÓRIO DE TRABALHO DE DISSERTAÇÃO
+% -----
+\usepackage{geometry}
+\geometry{
+	a4paper,
+	left=25mm,
+	right=25mm,
+	top=25mm,
+	bottom=30mm,
+	headheight=0mm,
+	headsep=0mm,
+}
+
+% -----
+% DECLARAÇÕES AUXILIARES PARA REFERÊNCIAS
+%
+%  Diferencia \citet e \citep de acordo com a NBR 10520:2002
+% -----
+\DeclareRobustCommand{\NATand}{;}
+\DeclareRobustCommand{\NATetal}{et~al.}
+\makeatletter
+\renewcommand{\NAT@nmfmt}[1]{%
+  \ifNAT@swa\expandafter\MakeUppercase
+  \else\DeclareRobustCommand{\NATand}{ e}\expandafter\@firstofone\fi{{\NAT@up #1}}%
+}
+\makeatother
+
+% -----
+% AMBIENTE DE FIGURAS DO RELATÓRIO DE TRABALHO DE DISSERTAÇÃO
+%
+%  A classe do documento está configurada SOMENTE para figuras no formato EPS.
+%  Logo, use PREFERENCIALMENTE este tipo de arquivo.
+%
+%    a. os arquivos das figuras devem estar no diretório 'img'
+% -----
+\graphicspath{{./img/}}
+
+% -----
+% INÍCIO DO DOCUMENTO DO RELATÓRIO DE TRABALHO DE DISSERTAÇÃO
+% -----
+\begin{document}
+
+% -----
+% DADOS DO RELATÓRIO DE TRABALHO DE DISSERTAÇÃO
+%  ALTERAR o arquivo dados-seminario.tex
+% -----
+\include{dados-seminario}
+
+
+% -----
+% PARTE PRÉ-TEXTUAL DO RELATÓRIO DE TRABALHO DE DISSERTAÇÃO
+% -----
+\makecapa
+\maketitle
+
+\parindent 0.75cm
+
+
+% -----
+% PARTE DE CONTEÚDO DE SEU RELATÓRIO DE TRABALHO DE DISSERTAÇÃO
+%
+% Alterar o conteúdo dos arquivos secao-02.tex / secao-03.tex
+% -----
+\include{secao-02}
+\include{secao-03}
+
+
+% -----
+% PARTE DE REFERÊCIAS BIBLIOGRÁFICAS DO TRABALHO DE DISSERTAÇÃO
+%
+%  As referências do Trabalho de Dissertação devem estar no arquivo refs.bib
+%  Devem seguir o formato bibtex - ver Manual-Referencias.pdf para mais detalhes.
+% -----
+\bibliographystyle{seminario}
+\bibliography{refs}
+
+
+% -----
+% PARTE DE ASSINATURAS DE SEU TRABALHO DE DISSERTAÇÃO
+% -----
+\preparatitulos
+\makeassinaturas
+
+
+% -----
+% FIM DO DOCUMENTO DE SEU TRABALHO DE DISSERTAÇÃO
+% -----
+\label{theend}
+\end{document}
