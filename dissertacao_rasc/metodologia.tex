@@ -1,0 +1,291 @@
+\chapter{Metodologia}
+\label{cap:metodologia}
+
+Este capítulo descreve a metodologia adotada em todas as etapas que permeiam esse trabalho de dissertação.
+
+\section{Visão geral do pipeline}
+
+
+A investigação sobre a distinguibilidade entre Ascon-AEAD128 e GIFT-COFB foi conduzida como um problema de classificação supervisionada, organizada sobre um pipeline reprodutível: cada etapa, da geração dos dados à decisão dos classificadores, foi pensada para que o experimento possa ser refeito a partir do mesmo repositório com os mesmos resultados.
+
+O cenário de ameaça adotado é estritamente ciphertext-only, ou seja, o classificador acessa apenas o criptograma, sem texto claro ou chave. Condições que dificultam o aprendizado de padrões pelos classificadores, já que também delimitam o que pode ser aprendido impedindo que o modelo possa recorrer a pistas externas ou a estruturas da cifra, porém, se aproximando mais a cenários reais. Para reforçar esse isolamento, as duas cifras processam o mesmo texto em claro, a mesma chave e o mesmo nonce. Os algoritmos são as únicas fontes de variação entre as amostras, de forma que qualquer diferença explorável por um classificador deriva dos algoritmos, e não do conteúdo cifrado ou da implementação.
+
+O fluxo completo é ilustrado na Figura~\ref{fig:pipeline} e se decompõe em cinco etapas. Na geração, os criptogramas das duas cifras são produzidos e as implementações são validadas por Testes de Vetores Conhecidos (Known Answer Tests, KAT) antes de qualquer cifragem, o que confirma a correspondência da saída com a especificação e descarta artefatos de implementação.
+Na extração, cada criptograma é convertido em um vetor de 307 atributos da
+sequência de bytes, distribuídos em seis famílias estatísticas. Na seleção, a redução de atributos é aplicada dentro de cada fold da validação cruzada, antes de qualquer contato com o conjunto de
+teste, para que a escolha das variáveis não infle a estimativa de desempenho. No treinamento, os classificadores são ajustados sobre
+os atributos selecionados, com sementes independentes por fold. Na avaliação, o desempenho é medido por F1-macro, e a
+significância é aferida por reamostragem bootstrap e pelo teste de McNemar.
+
+\begin{figure}[htb]
+\centering
+\begin{tikzpicture}[
+    node distance = 5mm,
+    etapa/.style  = {rectangle, draw, rounded corners=2pt, align=center,
+                     minimum width=11cm, minimum height=9mm, font=\small},
+    nota/.style   = {align=left, font=\scriptsize},
+    seta/.style   = {-{Stealth[length=2.5mm]}, thick}
+]
+\node[etapa] (corpus)   {\textbf{Corpus} --- Standardized Project Gutenberg Corpus (SPGC)\\ 30.000 mensagens de 64~KB};
+\node[etapa, below=of corpus] (geracao) {\textbf{Geração} --- cifração pareada Ascon-AEAD128 / GIFT-COFB\\ mesma chave, nonce e texto em claro por par; implementações validadas por KAT};
+\node[etapa, below=of geracao] (extracao) {\textbf{Extração} --- 307 atributos estatísticos em 6 famílias};
+\node[etapa, below=of extracao] (selecao) {\textbf{Seleção (dentro de cada dobra)} --- limiar de variância $\rightarrow$ MI $\rightarrow$ mRMR\\ Boruta como verificação de estabilidade};
+\node[etapa, below=of selecao] (treino)  {\textbf{Treinamento} --- Random Forest, SVM RBF, LinearSVC, XGBoost\\ \textit{key-holdout} 240/60 chaves; GroupKFold com 5 dobras agrupadas por chave};
+\node[etapa, below=of treino]  (aval)    {\textbf{Avaliação} --- F1-macro, IC 95\% via bootstrap, teste de McNemar};
+
+\draw[seta] (corpus)   -- (geracao);
+\draw[seta] (geracao)  -- (extracao);
+\draw[seta] (extracao) -- (selecao);
+\draw[seta] (selecao)  -- (treino);
+\draw[seta] (treino)   -- (aval);
+\end{tikzpicture}
+\caption{Pipeline experimental: da geração dos criptogramas à avaliação estatística.}
+\label{fig:pipeline}
+\end{figure}
+
+%Em paralelo à tarefa principal, dois controles validam o próprio pipeline, um controle positivo, em que há sinal conhecido a ser recuperado, e um controle de separabilidade, em que a distinção entre as classes deve ser perfeita. A leitura do resultado apoia-se nesses controles: se os classificadores não separam as duas finalistas, mas recuperam o sinal dos controles, a ausência de distinção reflete indistinguibilidade empírica entre Ascon-AEAD128 e GIFT-COFB, e não uma limitação do método em detectar sinal onde ele existe.
+
+%Olhar O restante do capítulo detalha cada etapa. A Seção geração do dataset descreve a geração e a validação dos dados; a Seção extração de atributos, a extração dos atributos; a Seção%~\ref{sec:selecao}, a seleção realizada dentro de cada fold; a Seção treinameto dos modelos, os modelos e o protocolo de treinamento; a Seção controle positivos, os controles experimentais; e a Seção conclusão, as métricas e o protocolo de avaliação.
+
+\section{Geração de datasets}
+\subsection{Análise metodológica}
+Antes de criar o dataset de criptogramas, foi realizada uma ampla pesquisa metodológica, com o objetivo de evitar erros de implementação que possam prejudicar a confiabilidade do resultado. Trabalhos recentes mostram que muitos resultados positivos decorrem de falhas no desenho do dataset e do protocolo (por exemplo, reuso de chaves, modos de operação) e não de propriedades intrínsecas dos algoritmos. Isso faz do reforço desses cuidados uma peça central na criação de um dataset confiável.
+
+O primeiro cuidado fundamental é a separação entre treino, validação e teste. \cite{jeong2024} comparam cenários onde treino e teste são altamente correlacionados, nos quais existe repetição de chaves e entrada entre os conjuntos, porém, com cenários não correlacionados, quando se extingue o compartilhamento de chaves e padrões, eles observam quedas substanciais de desempenho, evidenciando que boa parte da acurácia vinha dessa correlação. Semelhantemente, estudos de identificação de algoritmos reportam degradação acentuada quando não há utilização de chave fixa por classe e se passa a amostrar chaves de forma ampla, ou quando há a utilização de chaves distintas entre treino e teste \cite{yuan2022, sikdar_kule_2024}.
+
+Isso significa tratar a chave como unidade de agrupamento e empregar esquemas de validação por grupo, de forma que cada chave pertença a exatamente um split.
+
+Além do cuidado com a separação de chaves, a etapa de seleção de atributos também foi conduzida dentro de cada \textit{fold} de validação cruzada, e não sobre o conjunto completo de dados. \cite{ambroise_mclachlan_2002} demonstram que selecionar atributos antes da divisão em \textit{folds} pode inflar a acurácia em mais de 30 pontos percentuais, criando uma falsa impressão de desempenho que não se sustenta em dados novos. Esse cuidado foi adotado neste trabalho como regra inviolável do protocolo experimental.
+
+
+
+\subsection{Criação do ambiente}
+
+A primeira fase do projeto foi configurar o ambiente de desenvolvimento, garantindo que atendesse à implementação recomendada pelo NIST.
+
+O projeto rodou em uma máquina local com Windows 11. A compilação das implementações foi feita em linguagem C, com o compilador Microsoft Visual C/C++, e o código-fonte usado veio do repositório oficial ASCON-C. Essa implementação define explicitamente os parâmetros criptográficos do algoritmo: chave secreta de 128 bits, nonce público de 128 bits e tag de autenticação de 128 bits.
+
+
+Também foi configurado um ambiente virtual em Python, usado principalmente para manipulação e armazenamento dos dados. Embora a implementação principal seja executada em C, o Python automatiza a geração em larga escala dos criptogramas e organiza os resultados em formatos adequados para os treinamentos de aprendizado de máquina.
+
+
+Para integrar o código C ao ambiente Python, foi usada a biblioteca CFFI (C Foreign Function Interface) no modo API \emph{out-of-line}. Nesse modo, o código-fonte em C da implementação de referência (\texttt{aead.c}) é compilado como extensão nativa do Python, o que permite invocar diretamente as funções \texttt{crypto\_aead\_encrypt} e \texttt{crypto\_aead\_decrypt} sem gerenciar processos externos. Essa abordagem preserva integralmente a implementação oficial, sem nenhuma modificação no código C de referência, e elimina o overhead de inicialização de processos (subprocess) a cada chamada criptográfica. Para rastreabilidade, o hash SHA-256 do binário compilado é registrado automaticamente nos metadados de cada dataset gerado.
+
+Depois de montar o ambiente, foi verificado se ele estava adequado à implementação padronizada pelo NIST, por meio da geração e verificação de Known Answer Tests (KATs). Essa verificação é o procedimento padrão recomendado pelo NIST para garantir que uma implementação criptográfica produz os mesmos resultados da especificação, conforme estabelecido na Seção 6 do NIST SP 800-232. A norma também determina que implementações do Ascon sejam testadas sob o Cryptographic Algorithm Validation Program (CAVP), cujos vetores de referência constituem os KATs oficiais \cite{nist_sp800232_2025}.
+O \texttt{genkat\_aead.c} gera automaticamente um conjunto de vetores de teste com diferentes combinações de chaves, nonces, dados associados e mensagens de entrada, produzindo como saída os respectivos criptogramas e tags de autenticação.
+Foram comparados os arquivos gerados com o arquivo de teste oficial do repositório usando ferramentas padrão de verificação de diferenças entre arquivos. Não houve divergências, os criptogramas produzidos são idênticos aos vetores de teste oficiais.
+
+Como etapa complementar, uma verificação automatizada foi implementada diretamente no wrapper Python. Ela carrega os 1.089 vetores de teste do arquivo oficial \texttt{LWC\_AEAD\_KAT\_128\_128.txt}, executa a cifragem de cada vetor pela interface CFFI e compara o criptograma produzido com o valor esperado. Os 1.089 vetores foram validados com sucesso, cobrindo tamanhos de plaintext e dados associados de 0 a 32 bytes cada. Essa segunda camada garante que não apenas o código C, mas também a interface de integração com Python, opera em conformidade com a especificação NIST SP 800-232 \cite{nist_sp800232_2025}.
+O mesmo procedimento foi aplicado ao GIFT-COFB, cujos 1.089 vetores de teste oficiais (\texttt{LWC\_AEAD\_KAT\_GIFTCOFB128\_128.txt}) também foram validados em sua totalidade.
+Com a validação concluída, a implementação ficou apta para as etapas seguintes de geração do dataset de criptogramas.
+A etapa seguinte foi definir o formato do dataset, garantindo que cada ciphertext contivesse todas as informações necessárias para os treinamentos dos modelos de aprendizado de máquina. O formato Parquet foi escolhido pela eficiência em compressão, leitura e compatibilidade.
+
+Cada registro do dataset contém 14 campos: identificador da amostra (\texttt{sample\_id}), algoritmo, modo de operação, implementação utilizada, identificador da chave (\texttt{key\_id}), identificador do nonce (\texttt{nonce\_id}), comprimento do plaintext (\texttt{len\_pt}), comprimento dos dados associados (\texttt{len\_ad}), comprimento do ciphertext (\texttt{len\_ct}), o ciphertext em si, origem do plaintext (\texttt{plaintext\_source}), seed utilizada, versão do dataset e timestamp de geração. Em conformidade com o cenário ciphertext-only adotado neste trabalho, o dataset final não contém a chave, o nonce nem o plaintext em texto claro; esses dados ficam em arquivos auxiliares, acessíveis apenas para validação e depuração.
+
+Cada dataset é acompanhado de um manifesto em JSON com todos os parâmetros necessários para reprodução: script gerador, versão do código (via hash Git), parâmetros criptográficos, hash SHA-256 do binário utilizado, resultado da validação KAT, número de amostras, tamanhos de plaintext, política de nonce e seed. Esse manifesto permite que qualquer pesquisador reproduza o dataset de forma idêntica.
+
+\subsection{Política de geração de dados}
+\label{sec:particionamento}
+Depois de definido o formato, foi estabelecida uma política de geração de dados para evitar vieses e garantir a diversidade das amostras.
+
+A chave foi mantida fixa ao longo da execução/lote, sendo alterada entre os diferentes lotes. Para cada par de amostras gerado, os algoritmos Ascon-AEAD128 e GIFT-COFB utilizam a mesma chave, nonce e plaintext, de modo que a única variável diferenciadora entre os registros é o algoritmo aplicado. As chaves foram geradas de forma determinística a partir de um gerador pseudoaleatório com seed fixa, garantindo reprodutibilidade completa, e cada chave recebeu um identificador único no formato \texttt{key\_0001}, \texttt{key\_0002}, e assim por diante. Os nonces, de 128 bits, foram gerados com uma política que evita reutilização, um contador global sequencial, com incremento a cada amostra, garantindo que não haja colisões. Essa abordagem alinha a geração de nonce ao requisito R3 da especificação NIST SP 800-232 \cite{nist_sp800232_2025}.
+
+Foram gerados dois datasets complementares. O primeiro, o dataset piloto, foi usado em experimentos preliminares de validação e depois descartado. O segundo, o dataset key-holdout, foi projetado para avaliar a capacidade de generalização dos modelos para chaves nunca vistas durante o treinamento. Esse dataset contém 60.000 amostras distribuídas em 300 chaves e tamanho de plaintext fixo de 64~KB (65.536 bytes), com 100 amostras por chave por algoritmo. As 300 chaves foram divididas em proporção 80/20 pelo critério de \textit{key-holdout}: 240 chaves (48.000 amostras) destinadas a treinamento e validação, e 60 chaves (12.000 amostras) reservadas exclusivamente para a avaliação final dos modelos. Sobre as 240 chaves de treinamento e validação aplicou-se validação cruzada GroupKFold com 5 folds, agrupada por chave, de forma que nenhuma chave aparece em mais de um fold.
+
+\subsection{Plaintext}
+Para evitar vieses de seleção e garantir que a geração do dataset esteja apoiada em bases reconhecidas e descritas na literatura, com vistas à reprodutibilidade futura, foi selecionada uma base com descrições amplas sobre sua construção e adequação científica, amplamente utilizada em trabalhos de Machine Learning: o Standardized Project Gutenberg Corpus (SPGC). Essa escolha evita o uso de coleções montadas de forma ad hoc.
+
+O SPGC representa uma versão padronizada e reprodutível do Project Gutenberg, com mais de 50.000 livros em 56 idiomas e aproximadamente 3 bilhões de tokens. Segundo \cite{Gerlach2018ASP}, a criação do corpus responde ao problema de qualidade recorrente em datasets que usam os textos do Project Gutenberg em pesquisas quantitativas. O trabalho descreve os critérios de inclusão e limpeza adotados, o que torna o SPGC adequado para datasets de criptogramas: permite usar uma base extensa de textos sem recorrer a uma seleção arbitrária de livros ou trechos, reduzindo as chances de viés.
+
+Na literatura sobre criptografia leve não há consenso sobre o tamanho ideal das amostras de plaintext, mas há recomendação para o uso de diferentes tamanhos de mensagens. Segundo o NIST, testes de algoritmos leves devem incluir entradas vazias, mensagens curtas e mensagens longas, capturando tanto o custo fixo de inicialização quanto o custo incremental por bloco, comportamento especialmente relevante em dispositivos restritos, onde o desempenho do algoritmo pode variar bastante conforme o tamanho do dado processado. No dataset piloto, as amostras tiveram comprimento de 0, 1, 8, 16, 32, 64, 128, 256, 512, 1024 e 2048 bytes, para capturar diferentes comportamentos. No dataset principal (key-holdout 60k), foi adotado um comprimento fixo de 64~KB (65.536 bytes) por amostra, maximizando o material estatístico disponível por criptograma e uniformizando o comprimento do ciphertext entre as classes.
+ 
+\subsection{Validação}
+Após a implementação do pipeline, foi realizada uma etapa de validação final para garantir que a implementação em C estava correta, que o dataset gerado é íntegro e que os criptogramas produzidos são consistentes com a especificação do algoritmo. A validação foi organizada em cinco verificações complementares.
+
+A primeira verificação analisou a estrutura do dataset, confirmando que todas as colunas obrigatórias estão presentes, que não existem valores nulos e que o número total de amostras corresponde ao esperado (22.000 no dataset piloto e 60.000 no dataset key-holdout).
+
+A segunda verificação tratou da unicidade dos nonces. Para cada chave, foi confirmado que nenhum nonce se repete, atendendo ao requisito de segurança do esquema AEAD. Essa verificação é importante porque a reutilização de nonce sob a mesma chave compromete a confidencialidade do esquema \cite{nist_sp800232_2025}.
+
+A terceira verificação avaliou a uniformidade da distribuição de bytes nos criptogramas por meio do teste $\chi^2$ de aderência. Para cada amostra com criptograma de pelo menos 64 bytes, calculou-se a estatística $\chi^2$ em relação à distribuição uniforme sobre os 256 valores possíveis de byte. No dataset piloto, 5,2\% das amostras rejeitaram a hipótese nula de uniformidade ao nível de significância $\alpha = 0{,}05$; no dataset \textit{key-holdout}, 4,9\%. Esses valores são compatíveis com a taxa nominal de falsos positivos esperada (5\%), indicando que os criptogramas não apresentam padrões estatísticos triviais na distribuição de bytes \cite{knuth1997}.
+
+
+A quarta verificação mediu a compressibilidade dos criptogramas com o algoritmo zlib. Segundo a teoria da informação de \citeonline{shannon_1949}, uma sequência com entropia máxima, como se espera de um criptograma seguro, é incompressível. Calculamos a razão entre o tamanho comprimido e o tamanho original para cada amostra. No dataset piloto, a razão média foi de 1,049; no dataset key-holdout, 1,063. Valores próximos ou ligeiramente acima de 1,0 são esperados, já que criptogramas de boa qualidade devem se comportar como sequências pseudoaleatórias e, portanto, não apresentar redundância explorável por algoritmos de compressão. O valor acima de 1,0 se deve ao overhead do cabeçalho e checksum do formato zlib, que pesa proporcionalmente mais em blocos menores.
+A quinta verificação foi um teste de integridade ponta a ponta (decrypt spot-check). Selecionamos aleatoriamente 100 amostras de cada dataset. Para cada uma, a chave e o nonce correspondentes  foram recuperados a partir dos arquivos auxiliares de validação e decifrado o ciphertext com o wrapper. Em todos os casos, o plaintext recuperado foi idêntico ao original, confirmando que não houve corrupção durante a geração ou a serialização para o formato Parquet.
+Com a estrutura do dataset definida e a validação concluída, o próximo passo é a geração em larga escala do dataset, para extração de atributos (features) a partir dos criptogramas, que servirão como entrada para os modelos de aprendizado de máquina.
+
+\section{Extração de atributos}
+\label{sec:extracao-atributos}
+
+A partir do conjunto de dados descrito, cada criptograma
+foi representado por um vetor de 307 atributos calculados sobre a sequência de
+bytes. Esses atributos seguem o conjunto de descritores estatísticos usado na
+literatura de fingerprinting de criptogramas, de forma que as duas finalistas
+foram descritas pelos mesmos atributos. Os atributos foram organizados em seis
+famílias, cada uma sensível a um aspecto diferente da saída da cifra:
+\begin{enumerate}
+    \item \textbf{Histograma de bytes (256 atributos):} frequência relativa de
+    cada valor de byte de 0 a 255, ou seja, a distribuição marginal do criptograma.
+    Quando a cifra não deixa assinatura residual, essa distribuição se aproxima da
+    uniforme.
+    \item \textbf{Entropia e qui-quadrado (4 atributos):} entropia de Shannon da
+    distribuição de bytes e a estatística qui-quadrado ($\chi^2$) contra a
+    distribuição uniforme, acompanhada do p-valor e dos graus de liberdade
+    associados, calculadas sobre o criptograma inteiro. Todas medem o grau
+    de uniformidade da distribuição de bytes.
+    \item \textbf{Agregados de n-gramas (15 atributos):} estatísticas resumo
+    (entropia, número de n-gramas distintos, frequência do mais comum, $\chi^2$
+    contra a uniforme e taxa de colisão) sobre as distribuições de bigramas,
+    trigramas e tetragramas. Essas estatísticas registram a dependência de curto
+    alcance sem exigir a tabela completa de n-gramas.
+    \item \textbf{Autocorrelação e runs (18 atributos):} coeficientes de
+    autocorrelação nos lags de 1 a 16, número total de runs e o z-score do
+    teste de runs de Wald-Wolfowitz. Esses atributos descrevem a dependência serial no
+    nível dos bytes.
+    \item \textbf{Complexidade de Lempel-Ziv e compressão (4 atributos):}
+    complexidade de Lempel-Ziv (LZ76), sua versão normalizada pelo comprimento do
+    criptograma e as razões de compressão sob dois codificadores (zlib e bz2). Esses
+    atributos medem a redundância residual que as estatísticas de primeira ordem não
+    captam.
+    \item \textbf{Atributos espectrais (10 atributos):} energia em oito bandas de
+    frequência de igual largura, obtida pela Transformada Rápida de Fourier
+    (Fast Fourier Transform, FFT) sobre a sequência de bytes, além da posição
+    normalizada do pico espectral dominante e da entropia espectral. Esses atributos
+    são sensíveis a estruturas periódicas.
+\end{enumerate}
+Somados, os atributos das seis famílias formam o vetor de 307 dimensões
+($256 + 4 + 15 + 18 + 4 + 10$) usado em todos os experimentos com atributos
+clássicos. A extração foi implementada de forma modular, com uma função pura por
+família, e validada por 38 testes unitários. O custo médio foi de cerca de
+1,64\,ms por amostra em hardware padrão. A lista completa dos 307 atributos, com
+nome e descrição de cada um, está no Apêndice~\ref{ap:atributos}.
+
+
+
+
+\section{Seleção de Atributos}
+\label{sec:metodologia-selecao}
+
+A seleção de características reduz o vetor inicial de 307 descritores estatísticos, descrito na Seção~\ref{sec:extracao-atributos}, a um subconjunto compacto e não redundante, com dois objetivos simultâneos: diminuir a dimensionalidade fornecida aos classificadores e oferecer um indicador de quais famílias de descritores carregam informação relevante para a tarefa. Esta seção descreve o pipeline de três estágios empregado, a forma como ele é aplicado estritamente dentro de cada dobra de validação cruzada, e a medida de estabilidade usada para avaliar se as características selecionadas se mantêm consistentes entre dobras.
+
+O primeiro estágio aplica um limiar de variância, descartando descritores cuja variância no conjunto de treinamento da dobra é próxima de zero e que, portanto, não distinguem amostras entre si independentemente da classe. O segundo estágio calcula a Informação Mútua (Mutual Information — MI) entre cada descritor remanescente e o rótulo de classe, quantificando o quanto o conhecimento do valor do descritor reduz a incerteza sobre a classe; descritores com MI próxima de zero não carregam informação discriminativa e são removidos nesta etapa. O terceiro estágio aplica mRMR (minimum Redundancy Maximum Relevance), método que seleciona, dentre os descritores com MI relevante, o subconjunto que maximiza a diferença entre relevância individual e redundância média entre os descritores já selecionados; um descritor altamente relevante mas fortemente correlacionado com outro já incluído contribui com menos informação marginal do que um descritor igualmente relevante e independente, e o mRMR penaliza essa redundância na escolha final.
+
+O Boruta entra como uma quarta etapa, não como parte do pipeline de redução em si, mas como verificação independente de estabilidade sobre o subconjunto produzido pelos três estágios anteriores. O método constrói cópias-sombra de cada descritor, versões permutadas que, por construção, não carregam informação sobre a classe, e testa iterativamente se cada descritor original supera de forma estatisticamente consistente a melhor cópia-sombra em importância segundo um Random Forest. Descritores que não superam as sombras de forma consistente são descartados; os que superam são retidos. Por operar sobre permutações aleatórias e amostras de árvores, o resultado do Boruta varia entre execuções e entre dobras, o que o torna adequado como indicador de estabilidade, e não como filtro determinístico de seleção.
+
+A aplicação desse pipeline depende criticamente do momento em que ocorre em relação à divisão entre treinamento e teste. Se a seleção de características é calculada sobre o conjunto de dados completo antes da divisão, prática observada em parte da literatura discutida na Seção 3.1, as características selecionadas incorporam implicitamente informação sobre as amostras de teste, e o desempenho estimado fica inflado em relação ao que se sustentaria sob avaliação honesta. \citeonline{ambroise_mclachlan_2002} quantificaram esse efeito, demonstrando inflação de acurácia da ordem de dezenas de pontos percentuais quando a seleção precede a divisão. Esta dissertação evita esse mecanismo de vazamento por construção: os três estágios do pipeline, limiar de variância, MI e mRMR, e a verificação por Boruta são recalculados de forma independente em cada dobra do GroupKFold descrito na Seção 2.8, usando exclusivamente as amostras de treinamento dessa dobra. O subconjunto de descritores resultante é então aplicado, sem reajuste, tanto às amostras de treinamento quanto às de validação da mesma dobra, e o conjunto de teste holdout, com chaves nunca vistas em qualquer etapa anterior, permanece isolado de toda a cadeia de seleção.
+
+Essa repetição independente do pipeline por dobra produz, como subproduto, cinco subconjuntos de características potencialmente distintos, um por dobra. A consistência entre esses subconjuntos é quantificada pelo índice de Jaccard, calculado par a par entre os conjuntos de características selecionadas em dobras distintas como a razão entre o tamanho da interseção e o tamanho da união dos dois conjuntos, conforme a definição apresentada na Seção 2.7.
+
+%J(S_i, S_j) = |S_i ∩ S_j| / |S_i ∪ S_j|
+
+
+%em que Sᵢ e Sⱼ são os conjuntos de características retidas nas dobras i e j. O índice varia entre 0, quando os dois conjuntos não compartilham nenhuma característica, e 1, quando os dois conjuntos são idênticos. A estabilidade de seleção reportada nesta dissertação corresponde à média dos índices de Jaccard calculados sobre todos os pares de dobras. Um valor elevado e consistente indica que o procedimento de seleção converge repetidamente para um subconjunto semelhante de descritores, independentemente da partição específica de chaves usada como treinamento, condição esperada quando existe sinal discriminativo genuíno e estável no espaço de características. Um valor baixo indica que o conjunto de descritores selecionados varia substancialmente entre dobras, sem convergência para um núcleo estável, padrão compatível com ausência de sinal discriminativo persistente, e tratado nesta dissertação como evidência metodológica complementar à comparação direta de F1-macro contra o acaso, e não como substituto dela.
+
+
+
+
+
+
+
+\section{Modelos e Protocolo de Treinamento}
+\label{sec:modelos-protocolo}
+
+Sobre o subconjunto de descritores selecionado em cada dobra (Seção~\ref{sec:metodologia-selecao}), o Caminho A treina quatro classificadores: Random Forest (RF), Máquina de Vetores de Suporte (\emph{Support Vector Machine} --- SVM) com núcleo radial (RBF), LinearSVC e XGBoost. Os quatro operam sobre o mesmo vetor de entrada e o mesmo protocolo de particionamento --- GroupKFold com 5 dobras agrupadas por chave, sobre as 240 chaves reservadas para treinamento e validação (Seção~\ref{sec:particionamento}) ---, o que permite comparar diretamente o desempenho entre modelos via teste de McNemar (Seção~\ref{sec:metricas-validacao}). A semente de inicialização dos modelos é fixada em 7, separada da semente de particionamento (42) e da semente de seleção de atributos (13), garantindo que a variação de desempenho entre modelos não decorra de diferenças aleatórias de inicialização.
+
+A Random Forest é treinada com 500 árvores, profundidade máxima ilimitada e balanceamento de classes (\texttt{class\_weight=balanced}), que ajusta o peso de cada amostra na função de perda pelo inverso da frequência de sua classe, cautela desnecessária sob o desenho balanceado desta dissertação (30.000 amostras por algoritmo), mas mantida como prática padrão do protocolo; além de classificador, a RF também é utilizada para a análise de importância dos atributos.
+
+O SVM com núcleo RBF é o único dos quatro modelos que exige ajuste de hiperparâmetro, decorrente da sensibilidade desse núcleo aos parâmetros de regularização ($C$) e de abrangência do núcleo ($\gamma$). O ajuste é feito por busca em grade $4\times4$, dentro de cada dobra de treinamento, sobre o produto cartesiano
+\begin{equation}
+C \in \{0{,}1;\ 1;\ 10;\ 100\}, \qquad \gamma \in \{0{,}001;\ 0{,}01;\ \texttt{scale};\ \texttt{auto}\},
+\end{equation}
+mantendo núcleo RBF e balanceamento de classes fixos nas 16 combinações avaliadas. O par $(C,\gamma)$ de melhor desempenho em cada dobra é selecionado e reportado individualmente; a busca é reexecutada de forma independente em cada dobra, sem compartilhamento do resultado entre elas, de modo que o SVM não opera com um par fixo de hiperparâmetros ao longo do protocolo.
+
+O LinearSVC treina uma fronteira de decisão linear, com a mesma penalização de balanceamento de classes dos demais modelos, e serve como contraponto à SVM com núcleo RBF: por não exigir busca de hiperparâmetro de núcleo, isola o efeito da não linearidade do RBF na comparação entre os dois classificadores baseados em vetores de suporte.
+
+O XGBoost (\emph{Extreme Gradient Boosting}) treina uma sequência de árvores de decisão em que cada árvore corrige o erro residual das anteriores, configurado com 500 estimadores, profundidade máxima igual a 6 e taxa de aprendizado de 0,1, sem busca dedicada de hiperparâmetros --- decisão de escopo justificada pelo papel do XGBoost neste protocolo como quarto ponto de comparação, e não como modelo central da investigação.
+
+Após a validação cruzada, um modelo final de cada tipo é reajustado sobre a totalidade das 240 chaves de treinamento e validação, e avaliado uma única vez sobre as 60 chaves do conjunto de teste \emph{holdout}, isolado de qualquer etapa de ajuste (Seção~\ref{sec:particionamento}). Os hiperparâmetros do SVM final --- incluindo o par $(C,\gamma)$ --- são determinados pelo mesmo procedimento de busca em grade, agora sobre o conjunto de treinamento e validação completo.
+
+\section{CNNs como Extratoras de Atributos}
+\label{sec:cnn-extratoras}
+
+Nos Caminhos B, C e D, esta dissertação emprega Redes Neurais Convolucionais (\emph{Convolutional Neural Networks} --- CNN) exclusivamente como extratoras de representação latente, nunca como classificador final. O desenho é fixo para os três caminhos: a rede é treinada sobre a tarefa de classificação binária, mas o vetor extraído de uma camada intermediária --- e não a saída da rede --- alimenta um classificador clássico treinado separadamente sobre esse vetor latente (Random Forest ou LinearSVC nos Caminhos B e C; Random Forest e XGBoost no Caminho D). Essa separação é implementada pela função \texttt{extract\_latent()}, padrão obrigatório de projeto, aplicada de forma idêntica nos três caminhos.
+
+A escolha decorre de uma limitação observada durante o desenvolvimento: quando a CNN é treinada e avaliada de ponta a ponta --- modo denominado \emph{direct} ---, o otimizador não encontra gradiente útil e a rede converge para prever sempre a mesma classe, produzindo F1-macro próximo de 0,33 (Caminho B) ou variância nula entre \emph{folds} (Caminho C). Essa convergência degenerada é diagnosticada como falha de otimização, não como confirmação da hipótese nula: um classificador que sempre prevê a mesma classe não testa se há sinal discriminativo no criptograma, apenas revela que a rede não encontrou um mínimo informativo sob a configuração de treinamento adotada. Por essa razão, os resultados do modo \emph{direct}, reportados unicamente como diagnóstico, não figuram entre a evidência de indistinguibilidade discutida nesta dissertação; essa evidência vem exclusivamente dos modos \texttt{latent\_rf} e \texttt{latent\_lsvc}, descritos a seguir para cada caminho.
+
+O treinamento das CNNs segue o mesmo protocolo de particionamento dos demais caminhos: key-holdout externo sobre 300 chaves (240 para treinamento e validação, 60 para teste) e validação cruzada GroupKFold com 5 dobras agrupadas por chave (Seção~\ref{sec:particionamento}). A semente de cada execução por dobra é derivada de uma semente-base fixa, somada a um deslocamento por dobra e por modelo (\texttt{BASE\_SEED + fold*100 + model\_offset}), garantindo reprodutibilidade individual de cada combinação de dobra e arquitetura.
+
+O treinamento de ambas as redes usa o otimizador Adam (taxa de aprendizado de $10^{-3}$), entropia cruzada como função de perda e \emph{early stopping} com paciência de 5 épocas sobre um máximo de 30. Cada rede é inicializada do zero em cada dobra da validação cruzada, sem reaproveitamento de pesos entre dobras, e o número de épocas do modelo final é definido pelo arredondamento para cima da média da melhor época por dobra, calculada sobre a época de menor perda de validação em cada uma das cinco dobras.
+
+\subsection{CNN1D}
+\label{sec:cnn1d-caminho-b}
+
+O Caminho B opera sobre o criptograma completo, sem truncamento: cada amostra de entrada tem 65.552 \emph{bytes}, correspondentes aos 65.536 \emph{bytes} de \emph{plaintext} fixo mais os 16 \emph{bytes} da tag de autenticação do formato AEAD (\emph{Authenticated Encryption with Associated Data}). A rede mapeia cada \emph{byte} para um \emph{embedding} de 32 dimensões e aplica três blocos convolucionais unidimensionais com 128, 256 e 512 filtros, cada um seguido de normalização em lote, ativação ReLU e \emph{max pooling}; para manter viável o custo computacional sobre a sequência longa, a primeira camada usa núcleo (\emph{kernel}) de tamanho 8 com passo (\emph{stride}) 4, e as camadas seguintes usam núcleo de tamanho 3 com passo unitário. O vetor latente extraído da penúltima camada, de 512 dimensões, alimenta separadamente um classificador Random Forest (modo \texttt{cnn1d\_latent\_rf}) e um LinearSVC (modo \texttt{cnn1d\_latent\_lsvc}).
+
+\subsection{CNN2D}
+\label{sec:cnn2d-caminho-c}
+
+O Caminho C transforma cada criptograma completo em um mapa de co-ocorrência de bigramas de \emph{bytes}, matriz $256 \times 256$ em que a célula $(i,j)$ registra a frequência de ocorrência do par de \emph{bytes} consecutivos $(i,j)$ ao longo da sequência. Sobre esse mapa, uma CNN bidimensional extrai um vetor latente de 128 dimensões, submetido ao mesmo par de classificadores do Caminho B (\texttt{cnn2d\_latent\_rf} e \texttt{cnn2d\_latent\_lsvc}). A representação por co-ocorrência captura estrutura estatística de segunda ordem entre \emph{bytes} adjacentes, complementar à representação sequencial explorada pelo Caminho B. Uma tentativa inicial de reformular essa matriz como uma sequência linear, eliminando a estrutura bidimensional antes das camadas convolucionais, produziu colapso de classe nos experimentos preliminares e foi descartada; a arquitetura final preserva a matriz $256 \times 256$ como entrada bidimensional íntegra em todas as camadas convolucionais.
+
+\subsection{Fusão Híbrida 947D}
+\label{sec:fusao-hibrida-caminho-d}
+
+O Caminho D concatena os 307 descritores clássicos (Seção~\ref{sec:extracao-atributos}) com os dois vetores latentes extraídos das CNNs treinadas nos Caminhos B e C --- 512 dimensões do CNN1D e 128 do CNN2D ---, compondo um vetor híbrido de 947 dimensões por amostra. Sobre esse vetor, aplica-se o mesmo pipeline de seleção de atributos descrito na Seção~\ref{sec:metodologia-selecao} (limiar de variância, Informação Mútua e mRMR, com verificação de estabilidade via Boruta), agora sobre o espaço combinado de descritores clássicos e latentes. O subconjunto selecionado em cada dobra alimenta, como nos demais caminhos, Random Forest e XGBoost. A execução do Caminho D é encapsulada no \emph{script} \texttt{run\_hybrid\_60k.py}, que aceita retomada de execuções interrompidas (\texttt{--resume}) e diretório de \emph{checkpoint} configurável.
+
+
+\section{Controles Experimentais}
+A interpretação de um resultado nulo, como o obtido no Caminho A desta dissertação, exige distinguir duas explicações concorrentes: a ausência de sinal estatístico distintivo entre Ascon-AEAD128 e GIFT-COFB pode refletir indistinguibilidade genuína entre os dois esquemas, ou pode refletir uma limitação do próprio pipeline experimental, incapaz de detectar padrões mesmo quando eles existem. Um controle positivo, capaz de produzir um sinal de classificação conhecido e esperado, é o instrumento metodológico que permite descartar a segunda explicação. Esta seção descreve o controle positivo adotado nesta dissertação, a cifra de Vigenère, e os controles negativos planejados como verificação complementar do comportamento do pipeline na ausência de qualquer estrutura criptográfica.
+
+A cifra de Vigenère, com chave curta, foi usada como controle positivo. O experimento de controle seguiu exatamente o mesmo pipeline experimental empregado na avaliação do par Ascon-AEAD128/GIFT-COFB: extração dos 307 descritores estatísticos, seleção de características e treinamento dos classificadores Random Forest, SVM com kernel RBF, LinearSVC e XGBoost. A diferença está exclusivamente na origem dos criptogramas: 30.000 amostras cifradas por Vigenère com chave curta e 30.000 amostras de bytes aleatórios, totalizando 60.000 criptogramas de 64 KB, divididos entre as duas classes a serem distinguidas. Sob esse protocolo, a seleção de características reteve 93 descritores, número superior aos 29 retidos na avaliação principal do par AEAD, e os quatro classificadores identificaram a classe Vigenère com recall e precisão iguais a 1,0.
+
+A escolha de Vigenère como controle não é arbitrária. Ao contrário de um esquema AEAD moderno, a cifra de Vigenère com chave curta opera por substituição polialfabética periódica: cada posição do texto em claro é deslocada por um valor que se repete com período igual ao comprimento da chave, o que produz, no criptograma, uma estrutura de repetição estatística detectável por descritores simples, como histogramas de bytes e autocorrelação nas posições correspondentes ao período da chave. Vigenère está, assim, no extremo oposto do espectro de indistinguibilidade descrito na Seção 2.5: um esquema historicamente quebrado por análise de frequência, cuja estrutura interna é, por construção, exatamente o tipo de padrão estatístico que o pipeline de extração e seleção de características desta dissertação foi desenhado para capturar.
+
+O resultado do controle positivo estabelece, portanto, que o pipeline experimental sinaliza corretamente quando existe padrão estatístico a ser detectado: a ausência de sinal no par Ascon-AEAD128/GIFT-COFB não decorre de uma limitação geral do pipeline em capturar diferenças entre criptogramas, uma vez que o mesmo pipeline, aplicado a um esquema com estrutura residual conhecida, recupera essa estrutura com desempenho perfeito. Essa distinção é metodologicamente necessária para que o resultado nulo do Caminho A, descrito no Capítulo 5, seja interpretável como evidência a favor da indistinguibilidade entre os dois esquemas AEAD, e não como um artefato decorrente de descritores mal calibrados, classificadores subdimensionados ou um pipeline insensível por construção.
+
+Como controles negativos, complementares ao controle positivo, o protocolo experimental prevê duas condições adicionais de verificação: o embaralhamento aleatório dos bytes de criptogramas reais, que preserva a distribuição marginal de valores de byte mas destrói qualquer estrutura sequencial ou posicional, e uma classe de bytes gerados por um gerador de números pseudoaleatórios (PRNG) puro, sem qualquer processo de cifração subjacente. Sob essas duas condições, o desempenho esperado de qualquer classificador é o nível de acaso, pela ausência completa de estrutura algorítmica a distinguir. Um desvio relevante desse comportamento esperado indicaria um problema no pipeline de extração de características, no procedimento de validação cruzada, ou em alguma etapa do protocolo experimental anterior ao treinamento dos classificadores, e não uma propriedade genuína dos dados avaliados. Os controles negativos cumprem, assim, papel simétrico ao do controle positivo: onde este verifica a sensibilidade do pipeline à presença de padrão, aqueles verificam sua especificidade na ausência de padrão.
+
+
+
+
+\section{Métricas e Protocolo de Avaliação Estatística}
+\label{sec:metricas-validacao}
+
+A avaliação experimental desta dissertação combina as métricas de desempenho definidas na Seção 2.8 com um protocolo estatístico que determina quando uma diferença observada, em relação ao acaso ou entre classificadores, pode ser considerada estatisticamente significativa. Esta seção especifica esse protocolo, comum aos quatro caminhos experimentais.
+
+A métrica primária é o F1-macro, que pondera precisão e recall igualmente entre as duas classes e é robusta a desbalanceamento. A balanced accuracy é reportada como métrica complementar, junto de precisão e recall por classe nos casos em que a comparação por classe seja informativa. Sob o protocolo binário e balanceado adotado nesta dissertação, o valor esperado de F1-macro e de balanced accuracy, para um classificador sem informação distintiva entre as classes, é 0,50, ponto de referência central na interpretação de todos os resultados do Capítulo 5.
+
+A significância estatística do desempenho observado, em relação ao acaso, é avaliada por intervalo de confiança via bootstrap. O procedimento reamostra, com reposição, o conjunto de predições sobre o conjunto de teste holdout, 1.000 vezes, com seed fixa em 42, e recalcula a métrica de interesse em cada reamostragem, produzindo uma distribuição empírica a partir da qual se extrai o intervalo de confiança de 95\%, delimitado pelos percentis 2,5 e 97,5 dessa distribuição. Um classificador é considerado com desempenho estatisticamente superior ao acaso somente se o limite inferior desse intervalo de confiança exceder 0,50 na classificação binária, ou a linha de base aleatória correspondente em configurações com mais de duas classes. Essa exigência sobre o limite inferior, e não sobre o valor pontual da métrica, é o que torna o critério conservador: um F1-macro pontual acima de 0,50 não basta para rejeitar a hipótese de desempenho ao acaso se a incerteza amostral, refletida no intervalo, ainda cobrir esse valor.
+
+Comparações entre pares de classificadores empregam o teste de McNemar, aplicado sobre os vetores binários de acerto e erro de cada classificador no mesmo conjunto de teste. O teste de McNemar avalia se a discordância entre dois classificadores, casos em que um acerta e o outro erra a mesma amostra, é simétrica, condição compatível com desempenho equivalente, ou assimétrica, condição que indica diferença sistemática de desempenho entre os dois classificadores. Como o protocolo experimental envolve múltiplas comparações pareadas entre os classificadores avaliados em cada caminho, aplica-se a correção de Bonferroni, que divide o nível de significância nominal de 5\% pelo número de comparações realizadas, adotando-se nesta dissertação o limiar conservador de 0,005, de modo a controlar a taxa de falsos positivos decorrente de testes múltiplos.
+
+A combinação desses três elementos, intervalo de confiança via bootstrap sobre o valor absoluto de cada métrica, teste de McNemar sobre a equivalência entre classificadores, e o critério conservador do limite inferior do intervalo, define o padrão de evidência sob o qual o Capítulo 5 interpreta os resultados dos quatro caminhos experimentais. Um caminho experimental é tratado como compatível com a hipótese nula de indistinguibilidade quando todos os classificadores avaliados nesse caminho têm intervalo de confiança de F1-macro cobrindo 0,50, e quando o teste de McNemar não indica diferença estatisticamente significativa entre pares de classificadores após a correção de Bonferroni, condição que, segundo o protocolo aqui definido, indica que os classificadores comportam-se de forma estatisticamente equivalente entre si e ao acaso.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

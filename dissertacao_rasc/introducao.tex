@@ -1,0 +1,140 @@
+% ----------------------------------------------------------
+% Introdução (exemplo de capítulo sem numeração, mas presente no Sumário)
+% ----------------------------------------------------------
+\chapter{Introdução}
+% ----------------------------------------------------------
+
+A difusão de dispositivos inteligentes com severas restrições de tamanho e recursos, capitaneada principalmente pela Internet das Coisas (Internet of Things - IoT), pelos veículos aéreos não tripulados (Unmanned Aerial Vehicles - UAV) e por plataformas embarcadas, aumentou a necessidade por mecanismos criptográficos capazes de operar sob limites de processamento, memória, espaço e energia \cite{Gusita2021LightweightMCDM}. Com projeções apontando que o número de dispositivos conectados excederá dezenas de bilhões até 2030, principalmente em ambientes críticos, a escolha de esquemas que balanceiem segurança e custo computacional passou a ser uma necessidade real, não podendo ser negligenciada.
+
+A criptografia leve (Lightweight Cryptography, LWC) consolidou-se como resposta necessária nesse cenário. Esses algoritmos tipicamente operam com blocos e chaves menores, ou adotam construções simplificadas, visando baixa área de implementação física, baixo consumo energético e menor tempo de execução, sem comprometer excessivamente a segurança \cite{Radhakrishnan2024LWC_MCDM}. O processo de padronização do NIST evidencia a necessidade de oferecer segurança criptográfica mesmo em dispositivos com limites operacionais ou plataformas restritas \cite{Turan2023NISTLWCFinal}: a família Ascon foi selecionada em fevereiro de 2023 como padrão de criptografia leve, e a formalização veio com a publicação do NIST SP 800-232 em agosto de 2025 \cite{nist_sp800232_2025}.
+
+Do ponto de vista teórico, cifras modernas, leves ou convencionais, devem produzir criptogramas indistinguíveis de ruído uniforme para qualquer adversário eficiente, resistindo a diferentes modelos de ataque: texto cifrado conhecido (COA), texto claro conhecido (KPA), texto claro escolhido (CPA) e, em cenários mais fortes, texto cifrado escolhido (CCA). Idealmente, a saída (Criptograma) deve ser indistinguível do aleatório e não pode revelar informação sobre o texto claro sem conhecimento da chave, o que se alinha ao princípio clássico de Shannon de que um criptograma não deve revelar informação sobre o texto em claro sem a chave. Uma formalização computacional usual, e mais forte que essa exigência mínima, é a noção de indistinguibilidade sob ataque de texto em claro escolhido (IND-CPA), que exige que nenhum adversário eficiente consiga distinguir, com vantagem não negligenciável, qual de duas mensagens de mesmo comprimento, por ele escolhidas, foi cifrada, introduzida no arcabouço de \citeonline{GoldwasserMicali1984PE}.
+
+
+Contudo, diferenças de projeto e, principalmente, de implementação podem introduzir assinaturas estatísticas residuais em fluxos cifrados que, poderiam ser exploradas, principalmente, por modelos de aprendizado de máquina \cite{Rukhin2010NIST80022}, \cite{Ahmadzadeh2022EncryptedTraffic}. Isso levanta a hipótese de que a classificação da origem da cifra, sob protocolo experimental controlado, pode revelar a presença (ou ausência) dessas assinaturas \cite{Turan2023NISTLWCFinal}.
+
+Na última década surgiram estudos explorando o uso de técnicas de inteligência artificial na criptoanálise, especialmente em cenários que empregam algoritmos convencionais, sugerindo que modelos podem aprender padrões residuais associados ao projeto e implementação \cite{Ahmadzadeh2022EncryptedTraffic}. Se algoritmos convencionais podem ser parcialmente reconhecidos por padrões residuais, é plausível investigar se o mesmo ocorre com algoritmos LWC modernos, que frequentemente adotam estruturas mais leves, com estados menores e round functions simplificadas \cite{Shen2024LWCSurvey}.
+
+%iniciomudança
+Trabalhos como \cite{Yuan2023HRFLR} e \cite{Kopal2020CiphersNeurons} mostram que modelos de aprendizado de máquina podem, em condições de laboratório e controladas, distinguir criptogramas gerados por diferentes algoritmos LWC a partir de assinaturas sutis em seus padrões de saída, sugerindo que aspectos na construção podem induzir distribuições de bytes ligeiramente distintas.
+%fimmudança
+Porém, a literatura carece de estudos sistemáticos aplicados especificamente a algoritmos leves, com ênfase em controles experimentais e em avaliação de indistinguibilidade, o que configura uma lacuna relevante (\cite{Yuan2023HRFLR}; \cite{Kopal2020CiphersNeurons}; \cite{Leierzopf2021MassiveMLCipherType}).
+%iniciomudança
+A revisão sistemática realizada nesta pesquisa, detalhada no Capítulo~\ref{cap:trabalhos-relacionados}, mapeou 21 estudos sobre identificação de algoritmos criptográficos por aprendizado de máquina em cenário ciphertext-only. Nenhum deles avalia Ascon, GIFT-COFB ou as demais finalistas do processo de padronização de criptografia leve do NIST, e nenhum avalia esquemas operando em modo de criptografia autenticada, condição em que os padrões LWC efetivamente operam na prática.
+%fimmudança
+
+%iniciomudança
+A partir desse contexto, coloca-se a seguinte pergunta de pesquisa: é possível, a partir exclusivamente de criptogramas, identificar qual entre os algoritmos de criptografia leve Ascon-AEAD128, GIFT-COFB, Grain-128AEAD e Schwaemm256-128 gerou um determinado criptograma, utilizando modelos de aprendizado de máquina, com desempenho estatisticamente superior ao acaso?
+%fimmudança
+O problema é enquadrado como atribuição algorítmica por classificação, sem buscar recuperação de chave, revelação de texto em claro ou identificação de fragilidades criptográficas diretas \cite{Turan2023NISTLWCFinal}.
+
+Essa pergunta tem implicações práticas independentemente da resposta. Um resultado positivo indicaria a presença de artefatos estatísticos com consequências operacionais, já que a identificação do algoritmo reduz o custo do atacante, direcionando a busca por vulnerabilidades específicas de implementação e pode permitir a identificação de dispositivos em ecossistemas IoT heterogêneos. Um resultado negativo, por sua vez, fornece evidência empírica de indistinguibilidade prática no cenário avaliado, com valor tanto para validação de protocolos quanto para orientar escolhas de projeto. Reforça-se que nenhum dos dois cenários implica recuperação de chave ou texto em claro, tampouco transforma o algoritmo em inseguro.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+\section{Caracterização do problema}
+
+%iniciomudança
+O problema aqui tratado é de atribuição algorítmica em conjunto fechado: dado
+que um criptograma foi produzido por um entre quatro algoritmos LWC
+conhecidos a priori, com alvo de segurança de 128 bits (Ascon-AEAD128,
+GIFT-COFB, Grain-128AEAD e Schwaemm256-128), investiga-se se é possível
+decidir qual desses quatro o gerou,
+%fimmudança
+sem acesso à chave, nonce ou texto em claro. Em termos operacionais, busca-se
+detectar assinaturas residuais potencialmente deixadas por diferenças
+estruturais e/ou de implementação que, por meio de técnicas de aprendizado de
+máquina, permitiriam classificar a origem do criptograma. Formalmente, adota-se
+a seguinte formulação:
+
+%iniciomudança
+Dado o conjunto de algoritmos $\mathcal{A} = \{$Ascon-AEAD128, GIFT-COFB,
+Grain-128AEAD, Schwaemm256-128$\}$ e um conjunto
+de criptogramas $\mathcal{C}$ gerados por um único
+$A_j \in \mathcal{A}$,
+decidir se existe um classificador $f$ tal que $f(\mathcal{C}) = A_j$ com
+vantagem estatisticamente significativa sobre o acaso.
+%fimmudança
+
+Sob a ótica da teoria de segurança criptográfica, não se espera que seja
+possível identificar o algoritmo apenas a partir do criptograma em um cenário
+ideal. Shannon discute a noção de segurança perfeita (informacional), na qual o
+criptograma não revela informação sobre o texto em claro sem a
+chave~\cite{ShannonWeaver1949MTC}. %iniciomudança
+No cenário computacional moderno, a noção de
+indistinguibilidade é formalizada por definições como IND-CPA
+(indistinguibilidade sob ataque escolhido ao texto em claro), introduzida no
+arcabouço de Goldwasser--Micali~\cite{GoldwasserMicali1984PE}: o adversário
+escolhe duas mensagens de mesmo comprimento, uma delas é selecionada
+aleatoriamente e cifrada, e o adversário deve identificar qual mensagem
+originou o criptograma; a vantagem sobre o acaso nessa identificação precisa
+ser não negligenciável para que o esquema seja considerado inseguro sob esse
+critério. Um criptograma seguro não precisa, necessariamente, ser
+estatisticamente indistinguível de ruído aleatório: a exigência é que um
+adversário eficiente não consiga extrair do criptograma mais informação útil
+do que já possuía antes de observá-lo.
+%fimmudança
+
+%iniciomudança
+Ainda assim, se Ascon-AEAD128, GIFT-COFB, Grain-128AEAD e Schwaemm256-128
+puderem ser consistentemente distinguidos entre si por ML sob um protocolo experimental controlado e explicitamente
+%fimmudança
+especificado (distribuição de mensagens fixada, comprimentos controlados, chaves
+e nonces independentes e sem reuso, datasets balanceados e ausência de metadados
+de implementação), isso não implica, por si só, quebra de confidencialidade, mas
+pode indicar não-idealidades práticas com repercussões de segurança e
+privacidade. Do ponto de vista de reconhecimento do ambiente, a capacidade de
+inferir o algoritmo reduz o custo de enumeração do atacante, direciona a busca
+por vulnerabilidades específicas, parâmetros frágeis ou versões problemáticas e
+facilita a priorização de alvos em ecossistemas IoT heterogêneos. Já em censura
+e negação seletiva de serviço, classificar o algoritmo "pelo conteúdo"  pode
+permitir bloquear ou degradar tráfego de um esquema específico sem depender de
+metadados, algo relevante em redes industriais e embarcadas. Há também efeitos
+de privacidade e rastreabilidade, o conjunto algoritmo + implementação pode
+atuar como assinatura de dispositivo ou fornecedor, contribuindo para
+\emph{fingerprinting}.
+
+Um resultado positivo e consistente funcionaria como alarme de engenharia, pode
+haver artefatos de implementação, reuso indevido de nonces, difusão insuficiente
+em mensagens curtas, vieses de empacotamento/padding ou viés experimental,
+evidências que precisam ser diagnosticadas e
+mitigadas~(\cite{Turan2023NISTLWCFinal};
+\cite{Dobraunig2021AsconSecurity}). Já um resultado negativo fornece evidência
+empírica a favor da indistinguibilidade prática dos esquemas LWC no protocolo
+avaliado. Em ambos os casos, o trabalho contribui: ou confirma a expectativa
+teórica sob condições controladas, ou identifica pontos concretos de melhoria
+para o ecossistema.
+
+Não se busca quebrar chaves nem violar confidencialidade, mas medir
+empiricamente se o criptograma carrega informação residual capaz de identificar
+o algoritmo que o gerou.
+
+\section{Objetivo}
+
+%iniciomudança
+Esta dissertação tem como objetivo identificar, entre Ascon-AEAD128, GIFT-COFB, Grain-128AEAD e Schwaemm256-128, o algoritmo de criptografia leve (LWC) gerador de um criptograma observado, considerando exclusivamente o modelo de acesso somente a criptogramas.
+%fimmudança
+
+Como objetivos específicos, pretende-se:
+\begin{itemize}
+    \item desenvolver a cadeia de processamento de atribuição algorítmica
+    (pré-processamento, extração/seleção de características e treinamento de
+    modelos) para classificar a origem do criptograma;
+    \item construir um dataset reprodutível de benchmark para aprendizado de
+    máquina.
+\end{itemize}

@@ -1,0 +1,207 @@
+% =====================================================================
+% CAPÍTULO 5 — RESULTADOS E DISCUSSÃO
+% Fontes dos números: RESULTADOS_FINAIS_4_CAMINHOS.md (caminhos A–D),
+% SBSEG_Nycolas.pdf Fig. 1 (matrizes de confusão do holdout) e
+% reports/AUC_ROC_consolidado.md (AUC, Caminho A).
+% F1 de teste do Caminho A: derivado diretamente das matrizes de
+% confusão (funções determinísticas da matriz); LinearSVC (0,5024,
+% IC [0,494; 0,511]) e SVM (0,5012) conferidos contra os registros.
+% ICs de teste individuais de RF e XGBoost no Caminho A não constam
+% deste texto; se desejar incluí-los, extrair de
+% RESULTADOS_FINAIS_4_CAMINHOS.md e acrescentar à Tabela 5.1.
+% Requer no preâmbulo: \usepackage{booktabs}
+% Labels externos referenciados: cap:metodologia (ajustar se diferir).
+% =====================================================================
+
+\chapter{Resultados e Discussão}
+\label{cap:resultados}
+
+Este capítulo apresenta os resultados da avaliação experimental descrita no Capítulo~\ref{cap:metodologia} e os discute à luz da pergunta de pesquisa formulada na Introdução. As Seções~\ref{sec:res-caminho-a} a~\ref{sec:res-caminho-d} reportam, na ordem, os quatro caminhos experimentais: descritores estatísticos clássicos (Caminho~A), representação aprendida por CNN-1D (Caminho~B), co-ocorrência de bigramas com CNN-2D (Caminho~C) e fusão híbrida de 947 dimensões (Caminho~D). A Seção~\ref{sec:res-controle} reporta o controle positivo, que verifica a sensibilidade do procedimento, e a Seção~\ref{sec:res-sintese} consolida os quatro caminhos e discute as ameaças à validade.
+
+A questão sob investigação é se um adversário com acesso apenas ao criptograma consegue identificar qual dos dois algoritmos, Ascon-AEAD128 ou GIFT-COFB, gerou um dado texto cifrado. Sob o protocolo adotado, com particionamento por chave (\textit{key-holdout}) e seleção de atributos restrita às dobras de treinamento, o desempenho esperado por acaso em um problema binário e balanceado corresponde a F1-macro de 0,50, referência contra a qual todos os resultados deste capítulo são lidos.
+
+\section{Caminho A: descritores estatísticos clássicos}
+\label{sec:res-caminho-a}
+
+Foram avaliados quatro classificadores sobre o vetor de 307 descritores reduzido a 29 atributos pela seleção interna às dobras: \textit{Random Forest} (RF), \textit{Support Vector Machine} com núcleo radial (SVM RBF), \textit{Linear Support Vector Classifier} (LinearSVC) e \textit{Extreme Gradient Boosting} (XGBoost). O F1-macro é reportado como média e desvio-padrão sobre as cinco dobras da validação cruzada agrupada por chave e, de forma independente, sobre o conjunto de teste \textit{holdout} de 12.000 criptogramas (6.000 por classe), cujas chaves não participaram de nenhuma etapa anterior. Os intervalos de confiança de 95\% foram estimados por \textit{bootstrap} com 1.000 reamostragens.
+
+\begin{table}[htb]
+\centering
+\caption{Desempenho no Caminho~A. F1-macro em validação cruzada (média $\pm$ desvio sobre cinco dobras), no conjunto de teste \textit{holdout} e intervalo de confiança de 95\% por \textit{bootstrap}.}
+\label{tab:res-a-f1}
+\begin{tabular}{lccc}
+\toprule
+Classificador & F1 (validação cruzada) & F1 (teste) & IC 95\% \\
+\midrule
+Random Forest & 0,4971 $\pm$ 0,0067 & 0,5011 & [0,492; 0,510] \\
+SVM RBF       & 0,4860 $\pm$ 0,0316 & 0,5012 & [0,492; 0,510] \\
+LinearSVC     & 0,5002 $\pm$ 0,0041 & 0,5024 & [0,494; 0,511] \\
+XGBoost       & 0,4984 $\pm$ 0,0043 & 0,4952 & [0,487; 0,504] \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+A Tabela~\ref{tab:res-a-f1} resume os resultados. Os valores ficaram entre 0,4860 (SVM RBF na validação cruzada) e 0,5024 (LinearSVC no teste), com os intervalos de confiança de 95\% cobrindo 0,50 em todos os casos. O melhor valor de teste, 0,5024 do LinearSVC, situa-se a 0,0024 do acaso e dentro do intervalo de confiança correspondente, [0,494; 0,511]. Nenhum classificador atendeu, portanto, ao critério definido no Capítulo~\ref{cap:metodologia} para desempenho estatisticamente superior ao acaso, que exige limite inferior do intervalo acima de 0,50.
+
+O desvio-padrão do SVM RBF (0,0316) destoa do intervalo de 0,0041 a 0,0067 observado nos demais classificadores e decorre da busca em grade refeita a cada dobra. A Tabela~\ref{tab:res-a-svm} apresenta o par (C, $\gamma$) vencedor em cada dobra e no modelo final: quatro combinações distintas em cinco dobras, e um quinto par no modelo final, diferente de todos os anteriores. A dobra~1, com C~=~1 e $\gamma$~=~\texttt{scale}, produziu o valor atípico de 0,4294, principal responsável pela dispersão elevada; o modelo final, ajustado sobre as 240 chaves de treinamento com C~=~0,1 e $\gamma$~=~0,01, alcançou 0,5012 no teste. Essa ausência de convergência dos hiperparâmetros é lida aqui como evidência de segunda ordem: quando existe estrutura explorável nos dados, a busca em grade tende a reencontrar a mesma região do espaço de hiperparâmetros em dobras diferentes, e o que se observa é o oposto, com a grade oscilando entre soluções sem que nenhuma supere o acaso.
+
+\begin{table}[htb]
+\centering
+\caption{Hiperparâmetros vencedores da busca em grade $4 \times 4$ do SVM RBF, por dobra e no modelo final.}
+\label{tab:res-a-svm}
+\begin{tabular}{lcc}
+\toprule
+Ajuste & C & $\gamma$ \\
+\midrule
+Dobra 1 & 1   & \texttt{scale} \\
+Dobra 2 & 10  & \texttt{scale} \\
+Dobra 3 & 1   & 0,01 \\
+Dobra 4 & 1   & \texttt{scale} \\
+Dobra 5 & 10  & 0,001 \\
+Modelo final & 0,1 & 0,01 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+As matrizes de confusão sobre o \textit{holdout}, consolidadas na Tabela~\ref{tab:res-a-confusao}, mostram distribuição próxima da simétrica entre acertos e erros nas duas classes, sem concentração sistemática em favor de Ascon-AEAD128 ou de GIFT-COFB. A maior assimetria aparece no SVM RBF, que atribuiu 6.366 das 12.000 predições à classe Ascon; esse viés de predição, contudo, não se converteu em desempenho, com o F1-macro permanecendo em 0,5012.
+
+\begin{table}[htb]
+\centering
+\caption{Matrizes de confusão dos quatro classificadores do Caminho~A sobre o conjunto de teste \textit{holdout} (6.000 amostras por classe; Ascon = Ascon-AEAD128, GIFT = GIFT-COFB).}
+\label{tab:res-a-confusao}
+\begin{tabular}{llcc}
+\toprule
+Classificador & Classe real & Pred.\ Ascon & Pred.\ GIFT \\
+\midrule
+Random Forest & Ascon & 3.038 & 2.962 \\
+              & GIFT  & 3.025 & 2.975 \\
+\midrule
+SVM RBF       & Ascon & 3.193 & 2.807 \\
+              & GIFT  & 3.173 & 2.827 \\
+\midrule
+LinearSVC     & Ascon & 3.011 & 2.989 \\
+              & GIFT  & 2.982 & 3.018 \\
+\midrule
+XGBoost       & Ascon & 2.949 & 3.051 \\
+              & GIFT  & 3.007 & 2.993 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+A área sob a curva ROC no conjunto de teste acompanhou o mesmo quadro: 0,4982 para o RF, 0,5064 para o SVM RBF, 0,5064 para o LinearSVC e 0,4906 para o XGBoost, todos a menos de 0,01 do valor de 0,50 que caracteriza um classificador sem poder de separação. O teste de McNemar, aplicado aos seis pares de classificadores com correção de Bonferroni, não indicou diferença significativa em nenhuma comparação, com todos os valores de p acima de 0,23 (Tabela~\ref{tab:res-a-mcnemar}). Os quatro modelos comportam-se, sobre as mesmas amostras, de forma estatisticamente equivalente entre si.
+
+\begin{table}[htb]
+\centering
+\caption{Teste de McNemar entre os pares de classificadores do Caminho~A sobre o conjunto de teste \textit{holdout} (correção de continuidade; limiar de Bonferroni de 0,005).}
+\label{tab:res-a-mcnemar}
+\begin{tabular}{lccc}
+\toprule
+Comparação & Estatística & p-valor & Significativo \\
+\midrule
+RF vs SVM RBF          & 0,006 & 0,9382 & não \\
+RF vs LinearSVC        & 0,038 & 0,8459 & não \\
+RF vs XGBoost          & 0,875 & 0,3496 & não \\
+SVM RBF vs LinearSVC   & 0,172 & 0,6787 & não \\
+SVM RBF vs XGBoost     & 1,095 & 0,2953 & não \\
+LinearSVC vs XGBoost   & 1,395 & 0,2375 & não \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+A verificação de estabilidade da seleção de atributos aponta na mesma direção. O índice de Jaccard médio entre os subconjuntos confirmados pelo Boruta nas cinco dobras foi de 0,32, isto é, a interseção entre os subconjuntos de dobras distintas corresponde, em média, a cerca de um terço da união deles. Se algum grupo de descritores carregasse sinal consistente sobre a origem do criptograma, seria esperado que ele reaparecesse na maioria das dobras; a concordância parcial observada, sem que nenhum classificador ultrapasse o acaso, sugere que a seleção responde a flutuações amostrais, e não a estrutura estável. Esse valor será retomado na Seção~\ref{sec:res-caminho-d}, em contraste com o espaço híbrido.
+
+\section{Caminho B: representação aprendida por CNN-1D}
+\label{sec:res-caminho-b}
+
+O Caminho~B substitui os descritores manuais por uma representação aprendida diretamente da sequência de bytes: a CNN-1D processa o criptograma completo de 65.552 bytes e o vetor latente de 512 dimensões extraído da penúltima camada alimenta um Random Forest (\texttt{latent\_rf}) e um LinearSVC (\texttt{latent\_lsvc}), treinados separadamente. A Tabela~\ref{tab:res-b} reporta os três modos avaliados, incluindo o modo \texttt{direct}, cuja natureza diagnóstica é discutida na Subseção~\ref{sec:res-b-direct}.
+
+\begin{table}[htb]
+\centering
+\caption{Desempenho no Caminho~B. F1-macro em validação cruzada, no teste \textit{holdout} e intervalo de confiança de 95\% por \textit{bootstrap}.}
+\label{tab:res-b}
+\begin{tabular}{lccc}
+\toprule
+Modo & F1 (validação cruzada) & F1 (teste) & IC 95\% \\
+\midrule
+\texttt{direct}       & 0,3343 $\pm$ 0,0017 & 0,3333 & [0,329; 0,337] \\
+\texttt{latent\_rf}   & 0,4998 $\pm$ 0,0070 & 0,5040 & [0,495; 0,512] \\
+\texttt{latent\_lsvc} & 0,5043 $\pm$ 0,0053 & 0,5039 & [0,495; 0,512] \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Os dois modos latentes ficaram em 0,5040 e 0,5039 no teste, com intervalos de confiança idênticos de [0,495; 0,512], cobrindo 0,50. Uma representação de 512 dimensões aprendida sem qualquer suposição prévia sobre quais padrões importam, com acesso a cada byte do criptograma, chegou ao mesmo nível do acaso observado com os descritores estatísticos definidos manualmente no Caminho~A. O teto, portanto, não decorre da escolha dos descritores.
+
+\subsection{Diagnóstico do modo direto}
+\label{sec:res-b-direct}
+
+Quando a mesma CNN-1D é treinada e avaliada de ponta a ponta, sem extração de latentes, o F1-macro colapsa para 0,3333 no teste, valor que corresponde a prever sempre a mesma classe em um problema binário balanceado: a classe prevista recebe F1 de 0,667, a outra recebe zero, e a média fica em um terço. Conforme estabelecido no Capítulo~\ref{cap:metodologia}, esse colapso é tratado como falha de otimização, e não como evidência de indistinguibilidade, porque um classificador que ignora a entrada não testa a presença de sinal nos dados. Os próprios latentes reforçam esse diagnóstico: extraídos da mesma rede que colapsa, eles sustentam desempenho no nível do acaso quando entregues a classificadores externos, o que mostra que o colapso é um artefato do treinamento fim a fim, e não uma propriedade dos dados. A evidência do Caminho~B vem, por isso, exclusivamente dos modos latentes.
+
+\section{Caminho C: co-ocorrência de bigramas com CNN-2D}
+\label{sec:res-caminho-c}
+
+No Caminho~C, a representação sequencial dá lugar a uma de segunda ordem: o mapa de co-ocorrência de bigramas $256 \times 256$, construído sobre o criptograma completo, alimenta uma CNN-2D cujo latente de 128 dimensões é entregue ao mesmo par de classificadores do caminho anterior. A Tabela~\ref{tab:res-c} resume os três modos.
+
+\begin{table}[htb]
+\centering
+\caption{Desempenho no Caminho~C. F1-macro em validação cruzada, no teste \textit{holdout} e intervalo de confiança de 95\% por \textit{bootstrap}.}
+\label{tab:res-c}
+\begin{tabular}{lccc}
+\toprule
+Modo & F1 (validação cruzada) & F1 (teste) & IC 95\% \\
+\midrule
+\texttt{direct}       & 0,3333 $\pm$ 0,0000 & 0,3333 & [0,329; 0,337] \\
+\texttt{latent\_rf}   & 0,4983 $\pm$ 0,0069 & 0,4978 & [0,489; 0,506] \\
+\texttt{latent\_lsvc} & 0,5021 $\pm$ 0,0025 & 0,4979 & [0,489; 0,507] \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Os modos latentes ficaram em 0,4978 e 0,4979 no teste, com intervalos cobrindo 0,50. Padrões de co-ocorrência entre pares de bytes adjacentes, que a representação sequencial do Caminho~B não expõe de forma direta, tampouco carregam sinal explorável sobre a origem do criptograma. O modo \texttt{direct} repetiu o colapso observado no Caminho~B, agora com desvio-padrão nulo entre as dobras (0,3333 $\pm$ 0,0000), isto é, a rede convergiu para a mesma predição degenerada em todas as execuções; vale para ele a mesma leitura diagnóstica da Subseção~\ref{sec:res-b-direct}, sem valor de evidência.
+
+\section{Caminho D: fusão híbrida de 947 dimensões}
+\label{sec:res-caminho-d}
+
+O Caminho~D concatena as três representações anteriores em um vetor de 947 dimensões por amostra, com os 307 descritores clássicos, as 512 dimensões latentes da CNN-1D e as 128 da CNN-2D, e aplica sobre esse espaço o mesmo pipeline de seleção interna às dobras, seguido de Random Forest e XGBoost. A hipótese operacional do caminho é a de complementaridade: se cada família de representação capturasse fragmentos distintos de um sinal fraco, a combinação poderia superá-las isoladamente. A Tabela~\ref{tab:res-d} mostra que isso não ocorreu.
+
+\begin{table}[htb]
+\centering
+\caption{Desempenho no Caminho~D. F1-macro em validação cruzada, no teste \textit{holdout} e intervalo de confiança de 95\% por \textit{bootstrap}.}
+\label{tab:res-d}
+\begin{tabular}{lccc}
+\toprule
+Classificador & F1 (validação cruzada) & F1 (teste) & IC 95\% \\
+\midrule
+Random Forest & 0,5002 $\pm$ 0,0030 & 0,5011 & [0,492; 0,510] \\
+XGBoost       & 0,4978 $\pm$ 0,0040 & 0,4952 & [0,487; 0,504] \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+O Random Forest alcançou 0,5011 no teste, com intervalo de [0,492; 0,510], e o XGBoost, 0,4952, com intervalo de [0,487; 0,504]; os dois intervalos cobrem 0,50. A fusão das três representações não produziu informação que nenhuma delas continha isoladamente.
+
+O achado que separa este caminho dos demais vem da verificação de estabilidade. O índice de Jaccard médio do Boruta sobre o espaço híbrido foi de 0,0013, com o número de atributos confirmados variando de 1 a 73 entre as dobras. Já no Caminho~A, sobre o espaço de 307 descritores, o mesmo procedimento havia alcançado 0,32. Em um espaço três vezes maior, a seleção tornou-se essencialmente aleatória: dobras distintas não concordam sequer sobre quantos atributos reter, quanto mais sobre quais. Esse comportamento é o esperado quando os atributos disponíveis não guardam relação estável com o rótulo, e constitui, ao lado da não convergência dos hiperparâmetros do SVM na Seção~\ref{sec:res-caminho-a}, o segundo indicador independente de ausência de estrutura explorável nos dados.
+
+\section{Controle positivo}
+\label{sec:res-controle}
+
+A interpretação dos resultados anteriores depende de descartar a possibilidade de que o pipeline seja incapaz de detectar padrões mesmo quando eles existem. O controle positivo descrito no Capítulo~\ref{cap:metodologia} cumpre esse papel: 30.000 amostras cifradas por Vigenère com chave curta contra 30.000 amostras de bytes aleatórios, totalizando 60.000 criptogramas de 64~KB submetidos ao mesmo pipeline de extração, seleção e treinamento dos classificadores Random Forest, SVM RBF, LinearSVC e XGBoost.
+
+Sob esse protocolo, a seleção de características reteve 93 descritores, contra 29 na avaliação principal do par AEAD, e os quatro classificadores identificaram a classe Vigenère com recall e precisão iguais a 1,0. O contraste entre os dois cenários é o resultado que valida o instrumento: diante de um esquema com estrutura estatística residual conhecida, o pipeline retém mais descritores e classifica sem erro; diante do par Ascon-AEAD128 e GIFT-COFB, o mesmo pipeline retém menos descritores, não os retém de forma estável e não supera o acaso. O resultado nulo dos quatro caminhos não decorre, portanto, de um procedimento incapaz de detectar padrões: o mesmo instrumento que nada encontra no par AEAD recupera sem erro a estrutura do controle.
+
+\section{Síntese dos quatro caminhos e ameaças à validade}
+\label{sec:res-sintese}
+
+Os quatro caminhos experimentais convergem para o mesmo quadro. Dez combinações de representação e classificador compõem a evidência sobre o conjunto de teste de chaves nunca vistas, excluídos os dois modos diagnósticos (Subseção~\ref{sec:res-b-direct}), cobrindo descritores manuais, representação sequencial aprendida, representação de segunda ordem aprendida e a fusão das três, e em todas o intervalo de confiança de 95\% do F1-macro cobre 0,50, com o teste de McNemar não indicando diferença significativa entre classificadores após a correção de Bonferroni. Os resultados são compatíveis com a hipótese nula de indistinguibilidade definida no protocolo do Capítulo~\ref{cap:metodologia}, e nenhum caminho produziu evidência para rejeitá-la.
+
+A esse quadro somam-se dois indicadores de segunda ordem, independentes das métricas de classificação. A busca em grade do SVM RBF não convergiu para nenhuma região do espaço de hiperparâmetros ao longo das dobras, e a seleção de atributos sobre o espaço híbrido apresentou estabilidade de 0,0013 no índice de Jaccard. Os dois fenômenos têm a mesma explicação mais simples: não há estrutura estável nos dados para o ajuste encontrar nem para a seleção reencontrar.
+
+A convergência entre representações independentes delimita o alcance de explicações alternativas para o resultado nulo. A hipótese de que os descritores manuais seriam inadequados é enfraquecida pelos Caminhos~B e~C, que aprendem a representação diretamente dos bytes e chegam ao mesmo teto; a hipótese de que o procedimento seria insensível é descartada pelo controle positivo, que recupera com desempenho perfeito a estrutura de um esquema sabidamente vulnerável. O que permanece é a explicação alinhada à expectativa teórica dos dois esquemas: sob o protocolo avaliado, os criptogramas de Ascon-AEAD128 e GIFT-COFB não carregam assinatura estatística que os distinga.
+
+Essa leitura exige duas delimitações. A primeira é de natureza: o resultado constitui evidência empírica de indistinguibilidade prática no cenário avaliado, e não prova de segurança; as garantias formais dos dois esquemas seguem ancoradas nas noções de indistinguibilidade computacional apresentadas no Capítulo~2, que este trabalho não substitui. A segunda é de escopo: o resultado descreve o comportamento de classificadores em cenário estritamente \textit{ciphertext-only}, o mais restrito da taxonomia de ameaças, e nada afirma sobre adversários com acesso a pares de texto em claro e criptograma, a oráculos de cifração ou a canais laterais de implementação.
+
+Quanto à validade interna, os mecanismos de vazamento conhecidos na literatura foram bloqueados por construção: o particionamento por chave impede que o modelo reconheça chaves em vez de algoritmos, e a seleção interna às dobras impede que o conjunto de teste influencie a escolha de atributos. Como as duas cifras processam a mesma tripla de chave, nonce e texto em claro, o conteúdo cifrado deixa de ser variável de confusão; a validação por vetores de teste oficiais afasta, por sua vez, desvios das implementações frente à especificação. O risco residual concentra-se em fatores não modelados do processo de geração, comuns às duas classes e por isso incapazes de favorecer uma delas.
+
+Quanto à validade externa, os resultados estão condicionados às escolhas do protocolo: um único comprimento de mensagem (64~KB), texto em claro proveniente de um único corpus (SPGC), duas cifras de um mesmo processo de padronização e as implementações de referência em C. A extensão a mensagens curtas, nas quais o peso relativo da inicialização e da tag é maior, a outros corpora, a outros pares de algoritmos e a implementações otimizadas ou em hardware permanece em aberto, assim como a execução dos controles negativos previstos no protocolo, o embaralhamento de bytes e a classe de PRNG puro, que verificariam a especificidade do pipeline na ausência de qualquer estrutura.
+
+Quanto à validade de constructo, a indistinguibilidade foi operacionalizada como a incapacidade de classificadores supervisionados, treinados sob protocolo controlado, de superar o acaso com significância estatística. Essa operacionalização captura a distinção prática por métodos de aprendizado de máquina, que é o objeto da pergunta de pesquisa, mas não esgota o conceito teórico de indistinguibilidade, definido sobre a classe de todos os adversários eficientes. Dentro desses limites, a resposta à pergunta de pesquisa é negativa: sob o protocolo avaliado, não foi possível identificar, a partir exclusivamente de criptogramas, qual algoritmo de criptografia leve os gerou.

@@ -1,16 +1,3 @@
-% iniciomudança: removidos 4 rascunhos de entrada mortos (ambroise2002,
-% nist2025ascon, cffi2024, knuth1997-rascunho) que estavam com o sinal de
-% comentário na frente do sinal de arroba que abre a entrada. O BibTeX nao
-% trata isso como comentario: ele le o sinal de arroba mesmo assim e tenta
-% abrir a entrada de qualquer jeito, quebrando o parser (e colidindo com o
-% knuth1997 de verdade, mais abaixo). Testado com o BibTeX real: nenhuma
-% forma de comentario protege contra esse sinal solto no meio do texto, nem
-% o bloco tipo Comment do BibTeX. A unica solucao segura e nao ter esse
-% sinal no texto. As 4 entradas removidas ja estavam desativadas e sem uso,
-% e tem equivalentes reais no arquivo (ambroise_mclachlan_2002,
-% nist_sp800232_2025, knuth1997 abaixo); por isso foram removidas em vez de
-% mantidas como comentario.
-% fimmudança
 @inproceedings{demello2016mlcrypto,
   author    = {de Mello, Flávio Luis},
   title     = {Machine Learning for Cryptographic Algorithm Identification},
@@ -87,7 +74,7 @@ isbn="978-3-540-30115-8"
 }
 
 @article{brunetta2022modelling,
-  author    = {Brunetta, Carlo, picazo-Sanchez, Pablo},
+  author    = {Brunetta, Carlo and picazo-Sanchez, Pablo},
   title     = {Modelling cryptographic distinguishers using machine learning},
   journal   = {Journal of Cryptographic Engineering},
   volume    = {12},
@@ -337,7 +324,7 @@ isbn="978-3-540-30115-8"
   url={https://arxiv.org/abs/2406.05478}
 }
 @inproceedings{simhadri2025aipowered,
-author = {Simhadri, Sevitha and Raghavendra, and Purushothama, R},
+author = {Simhadri, Sevitha and Raghavendra and Purushothama, R},
 year = {2025},
 month = {05},
 pages = {1522-1527},
@@ -758,11 +745,7 @@ doi = {10.1007/978-3-319-16715-2_20}
   url          = {https://arxiv.org/abs/2505.10790} 
 }
 
-% iniciomudança: referencia ao tipo de entrada removida desta nota (o BibTeX
-% le o sinal de arroba em qualquer lugar do arquivo, mesmo dentro de
-% comentario, e tentava abrir uma entrada aqui)
-% (entrada duplicada de Sharif 2010 removida; usar a entrada Sharif2010ClassifyingEncryptionAlgorithms)
-% fimmudança
+% (entrada duplicada de Sharif 2010 removida; usar Sharif2010ClassifyingEncryptionAlgorithms)
 
 
 @inproceedings{MINDCrypt2024arXiv,

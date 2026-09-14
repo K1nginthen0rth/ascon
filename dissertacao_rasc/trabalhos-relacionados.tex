@@ -1,0 +1,187 @@
+\chapter{Trabalhos Relacionados}
+%iniciomudança
+\label{cap:trabalhos-relacionados}
+%fimmudança
+
+A literatura sobre identificação algorítmica de cifras a partir de criptogramas organiza-se em quatro eixos, definidos não pela ordem cronológica de publicação, mas pela pergunta metodológica que cada grupo de trabalhos endereça. O primeiro eixo reúne os estudos que fundamentam a pergunta principal desta dissertação: publicações que estabeleceram, com estatística clássica e classificadores supervisionados tradicionais, que descritores extraídos de bytes cifrados carregam informação suficiente para distinguir algoritmos. O segundo eixo cobre a transição para arquiteturas de aprendizado profundo, motivada pela possibilidade de que representações aprendidas diretamente da sequência de bytes capturem sinal que descritores manuais não expõem. O terceiro eixo trata transversalmente de um problema metodológico que atravessa boa parte dos dois eixos anteriores: protocolos de validação que favorecem o classificador e inflam o desempenho relatado. O quarto eixo delimita a lacuna específica que esta dissertação ocupa: a quase ausência, na literatura revisada, de avaliações sistemáticas voltadas a esquemas AEAD de criptografia leve padronizados pelo NIST.
+
+\section{Identificação de Algoritmos Criptográficos via ML}
+
+O problema de identificar qual algoritmo de cifração produziu um determinado criptograma é estudado desde, ao menos, o início dos anos 2000, predominantemente no contexto de cifras de bloco clássicas. \citeonline{mello_xexeo_2018} avaliaram sistematicamente um conjunto de classificadores de mineração de dados (C4.5, PART, FT, naive Bayes, Multilayer Perceptron e WiSARD) sobre criptogramas produzidos por sete algoritmos (DES, Blowfish, RSA, ARC4, Rijndael, Serpent e Twofish) nos modos de operação ECB e CBC, relatando acurácia elevada em ECB e desempenho substancialmente inferior em CBC. Esse contraste entre os dois modos é estrutural, e não um artefato do protocolo: o modo ECB cifra cada bloco de forma independente sob a mesma chave, de modo que blocos de texto em claro idênticos produzem blocos cifrados idênticos, preservando padrões de repetição que tornam a distinção entre algoritmos comparativamente trivial. O modo CBC, ao encadear blocos por XOR com o criptograma anterior, oculta parte desses padrões, mas não os elimina; os próprios autores relataram identificação de 40\% a 50\% em CBC contra um acerto esperado ao acaso de 7,14\%, evidência de que o encadeamento de blocos reduz o sinal disponível à classificação sem eliminá-lo por completo.
+
+\citeonline{yuan2022} propuseram HKNNRF, um ensemble híbrido que combina k-vizinhos mais próximos e Random Forest, utilizando como atributos as estatísticas de aleatoriedade do NIST SP 800-22. Em um cenário ciphertext-only sobre cinco cifras de bloco (AES, 3DES, Blowfish, CAST, RC2), o método atingiu aproximadamente 69,5\% de acurácia na classificação binária e 34\% na classificação multiclasse de cinco categorias. Resultados dessa magnitude são compatíveis com artefatos experimentais, como o uso de uma única chave fixa por algoritmo e de texto em claro gerado por um mesmo processo pseudoaleatório, e não necessariamente com propriedades intrínsecas ao núcleo de cada cifra, ressalva que se estende à maior parte da literatura revisada neste capítulo.
+
+\citeonline{sikdar_kule_2024} aplicaram um transformador baseado em BERT à identificação de cifras, relatando acurácia de 98\% no melhor modelo. A tarefa avaliada, no entanto, é a distinção entre tipos de cifra majoritariamente clássicos, Caesar, Affine, Vigenère, substituição alfabética e Rail Fence, sobre um corpus de texto em claro literário, e, no único par moderno considerado, entre primitivas de naturezas distintas, AES-128 de bloco e RC-4 de fluxo. Nenhuma dessas condições corresponde à distinção entre dois esquemas AEAD modernos sob cenário ciphertext-only estrito: cifras clássicas preservam regularidades linguísticas do texto em claro que sobrevivem à cifração, e a separação entre uma cifra de bloco e uma de fluxo é estruturalmente mais simples do que a separação entre dois AEAD projetados para produzir saída indistinguível de aleatório. A acurácia relatada reflete, portanto, a separabilidade de tipos de cifra heterogêneos, e não a distinguibilidade entre esquemas equivalentes que esta dissertação investiga.
+
+
+Mais relevante para esta dissertação, nenhum dos seis trabalhos revisados neste capítulo avalia esquemas AEAD de criptografia leve padronizados pelo NIST. Mello e Xexéo, Yuan et al. e Sikdar e Kule tratam de cifras de bloco convencionais ou clássicas; Gohr (2019), Benamira et al. (2021) e Su et al. (2025) tratam de cifras de bloco leves não padronizadas pelo NIST (Speck, Simon) ou de cifras padronizadas por outras vias (DES, PRESENT), sob um regime de ataque diferencial que pressupõe estrutura indisponível no cenário ciphertext-only. Aos alvos avaliados soma-se um problema transversal de protocolo, examinado na Seção 3.3.
+
+
+\section{Distinguishers Neurais e Criptanálise com Aprendizado}
+
+Um eixo distinto da literatura aproxima-se desta dissertação pela técnica empregada, redes neurais aplicadas a saídas de algoritmos criptográficos, mas difere de forma fundamental no cenário de ameaça assumido. Enquanto a identificação algorítmica discutida na Seção 3.1 opera estritamente sobre o criptograma, sem acesso a texto em claro, chave ou estrutura interna do processo de cifração, a linha de distinguishers neurais para criptanálise diferencial assume acesso a pares de criptogramas com diferença de entrada controlada, e frequentemente a múltiplas chaves relacionadas, condições que não correspondem ao cenário ciphertext-only adotado neste trabalho.
+
+\citeonline{gohr_2019} introduziu essa linha ao demonstrar, na CRYPTO 2019, que uma rede neural treinada sobre pares de criptogramas de Speck32/64 com diferença de entrada fixa consegue superar distinguishers diferenciais clássicos na tarefa de prever se um par de criptogramas corresponde a uma diferença de entrada conhecida. O resultado teve impacto considerável na criptanálise assistida por aprendizado, e deu origem a uma sequência extensa de trabalhos subsequentes que aprimoram a arquitetura da rede, o formato dos dados de treinamento ou o alcance do ataque de recuperação de chave, em geral sobre as mesmas cifras leves de bloco, Speck e Simon, no mesmo regime de pares com diferença controlada.
+
+\citeonline{benamira_2021} examinaram criticamente o distinguisher de Gohr e mostraram que a rede neural não descobre estrutura genuinamente nova no algoritmo e sim explora padrões diferenciais truncados já conhecidos da criptanálise clássica, reorganizados em uma forma que o classificador consegue extrair automaticamente. Essa constatação introduz uma ressalva importante para qualquer leitura otimista de resultados de aprendizado de máquina aplicados a saídas criptográficas: o modelo pode estar redescobrindo vieses estatísticos clássicos, já documentados pela criptanálise tradicional, em vez de identificar uma vulnerabilidade nova. Trabalhos subsequentes na mesma linha, incluindo o de \citeonline{su2025neural} sobre distinguishers diferenciais relacionados a chave aplicados a cifras padronizadas, mantêm o mesmo regime de avaliação: o adversário observa pares de criptogramas gerados sob diferenças de entrada ou de chave conhecidas e controladas pelo próprio protocolo experimental, condição estrutural ao ataque diferencial e ausente do cenário ciphertext-only.
+
+A distinção entre os dois cenários não é apenas terminológica. Um ataque diferencial pressupõe que o adversário pode produzir, ou ao menos observar, pares de mensagens com uma relação de diferença conhecida sob a mesma chave, e a tarefa do classificador é detectar se essa relação se propaga de forma anômala pelo algoritmo, o que corresponde, na taxonomia de modelos de ameaça apresentada na Seção 2.5, a uma variante de ataque de texto escolhido ou de texto conhecido, dependendo de como os pares são obtidos. O cenário desta dissertação é estritamente mais restrito: o classificador recebe criptogramas isolados, sem relação de diferença declarada entre amostras, sem acesso à chave e sem qualquer informação sobre o texto em claro correspondente. Um distinguisher neural eficaz no regime diferencial de Gohr não implica, e não deveria implicar, capacidade equivalente de classificação no regime ciphertext-only, justamente porque a informação estrutural que alimenta o primeiro está, por desenho, indisponível no segundo.
+
+Essa distinção delimita a relevância da literatura de distinguishers neurais para esta dissertação: trata-se de uma linha tecnicamente próxima, que evidencia a viabilidade de redes neurais capturarem regularidades estatísticas em saídas de cifras de bloco, mas que não testa, e não pretende testar, a hipótese de indistinguibilidade ciphertext-only entre dois esquemas AEAD completos. A ausência, nessa linha, de resultados sob o cenário mais restrito reforça, por omissão, a lacuna caracterizada na Seção 3.4.
+
+
+\section{Vazamento de Informação em Protocolos de Avaliação}
+
+Um problema metodológico atravessa os dois eixos anteriores e condiciona a leitura das acurácias relatadas: parte dos protocolos de avaliação permite que informação do conjunto de teste influencie o classificador antes da avaliação final. Dois mecanismos concentram esse efeito.
+
+O primeiro é o reaproveitamento de chave entre treinamento e teste. Quando os criptogramas são particionados por amostra individual, e não pela chave que os gerou, amostras derivadas da mesma chave aparecem nas duas partições, e um classificador exposto a padrões específicos de uma chave durante o treinamento pode reencontrá-los no teste sem ter aprendido qualquer propriedade do algoritmo. \citeonline{jeong2024} compararam cenários com e sem compartilhamento de chaves e entradas entre os conjuntos e observaram quedas substanciais de desempenho quando a correlação é removida, evidência de que boa parte da acurácia relatada vinha dessa correlação, e não de sinal criptográfico. Nenhum dos três trabalhos do eixo de identificação algorítmica reporta separação por chave entre treinamento e teste \cite{mello_xexeo_2018, yuan2022, sikdar_kule_2024}.
+
+O segundo mecanismo é a seleção de características calculada sobre o conjunto completo de dados, antes da divisão entre treinamento e teste. \citeonline{ambroise_mclachlan_2002} demonstraram que essa prática infla a acurácia estimada em margens da ordem de dezenas de pontos percentuais, produzindo desempenho que não se sustenta em dados novos. Os dois mecanismos operam de forma cumulativa e na mesma direção, e nenhum deles é visível na métrica final: para o leitor, o desempenho inflado é indistinguível de sinal genuíno. O protocolo desta dissertação neutraliza ambos por construção, com particionamento por chave e seleção recalculada dentro de cada dobra da validação cruzada, conforme detalhado no Capítulo 4.
+
+\section{Síntese Comparativa e Lacuna}
+As Seções 3.1 e 3.2 percorreram dois eixos da literatura de identificação algorítmica e criptanálise assistida por aprendizado de máquina: estudos que classificam o algoritmo gerador a partir do criptograma isolado, e estudos que treinam distinguishers neurais sobre pares de criptogramas com relação de diferença controlada. O Quadro \ref{qua:comparacao_trabalhos_relacionados} consolida os trabalhos discutidos segundo quatro dimensões: o objetivo de cada estudo, o método empregado, o resultado principal relatado e as limitações que restringem sua comparação direta com o protocolo experimental desta dissertação.
+
+A leitura por coluna evidencia a lacuna de forma mais direta. Na coluna de objetivo, os trabalhos do eixo de identificação algorítmica (Seção 3.1) coincidem com o cenário ciphertext-only adotado nesta dissertação, mas nenhum deles direciona esse cenário a esquemas AEAD padronizados pelo NIST; os trabalhos do eixo de distinguishers neurais (Seção 3.2) perseguem um objetivo distinto, a criptanálise diferencial, que pressupõe acesso a pares de criptogramas sob diferença ou chave relacionada conhecida, condição que não se sustenta sob a definição de ciphertext-only estrito da Seção 2.5.
+
+Na coluna de limitações está a lacuna metodológica central, já antecipada na Seção 3.1: nenhum dos três trabalhos do eixo de identificação algorítmica reporta separação de chave entre treinamento e teste. A divisão ocorre por amostra individual, o que permite que criptogramas gerados sob a mesma chave apareçam em ambas as partições, mecanismo que a Seção 3.1 já caracterizou como uma fonte potencial de inflação na acurácia relatada. A coluna registra uma limitação de natureza diferente para os trabalhos de distinguisher neural, cujo desenho experimental já assume conhecimento ou controle sobre a relação entre chaves e diferenças, tornando o conceito de key-holdout, como definido na Seção 2.8, estranho ao próprio paradigma desses trabalhos.
+
+Na coluna de método e de objetivo, a lacuna delimitada na Seção 3.2 reaparece de forma quantificável: entre os seis trabalhos revisados no quadro, nenhum avalia o par Ascon-AEAD128 e GIFT-COFB, e nenhum avalia exclusivamente esquemas AEAD selecionados ou finalistas do processo de padronização de criptografia leve do NIST descrito na Seção 2.1. Os trabalhos do eixo de identificação algorítmica tratam de cifras de bloco convencionais ou legadas (AES, DES, RC4, RSA, 3DES, Blowfish, CAST, RC2, entre outras); os trabalhos de distinguisher neural tratam majoritariamente de cifras de bloco leves não padronizadas pelo NIST (Speck, Simon), com extensão recente a cifras padronizadas por outras entidades, incluindo o próprio DES e a cifra leve PRESENT, em ambos os casos sob um regime de ataque que pressupõe estrutura indisponível no cenário ciphertext-only.
+
+A última linha do Quadro \ref{qua:comparacao_trabalhos_relacionados} posiciona, por contraste direto com as seis anteriores, a contribuição metodológica desta dissertação: cenário ciphertext-only estrito, key-holdout aplicado simultaneamente à divisão de dados (240 chaves para treinamento e validação, 60 chaves para teste) e à seleção de características, calculada exclusivamente dentro de cada dobra de treinamento, e um alvo composto por dois algoritmos com escrutínio de padronização NIST equivalente, conforme estabelecido na Seção 2.2. Nenhum dos seis trabalhos revisados combina as três condições simultaneamente; a ausência dessa combinação constitui a lacuna que o desenho experimental do Capítulo 4 ocupa.
+
+ 
+\begin{quadro}[htb]
+\caption{Síntese dos trabalhos relacionados em identificação algorítmica e distinguishers neurais via aprendizado de máquina}
+\label{qua:comparacao_trabalhos_relacionados}
+
+\centering
+\scriptsize
+\renewcommand{\arraystretch}{1.35}
+\setlength{\tabcolsep}{4pt}
+
+\begin{tabular}{
+|m{2.2cm}
+|m{2.6cm}
+|m{3.0cm}
+|m{3.4cm}
+|m{2.9cm}|
+}
+
+\hline
+
+\textbf{Trabalho}
+&
+\textbf{Objetivo}
+&
+\textbf{Método}
+&
+\textbf{Resultado principal}
+&
+\textbf{Limitações}
+
+\\
+\hline
+
+\citeonline{mello_xexeo_2018}
+&
+Identificação do algoritmo de cifração a partir do criptograma, em ECB e CBC
+&
+Classificadores clássicos (C4.5, PART, FT, Naive Bayes, MLP, WiSARD) sobre sete algoritmos de bloco
+&
+Identificação completa em ECB; 40\% a 50\% em CBC contra 7,14\% esperado ao acaso
+&
+Sem separação por chave entre treinamento e teste; não trata esquemas AEAD
+
+\\
+\hline
+
+\citeonline{yuan2022}
+&
+Identificação de algoritmos de cifra de bloco em cenário ciphertext-only
+&
+Ensemble híbrido de KNN e Random Forest (HKNNRF) sobre estatísticas de aleatoriedade NIST SP 800-22
+&
+69,5\% de acurácia em classificação binária; 34\% em classificação de cinco categorias
+&
+Chave fixa única por algoritmo; sem separação por chave entre treinamento e teste
+
+\\
+\hline
+
+\citeonline{sikdar_kule_2024}
+&
+Identificação de tipos de cifra a partir de representações textuais do criptograma
+&
+Modelos de deep learning, incluindo um transformador baseado em BERT
+&
+Acurácia de 98\% no modelo BERT pré-treinado
+&
+Sem separação por chave entre treinamento e teste; conjunto restrito de cifras clássicas e modernas
+
+\\
+\hline
+
+\citeonline{gohr_2019}
+&
+Construção de distinguisher neural para criptanálise diferencial
+&
+Rede neural residual sobre pares de criptogramas de Speck32/64 com diferença de entrada fixa
+&
+Mean key rank cerca de cinco vezes menor que o distinguisher diferencial clássico baseado na DDT completa
+&
+Pressupõe acesso a pares com diferença de entrada controlada, condição ausente do cenário ciphertext-only
+
+\\
+\hline
+
+\citeonline{benamira_2021}
+&
+Análise do mecanismo interno do distinguisher neural de Gohr (2019)
+&
+Construção de um distinguisher de criptanálise pura, sem rede neural, para reproduzir o mesmo sinal
+&
+Acurácia equivalente à do distinguisher neural, evidenciando exploração de diferenciais truncados já conhecidos
+&
+Mesma dependência de pares com diferença controlada; não testa indistinguibilidade ciphertext-only entre esquemas AEAD
+
+\\
+\hline
+
+\citeonline{su2025neural}
+&
+Construção de distinguisher neural diferencial com chave relacionada
+&
+Framework de extração de características aplicado a DES e PRESENT
+&
+Distinguisher de 8 rounds para DES; primeiro distinguisher de 9 rounds com chave relacionada para PRESENT
+&
+Pressupõe pares de criptogramas sob diferença e chave relacionada conhecidas
+
+\\
+\hline
+
+\textbf{Este trabalho}
+&
+Distinção entre criptogramas Ascon-AEAD128 e GIFT-COFB em cenário ciphertext-only estrito
+&
+307 descritores estatísticos com seleção in-fold; \textit{key-holdout} na divisão dos dados (240/60 chaves) e na seleção de características; classificadores RF, SVM RBF, LinearSVC e XGBoost
+&
+F1-macro $\approx$ 0,50 em todos os classificadores, compatível com H$_0$; controle positivo (Vigenère) com recall e precisão de 1,0
+&
+Cobertura restrita a dois algoritmos; resultados específicos às implementações de referência em C utilizadas
+
+\\
+\hline
+
+\end{tabular}
+
+%\legenda{Fonte: O autor.}
+
+\end{quadro}
+
+
+
+
+
+
+
