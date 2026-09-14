@@ -19,6 +19,15 @@ __pycache__/
 venv/
 env/
 
+# Estudo de rodadas reduzidas: .pyd variantes + parquets de ~3,9 GB cada
+# (~38 GB no total). Sem esta linha, um `git add -A` tentou versionar tudo
+# e lotou o disco (2026-09-13). Os scripts que regeneram vivem em
+# scripts/reduced_rounds/ e scripts/patch_reduced_rounds.py.
+build/
+
+# Backups/downloads compactados (duplicam pastas já versionadas)
+*.zip
+
 # Sessão Claude Code (privado)
 .claude/
 
@@ -46,19 +55,24 @@ sparkle/
 Thumbs.db
 .autonomo_logs/
 
-# Artefatos de build do LaTeX (dissertacao/)
-dissertacao/*.aux
-dissertacao/*.bbl
-dissertacao/*.blg
-dissertacao/*.fdb_latexmk
-dissertacao/*.fls
-dissertacao/*.idx
-dissertacao/*.ilg
-dissertacao/*.ind
-dissertacao/*.lof
-dissertacao/*.lot
-dissertacao/*.loq
-dissertacao/*.out
-dissertacao/*.synctex.gz
-dissertacao/*.toc
+# Artefatos de build do LaTeX (dissertacao/, dissertacao_rasc/, template do
+# seminário). Extensões exclusivas do LaTeX, seguras de ignorar em qualquer
+# pasta; o PDF compilado só nas pastas de texto (docs/ tem PDFs de verdade).
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.idx
+*.ilg
+*.ind
+*.lof
+*.lot
+*.loq
+*.out
+*.synctex.gz
+*.toc
+*-eps-converted-to.pdf
 dissertacao/*.pdf
+dissertacao_rasc/*.pdf
+TEMPLATE_SEMINARIO_ACOMPANHAMENTO*/*.pdf
