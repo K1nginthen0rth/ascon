@@ -128,11 +128,18 @@ def _absorve_parcial(s: list[int], blk: bytes, i0: int, i1: int) -> None:
         s[i1] ^= 1 << (8 * (n - 8))
 
 
-def ascon_aead128_encrypt(key: bytes, nonce: bytes, pt: bytes, ad: bytes = b"") -> bytes:
-    """Ascon-AEAD128: taxa 128, p^12 na inicialização/finalização, p^8 nos dados."""
+def ascon_aead128_encrypt(key: bytes, nonce: bytes, pt: bytes, ad: bytes = b"",
+                          pa: int = 12, pb: int = 8) -> bytes:
+    """Ascon-AEAD128: taxa 128, p^12 na inicialização/finalização, p^8 nos dados.
+
+    `pa`/`pb` existem para o estudo de sensibilidade com rodadas reduzidas; nos
+    valores padrão a saída é a do algoritmo especificado. A redução consome as
+    ÚLTIMAS constantes de rodada (ver `_ascon_perm`), que é a convenção do
+    próprio `ascon-c`: seu P8 usa RC4..RCb, não RC0..RC7.
+    """
     k0, k1 = _ld(key[:8]), _ld(key[8:])
     s = [ASCON_AEAD128_IV, k0, k1, _ld(nonce[:8]), _ld(nonce[8:])]
-    s = _ascon_perm(s, 12)
+    s = _ascon_perm(s, pa)
     s[3] ^= k0
     s[4] ^= k1
 
@@ -141,9 +148,9 @@ def ascon_aead128_encrypt(key: bytes, nonce: bytes, pt: bytes, ad: bytes = b"") 
         for i in range(0, corte, 16):
             s[0] ^= _ld(ad[i:i + 8])
             s[1] ^= _ld(ad[i + 8:i + 16])
-            s = _ascon_perm(s, 8)
+            s = _ascon_perm(s, pb)
         _absorve_parcial(s, ad[corte:], 0, 1)
-        s = _ascon_perm(s, 8)
+        s = _ascon_perm(s, pb)
 
     s[4] ^= 0x80 << 56  # separação de domínio (no v1.2 era o LSB de x4)
 
@@ -153,14 +160,14 @@ def ascon_aead128_encrypt(key: bytes, nonce: bytes, pt: bytes, ad: bytes = b"") 
         s[0] ^= _ld(pt[i:i + 8])
         s[1] ^= _ld(pt[i + 8:i + 16])
         ct += _st(s[0]) + _st(s[1])
-        s = _ascon_perm(s, 8)
+        s = _ascon_perm(s, pb)
     cauda = pt[corte:]
     _absorve_parcial(s, cauda, 0, 1)
     ct += (_st(s[0]) + _st(s[1]))[:len(cauda)]
 
     s[2] ^= k0  # taxa 128 => a chave entra em x2/x3 (no Ascon-128 seria x1/x2)
     s[3] ^= k1
-    s = _ascon_perm(s, 12)
+    s = _ascon_perm(s, pa)
     return ct + _st(s[3] ^ k0) + _st(s[4] ^ k1)
 
 
@@ -199,7 +206,7 @@ for _ in range(40):
     _GIFT_RC.append(_c)
 
 
-def _round_masks(k_int: int) -> list[int]:
+def _round_masks(k_int: int, rounds: int = 40) -> list[int]:
     """AddRoundKey + constante de rodada colapsados num XOR de 128 bits/rodada.
 
     Key schedule do GIFT-128: K = k7||...||k0 (palavras de 16 bits);
@@ -207,6 +214,10 @@ def _round_masks(k_int: int) -> list[int]:
     K <- k1>>>2 || k0>>>12 || k7 || k6 || k5 || k4 || k3 || k2.
     U entra em b_{4i+2}, V em b_{4i+1}; a constante em b_{4i+3} (i<6) e o bit
     fixo 1 em b_127.
+
+    `rounds` existe para o estudo de sensibilidade com rodadas reduzidas. Aqui
+    a redução toma as PRIMEIRAS rodadas, ao contrário do Ascon, porque é assim
+    que o key schedule do GIFT avança: a rodada r usa a r-ésima subchave.
     """
     k = [(k_int >> (16 * i)) & 0xFFFF for i in range(8)]
 
@@ -214,7 +225,7 @@ def _round_masks(k_int: int) -> list[int]:
         return ((x >> n) | (x << (16 - n))) & 0xFFFF
 
     masks = []
-    for r in range(40):
+    for r in range(rounds):
         u = (k[5] << 16) | k[4]
         v = (k[1] << 16) | k[0]
         m = 1 << 127
@@ -230,7 +241,7 @@ def _round_masks(k_int: int) -> list[int]:
 
 
 def _gift_core(b: int, masks: list[int]) -> int:
-    """40 rodadas de SubCells -> PermBits -> AddRoundKey/constante."""
+    """Uma rodada de SubCells -> PermBits -> AddRoundKey/constante por máscara."""
     tab = _SP_TAB
     for m in masks:
         b = (tab[0][b & 0xFF] | tab[1][(b >> 8) & 0xFF] | tab[2][(b >> 16) & 0xFF]
@@ -292,14 +303,14 @@ def _rho_out(b: int) -> bytes:
     return bytes(out)
 
 
-def gift128_encrypt_block(pt: bytes, key: bytes) -> bytes:
+def gift128_encrypt_block(pt: bytes, key: bytes, rounds: int = 40) -> bytes:
     """GIFT-128 na interface do NIST — a que os 3 vetores oficiais cobrem."""
-    return _pi_out(_gift_core(_pi_in(pt), _round_masks(_pi_in(key))))
+    return _pi_out(_gift_core(_pi_in(pt), _round_masks(_pi_in(key), rounds)))
 
 
-def giftb128_encrypt_block(pt: bytes, key: bytes) -> bytes:
+def giftb128_encrypt_block(pt: bytes, key: bytes, rounds: int = 40) -> bytes:
     """GIFTb-128 — mesmo cifrador, representação bitsliced na interface."""
-    return _rho_out(_gift_core(_rho_in(pt), _round_masks(_pi_in(key))))
+    return _rho_out(_gift_core(_rho_in(pt), _round_masks(_pi_in(key), rounds)))
 
 
 # --- modo COFB ---------------------------------------------------------
@@ -330,13 +341,17 @@ def _g(y: bytes) -> bytes:
     return y[8:] + (((y1 << 1) | (y1 >> 63)) & _M64).to_bytes(8, "big")
 
 
-def gift_cofb_encrypt(key: bytes, nonce: bytes, pt: bytes, ad: bytes = b"") -> bytes:
+def gift_cofb_encrypt(key: bytes, nonce: bytes, pt: bytes, ad: bytes = b"",
+                      rounds: int = 40) -> bytes:
     """GIFT-COFB: feedback combinado, máscara L dobrada/triplicada em GF(2^64).
 
     O expoente do 3 antes do ÚLTIMO bloco de AD é 1 + [A_a parcial] +
     2*[M vazio] — as quatro linhas da especificação colapsadas numa só.
+
+    `rounds` reduz apenas o cifrador de bloco interno; o modo COFB em volta
+    permanece intacto, que é o que se quer no estudo de sensibilidade.
     """
-    masks = _round_masks(_pi_in(key))
+    masks = _round_masks(_pi_in(key), rounds)
 
     def e(blk: bytes) -> bytes:
         return _rho_out(_gift_core(_rho_in(blk), masks))
@@ -474,6 +489,59 @@ def test_ascon_iv_fixa_a_variante_compilada() -> None:
     key = bytes(range(16))
     nonce = bytes(range(16, 32))
     assert ascon_aead128_encrypt(key, nonce, b"", b"") == a.encrypt(key, nonce, b"", b"")
+
+
+# --- rodadas reduzidas (estudo de sensibilidade do detector) ----------
+#
+# A corretude das versões reduzidas só pode ser estabelecida contra as builds
+# em C reduzidas, que ainda não existem. O que estes testes cobrem é o que dá
+# para cobrir agora: que a parametrização é inerte nos valores padrão, que ela
+# de fato altera a saída, e que ela não toca no modo em volta do cifrador.
+
+_RED_KEY = bytes(range(16))
+_RED_NONCE = bytes(range(16, 32))
+_RED_PT = bytes(range(64))
+_RED_AD = b"cabecalho"
+
+
+def test_rodadas_padrao_reproduzem_a_especificacao() -> None:
+    """Nos valores padrão a saída é idêntica à de antes da parametrização.
+
+    É isso que permite dizer que as builds reduzidas saem do mesmo código que
+    valida os 1.089 vetores oficiais, e não de um caminho paralelo."""
+    assert (ascon_aead128_encrypt(_RED_KEY, _RED_NONCE, _RED_PT, _RED_AD, pa=12, pb=8)
+            == ascon_aead128_encrypt(_RED_KEY, _RED_NONCE, _RED_PT, _RED_AD))
+    assert (gift_cofb_encrypt(_RED_KEY, _RED_NONCE, _RED_PT, _RED_AD, rounds=40)
+            == gift_cofb_encrypt(_RED_KEY, _RED_NONCE, _RED_PT, _RED_AD))
+    assert (gift128_encrypt_block(_RED_PT[:16], _RED_KEY, rounds=40)
+            == gift128_encrypt_block(_RED_PT[:16], _RED_KEY))
+
+
+@pytest.mark.parametrize("pa,pb", [(12, 1), (12, 4), (12, 6), (6, 8), (1, 8)])
+def test_ascon_rodadas_reduzidas_alteram_o_criptograma(pa: int, pb: int) -> None:
+    assert (ascon_aead128_encrypt(_RED_KEY, _RED_NONCE, _RED_PT, pa=pa, pb=pb)
+            != ascon_aead128_encrypt(_RED_KEY, _RED_NONCE, _RED_PT))
+
+
+@pytest.mark.parametrize("rounds", [5, 10, 20, 30, 35])
+def test_gift_rodadas_reduzidas_alteram_o_criptograma(rounds: int) -> None:
+    assert (gift_cofb_encrypt(_RED_KEY, _RED_NONCE, _RED_PT, rounds=rounds)
+            != gift_cofb_encrypt(_RED_KEY, _RED_NONCE, _RED_PT))
+
+
+@pytest.mark.parametrize("rounds", [5, 20, 40])
+def test_reducao_nao_altera_o_modo_em_volta(rounds: int) -> None:
+    """O comprimento do criptograma não muda com o número de rodadas.
+
+    O estudo compara representações do criptograma entre configurações de
+    rodadas; se a redução mexesse no modo, o comprimento viraria uma variável
+    de confusão trivialmente separável, exatamente o vazamento estrutural que
+    já custou uma rodada inteira do Caminho A."""
+    pb = max(1, rounds // 5)
+    ct_ascon = ascon_aead128_encrypt(_RED_KEY, _RED_NONCE, _RED_PT, pb=pb)
+    ct_gift = gift_cofb_encrypt(_RED_KEY, _RED_NONCE, _RED_PT, rounds=rounds)
+    assert len(ct_ascon) == len(_RED_PT) + 16
+    assert len(ct_gift) == len(_RED_PT) + 16
 
 
 def test_giftb128_difere_do_gift128_na_interface() -> None:

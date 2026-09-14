@@ -12,6 +12,7 @@ from tqdm import tqdm
 
 from src.features.families.autocorrelation import extract_autocorrelation
 from src.features.families.bitblock import extract_bitblock
+from src.features.families.blockalign import extract_blockalign
 from src.features.families.complexity import extract_complexity
 from src.features.families.entropy import extract_entropy_stats
 from src.features.families.frequency import extract_frequency
@@ -29,7 +30,14 @@ _ALL_FAMILIES = (
     "bitblock", "tag_region",
 )
 
+# Famílias opcionais: existem em _FAMILY_FUNCS mas NÃO em _ALL_FAMILIES, logo
+# não entram no vetor padrão de 641 dimensões. Só são incluídas se pedidas
+# explicitamente em `CiphertextFeatureExtractor(families=[...])` — assim
+# nenhuma extração existente muda de dimensão por acidente.
+_OPTIONAL_FAMILIES = ("blockalign",)
+
 _FAMILY_FUNCS = {
+    "blockalign": extract_blockalign,
     "histogram": extract_histogram,
     "entropy": extract_entropy_stats,
     "ngrams": extract_ngrams,
@@ -85,7 +93,11 @@ class CiphertextFeatureExtractor:
         unknown = set(families) - set(_FAMILY_FUNCS)
         if unknown:
             raise ValueError(f"Familias desconhecidas: {sorted(unknown)}")
-        self._families = [f for f in _ALL_FAMILIES if f in set(families)]
+        requested = set(families)
+        # Ordem canônica primeiro (estabilidade das colunas entre extrações),
+        # depois as opcionais pedidas explicitamente, na ordem em que vieram.
+        self._families = ([f for f in _ALL_FAMILIES if f in requested]
+                          + [f for f in families if f not in set(_ALL_FAMILIES)])
 
     def extract(self, ct: bytes) -> dict[str, float]:
         """Extrai todas as features ativas de um único ciphertext."""
