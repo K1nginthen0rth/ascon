@@ -2,7 +2,7 @@
 Pipeline de seleção de features para classificação LWC ciphertext-only.
 
 Pipeline v2, em 5 estágios (ver docs/plano_experimento_v2/02_features_e_selecao.md
-§2.2; substitui o pipeline v1 de 3 estágios documentado em docs/contexto_inicial.md §2):
+§2.2; substitui o pipeline v1 de 3 estágios documentado em docs/referencias_e_posicionamento.md §2):
   0. Padronização z-score (fit no treino) — só para alimentar o VT do estágio 1;
      as demais etapas e a saída final continuam em escala original.
   1. VarianceThreshold sobre features PADRONIZADAS — na prática, descarta só

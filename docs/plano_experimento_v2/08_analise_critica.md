@@ -3,7 +3,7 @@
 **Data:** 2026-08-21. **Escopo:** leitura crítica de `docs/plano_experimento_v2/`
 (5 arquivos), cruzada com a RSL (`RSL_resumida`, trechos da `RSL_completa`),
 os 4 pareceres do SBSeg (`Analise_sbseg_artigo.txt`), o relatório ao orientador
-e os resultados do v1 (`docs/analise_completa/`). Busca por erros factuais,
+e os resultados do v1 (`../v1_experimento_concluido.md`). Busca por erros factuais,
 conflitos internos de especificação, riscos subestimados e melhorias.
 
 O que foi conferido e **passou**: valores de referência (acaso 0,25 / colapso
@@ -226,7 +226,7 @@ artefatos brutos dos Caminhos B/C do v1 (números da dissertação não auditáv
 pelo repo), (c) tem o Caminho D só em `Downloads/`. Antes da fase 1: commitar o
 seletor, sincronizar os artefatos localizados, registrar a busca pelos de B/C.
 Custa uma sessão e evita que o v2 herde a mesma fragilidade de auditoria que a
-`analise_completa` já apontou no v1.
+`v1_experimento_concluido.md` já apontou no v1.
 
 ### 4.4 Rodadas reduzidas: prometer a curva antes de saber se ela existe
 

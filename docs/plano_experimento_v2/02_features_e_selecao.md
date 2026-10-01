@@ -146,7 +146,7 @@ inalterada):
 
 ## 2.3 [PENDENTE-P4] Baseline de features aleatórias (item que ficou órfão nas rodadas de decisão — nunca foi aprovado nem rejeitado; ver 06 §P)
 
-Validação do seletor prevista em `contexto_inicial.md` e nunca executada:
+Validação do seletor prevista em `../referencias_e_posicionamento.md` e nunca executada:
 comparar N features selecionadas pelo mRMR contra N features **sorteadas**, via
 McNemar. Se o desempenho for igual, a seleção não agrega — precisa ser sabido e
 reportado.

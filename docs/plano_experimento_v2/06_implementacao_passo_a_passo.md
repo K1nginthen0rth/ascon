@@ -45,7 +45,7 @@ dataset secundário de 1KB.
 1. ✅ Commitado (`5b46413`) — Boruta diagnóstico (7 arquivos).
 2. ✅ Artefatos do Caminho D copiados para
    `reports/keyholdout_2class_60k_v1_hybrid/` (gitignored, local).
-3. ✅ `docs/analise_completa/08_achados_e_pendencias.md` §1 atualizado —
+3. ✅ `docs/v1_experimento_concluido.md` §7 atualizado —
    D resolvido, B/C do v1 seguem não localizados (não bloqueia o v2, que
    gera B/C do zero).
 

@@ -1,4 +1,9 @@
-# Relatório — Planejamento do novo experimento (v2)
+# Resumo das decisões do experimento v2
+
+> Escrito para o orientador em 2026-08-22, com os números de teste e de
+> dataset atualizados em 2026-09-26. Registra a decisão e o motivo de cada
+> escolha do v2. A linha de trabalho corrente (piso de rodadas reduzidas) está
+> em `docs/piso_rodadas.md`, não aqui.
 
 **Atualizado em 2026-08-22.** Resumo das decisões para a próxima rodada
 experimental — a ação e o motivo de cada uma. O plano técnico completo está em
@@ -6,7 +11,7 @@ experimental — a ação e o motivo de cada uma. O plano técnico completo est�
 
 **Status de implementação (2026-08-22):** todo o código dos 6 caminhos, da
 extração de features e da consolidação estatística está pronto e testado
-(232/232 testes). O dataset real (180.000 amostras) já foi gerado e
+(265/265 testes). O dataset real (180.000 amostras) já foi gerado e
 validado. O que falta agora é EXECUTAR — extração de features nas 180k
 amostras (~20h por braço, em CPU local) e os Caminhos B/C/E em GPU
 (Kaggle/Colab). Sequência de comandos:
@@ -35,8 +40,8 @@ respondendo à crítica do SBSeg.
 
 ## 2. Dataset
 
-**Ação:** 300 chaves × 100 amostras/chave × 5 algoritmos = 150.000 criptogramas
-de 64 KB, encadeados (mesma chave, nonce e plaintext para os cinco algoritmos
+**Ação:** 300 chaves × 100 slots × 6 "algoritmos" = 180.000 criptogramas
+de 64 KB, encadeados (os 5 desta seção mais o PRNG como controle negativo) (mesma chave, nonce e plaintext para os cinco algoritmos
 em cada amostra). Plaintext: 80% texto (corpus Gutenberg) e 20% imagens
 (ImageNet 256×256 em tons de cinza = exatamente 64 KB), sorteio por amostra
 dentro de cada chave.
@@ -149,9 +154,11 @@ um resultado nulo não será "ausência de evidência" sem qualificação, será
 "efeito, se existir, é menor que ~1 p.p.".
 
 **Ainda em aberto** (não decidido, aguarda o senhor): pré-registro formal
-do plano de análise (rejeitado nesta fase); variante do Ascon com rodadas
-reduzidas (rejeitada); publicação do dataset como benchmark público via
-Zenodo (proposta pendente de conversa). Lista completa e demais
+do plano de análise (rejeitado nesta fase); publicação do dataset como benchmark público via
+Zenodo (proposta pendente de conversa). A variante com rodadas reduzidas
+constava aqui como rejeitada; deixou de ser, e virou a linha de trabalho
+corrente depois da banca de acompanhamento de setembro de 2026
+(`docs/piso_rodadas.md`). Lista completa e demais
 pendências técnicas menores (bootstrap por cluster de chave, baseline de
 features aleatórias, ordem de corte de GPU) em
 `docs/plano_experimento_v2/05_execucao_riscos_pendencias.md` §P.

@@ -47,7 +47,7 @@ entre o AES-ECB e os esquemas íntegros. Não será implementada no v2.
 
 | Parâmetro | Valor |
 |---|---|
-| Chaves | **300** (inalterado), `key_seed_offset=6000` (offsets 0–5000 já usados; colisões documentadas em `analise_completa/04_datasets.md`) |
+| Chaves | **300** (inalterado), `key_seed_offset=6000` (offsets 0–5000 já usados; colisões documentadas em `../v1_experimento_concluido.md` §1) |
 | Slots por chave | 100 (par chave+plaintext+nonce) |
 | Algoritmos por slot | 5 (encadeamento: mesma tripla para todos) |
 | Total de amostras | 300 × 100 × 5 cifras = 150.000; **+30.000 do controle PRNG (C1, decisão 2026-08-21) = 180.000 no parquet** (~11,8 GB) — ver 06 Fase 4.2 |

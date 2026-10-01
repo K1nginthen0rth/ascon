@@ -519,7 +519,7 @@ Ascon.** `validate_kat` e `parse_kat_file` davam como exemplo
 quebrado (os testes usam o caminho certo), mas era armadilha ativa:
 qualquer script novo que copiasse o exemplo "falharia a validação KAT" de
 um algoritmo correto. Corrigido em `ascon_wrapper.py`, `kat_parser.py`,
-`01_criptografia.md` e `CONTEXTO_ARTIGO.md`, com a explicação do porquê.
+`../v1_experimento_concluido.md`, com a explicação do porquê.
 
 **2.6 [BAIXA] — a checagem de nonce validava o rótulo, não o nonce.**
 `_check_nonce_uniqueness` contava duplicatas de `(key_id, nonce_id)`, e

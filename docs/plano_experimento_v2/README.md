@@ -6,9 +6,9 @@
 planejamento que produziram esta pasta.
 
 Este é o documento-mestre do próximo experimento. O que está aqui **substitui**
-o planejamento parcial de `docs/relatorio_orientador_novo_experimento.md`
+o planejamento parcial hoje resumido em `00_resumo_decisoes.md`
 (mantido como resumo simples para o orientador, atualizado) e **estende** o
-estado descrito em `docs/analise_completa/` (que documenta o experimento v1, já
+estado descrito em `../v1_experimento_concluido.md` (que documenta o experimento v1, já
 concluído).
 
 ## Legenda de status usada em todos os arquivos

@@ -1,7 +1,16 @@
-# Contexto Inicial — Decisões e Histórico
+# Referências e posicionamento na literatura
 
-Este arquivo registra o histórico de decisões técnicas e revisões críticas
-feitas até **2026-04-26**, antes da implementação no Claude Code começar.
+Bibliografia de seleção de atributos pronta para citação, mais o
+posicionamento crítico dos três trabalhos que a proposta do IME já discutia.
+Escrito em 2026-04-26, antes de a implementação começar; a revisão sistemática
+posterior, com 21 estudos, está em `RSL_completa.txt` e `RSL_resumida.txt`, e
+o levantamento sobre distinguidores em `pesquisa_distinguishers/RELATORIO.md`.
+
+O pipeline de seleção descrito na seção 2 é o do v1, de três estágios com
+Boruta filtrando. Não é mais o que o código faz: Boruta virou diagnóstico em
+`5b46413`, e o v2 acrescentou padronização z-score antes do filtro de
+variância. A seção fica como registro da decisão original e das suas
+justificativas, que continuam valendo.
 
 ---
 
@@ -169,11 +178,11 @@ Dependências: `scikit-learn`, `mrmr-selection`, `Boruta`.
 
 ## 4. NOTAS DE TRABALHO
 
-### Dúvidas ainda em aberto
-- [ ] Lista final de algoritmos LWC além do Ascon (GIFT-COFB? Xoodyak? PRESENT?)
-- [ ] Tamanho do dataset-piloto (10k? 50k? 100k amostras?)
-- [ ] Política de nonce: estritamente único por chave ou amostragem aleatória?
-- [ ] Implementação de referência: ascon-c oficial ou bindings Python (pyascon)?
+### Dúvidas daquele momento, e como foram resolvidas
+- Algoritmos: GIFT-COFB no v1; GIFT-COFB, Grain-128AEAD e Schwaemm256-128 no v2.
+- Tamanho: 60.000 amostras no v1, 180.000 no v2.
+- Nonce: contador global de 128 bits, único por construção.
+- Implementação: `ascon-c` oficial via cffi, não pyascon.
 
 ### Convenções acordadas
 - Seeds principais: `42` para split, `7` para modelo, `13` para feature selection

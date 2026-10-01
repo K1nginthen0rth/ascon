@@ -894,7 +894,7 @@ def analysis_learning_curve(df, folds, branch, out_dir, **kw) -> None:
 # ---------------------------------------------------------------------------
 
 # Famílias originais do v1 (307D antes da adição do lzma a `complexity`,
-# ver `docs/analise_completa/`). O nome "clássicas-307" é histórico — a
+# ver `docs/v1_experimento_concluido.md`). O nome "clássicas-307" é histórico — a
 # contagem real hoje é ligeiramente diferente; o que importa é o CONJUNTO
 # de famílias, não o número exato no nome.
 _CLASSICAS_FAMILIES = [

@@ -269,7 +269,7 @@ def test_extract_all_families():
     feats = extractor.extract(ct)
     # v2 (12 familias): 256 + 4 + 15 + 18 + 5 + 10 + 25 + 2 + 11 + 5 + 282 + 8 = 641
     # (v1 tinha 6 familias / 307D — histogram/entropy/ngrams/autocorrelation/
-    # complexity(4)/frequency; ver docs/analise_completa/ para o historico v1)
+    # complexity(4)/frequency; ver docs/v1_experimento_concluido.md para o historico v1)
     assert len(feats) == 641
     assert all_nan_or_float(feats)
 
