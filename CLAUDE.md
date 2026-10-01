@@ -17,10 +17,9 @@ Dissertação de mestrado (IME-RJ, orientador Xexéo) sobre classificação de a
 - D: Híbrido — [307D] + [latent B] + [latent C] → classificador
 
 Os 4 caminhos já foram executados no dataset principal (60k/64KB) e convergem
-para H₀ (F1≈0,50). Referência técnica completa e atualizada, incluindo
-resultados, catálogo de scripts/testes e pendências conhecidas:
-**`docs/analise_completa/`** (gerado 2026-08-16; ver `README.md` daquela pasta
-antes de assumir que este arquivo ou `CONTEXTO_ARTIGO.md` estão 100% atuais).
+para H₀ (F1≈0,50). Registro completo em **`docs/v1_experimento_concluido.md`**
+(dataset, features, arquiteturas, resultados, ablação, controles e a pendência
+que sobrou). Índice de toda a documentação: **`docs/README.md`**.
 
 **Experimento v2 (planejado 2026-08-21, código completo em 2026-08-22 —
 falta EXECUTAR, não implementar):** 4 algoritmos (Ascon-AEAD128 corrigido
@@ -35,10 +34,25 @@ dimensões medidas), seletor redesenhado, RNG de geração CTR_DRBG
 `07_runbook_execucao.md` para a sequência exata de comandos.
 **Todo o código dos 6 caminhos + extração de features + consolidação
 estatística (BH-FDR, McNemar+Bonferroni, estratificação de erro) está
-implementado e testado (265/265 testes).** Pendente: rodar a extração de
+implementado e testado.** Pendente: rodar a extração de
 features nas 180k amostras reais (~20h por braço) e os Caminhos B/C/E em
 GPU (Kaggle/Colab) — ver `06_implementacao_passo_a_passo.md` para o
 estado fase-a-fase.
+
+**Linha de trabalho corrente: piso de rodadas (desde setembro de 2026).** Depois
+da banca de acompanhamento, a pergunta passou de "distinguir um algoritmo do
+outro" para "com quantas rodadas o algoritmo ainda é separável de aleatório".
+Mede-se, por algoritmo, o maior R em que um classificador ainda separa o
+criptograma de uma sequência uniforme do mesmo tamanho, sempre ciphertext-only
+e com adversário passivo. A afirmação que sai é "abaixo de R, até este atacante
+genérico quebra", nunca "acima de R é seguro". Pisos (pior caso testado,
+contador do dispositivo perto do zero): Ascon-AEAD128 3 de 12, GIFT-COFB 3 de 40,
+Grain-128AEAD 28 de 256, Schwaemm256-128 2 de 11. Com o contador num ponto
+qualquer, GIFT cai para 2 e Grain para 24. No eixo `dados` (inicialização
+completa) não há piso. Resultados válidos estão em `build/reduced_rounds/floor_v2/`
+(gerador corrigido em 30/09: amostra comum aos quatro, contador por dispositivo). Estado, protocolo, números e ressalvas:
+**`docs/piso_rodadas.md`**. Código em `scripts/reduced_rounds/`, saídas em
+`build/reduced_rounds/` (gitignored).
 
 ---
 
@@ -68,7 +82,7 @@ python scripts/vendor_sources.py --fetch    # clona/baixa nos pinos
 ### Testes
 
 ```bash
-pytest tests/ -v                                      # todos os 265 testes
+pytest tests/ -v                                      # todos os 445 testes
 pytest tests/test_ascon_wrapper.py -v                 # um módulo
 pytest tests/test_extractor.py::test_histogram -v     # um teste específico
 pytest tests/ -x                                      # para no 1o erro
@@ -101,10 +115,31 @@ python scripts/run_v2_caminho_f.py --branch controlado         # meta-classifica
 python scripts/consolidate_v2.py                                # BH-FDR + McNemar + estratificação
 ```
 
+### Piso de rodadas — ver `docs/piso_rodadas.md`
+
+```bash
+:: compilar variantes (exige ambiente MSVC; o .bat chama vcvarsall)
+build_reduced_variant.bat --algo ascon --pa 12 --pb 4
+build_reduced_variant.bat --algo grain --init-rounds 160
+
+# medir o piso (o runner genérico cobre os quatro algoritmos)
+python scripts/reduced_rounds/run_floor.py --algo ascon --smoke
+python scripts/reduced_rounds/run_floor.py --algo ascon --politica dados --arms texto aleatorio --rounds 1 2 3 4 5 6 7 8
+python scripts/reduced_rounds/run_floor.py --algo grain --arms texto aleatorio
+
+# determinar a fronteira a partir dos relatórios (BH-FDR + faixa de controle + monotonicidade)
+python scripts/reduced_rounds/report_floor.py --dir build/reduced_rounds/ascon_floor/reports --csv piso.csv
+```
+
+O braço `aleatorio` é controle com verdade-terra provada: com plaintext
+uniforme o XOR do par é exatamente uniforme, então nenhum detector pode superar
+o acaso ali. Detecção nesse braço é falso positivo por construção, e é assim
+que se calibra o instrumento.
+
 ⚠️ Os checks reais de χ², nonces, compressão e decrypt spot-check (protocolo descrito
 abaixo) estão em `scripts/validate_2class_60k.py` (dataset principal) e
 `scripts/validate_pilot_dataset.py`/`validate_3class_*.py` (legados) — não em
-`validate_all_datasets.py`. Ver `docs/analise_completa/05_scripts.md`.
+`validate_all_datasets.py`. Ver `docs/v1_experimento_concluido.md`.
 
 ---
 
@@ -170,7 +205,7 @@ Plaintexts e chaves NÃO ficam no parquet final — ficam em `data/interim/` só
 ### `src/features/`
 - **extractor.py** — `CiphertextFeatureExtractor`: orquestra as famílias registradas em `_FAMILY_FUNCS` → vetor de features. **v1: 6 famílias, 307D. v2: 12 famílias (+ nist_sts, moments, hamming, spectral_welch, bitblock, tag_region), 641D medido** — usado pelo `scripts/extract_features_v2.py`, não pelo `extract_dataset()` legado (que ainda carrega o parquet inteiro em memória — seguro só para os datasets pequenos do v1).
 - **families/** — Uma classe por família. v1: histogram, entropy, ngrams, autocorrelation, complexity, frequency. v2 acrescenta: nist_sts (suíte NIST SP 800-22 completa, 25 features), moments, hamming (peso de Hamming — representação da réplica XGB-LGBM), spectral_welch, bitblock, tag_region.
-- **selector.py** — `LWCFeatureSelector`: pipeline z-score → VT → MI → mRMR (define o conjunto final) → Boruta (diagnóstico de estabilidade, não filtra mais o resultado — mudança de 2026-08, motivada pelo Boruta colapsando o experimento principal para 1 feature; ver `docs/analise_completa/02_features_e_selecao.md`). O estágio z-score (Stage 0) foi adicionado no v2 para corrigir o VT descartando o histograma por viés de escala absoluta. Deve ser fitado **somente no treino de cada fold**.
+- **selector.py** — `LWCFeatureSelector`: pipeline z-score → VT → MI → mRMR (define o conjunto final) → Boruta (diagnóstico de estabilidade, não filtra mais o resultado — mudança de 2026-08, motivada pelo Boruta colapsando o experimento principal para 1 feature; ver `docs/v1_experimento_concluido.md` §2). O estágio z-score (Stage 0) foi adicionado no v2 para corrigir o VT descartando o histograma por viés de escala absoluta. Deve ser fitado **somente no treino de cada fold**.
 
 **Famílias de features (307D total):**
 
@@ -188,7 +223,7 @@ Plaintexts e chaves NÃO ficam no parquet final — ficam em `data/interim/` só
 MESMA lista de 6 famílias, produz **308** — `compression_ratio_lzma`
 entrou em `9012c55` (Fase 2 do v2), depois do v1 já ter rodado. A tabela
 acima descreve o **v1-como-executado**, que não é mais o que `src/`
-produz. Os resultados de `docs/analise_completa/07_resultados.md` seguem
+produz. Os resultados de `docs/v1_experimento_concluido.md` §4 seguem
 válidos como registro histórico, mas regenerá-los exigiria reverter essa
 adição. Não afeta o v2 (que usa as 12 famílias/641 features).
 

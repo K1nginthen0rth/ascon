@@ -1,11 +1,12 @@
 """
 Wrapper genérico para os módulos `.pyd` compilados por `build_variant.py`.
 
-Os três algoritmos usam a mesma API SUPERCOP/eBACS (`crypto_aead_encrypt` /
-`crypto_aead_decrypt`), então um único wrapper serve para os três — só varia
+Os quatro algoritmos usam a mesma API SUPERCOP/eBACS (`crypto_aead_encrypt` /
+`crypto_aead_decrypt`), então um único wrapper serve para os quatro — só varia
 KEYBYTES/NPUBBYTES/ABYTES, que são propriedades do algoritmo, não da
 implementação. Isso é deliberadamente uma classe PARALELA a
-`AsconAEAD128`/`GiftCOFB`/`Schwaemm256_128` (não uma subclasse nem substituto):
+`AsconAEAD128`/`GiftCOFB`/`Schwaemm256_128`/`Grain128AEAD` (não uma subclasse
+nem substituto):
 carrega o `.pyd` de um caminho explícito, não pelo nome fixo que os wrappers
 de produção esperam em `src/crypto/`.
 """
@@ -27,6 +28,8 @@ ALGO_SPECS = {
     "ascon": AlgoSpec(16, 16, 16),
     "gift": AlgoSpec(16, 16, 16),
     "schwaemm": AlgoSpec(16, 32, 16),
+    # Grain-128AEAD: nonce de 96 bits e tag de 64 bits, menores que os demais.
+    "grain": AlgoSpec(16, 12, 8),
 }
 
 

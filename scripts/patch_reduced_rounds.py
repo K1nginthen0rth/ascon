@@ -1,7 +1,6 @@
 """
 Aplica, de forma idempotente, patches de redução de rodadas nas fontes C
-vendorizadas de Ascon, GIFT-COFB e Schwaemm256-128 (Grain fica de fora desta
-rodada — decisão registrada no plano do estudo de sensibilidade).
+vendorizadas de Ascon, GIFT-COFB, Schwaemm256-128 e Grain-128AEAD.
 
 Por que um script, e não editar `ascon-c/`/`gift-cofb/`/`sparkle/` direto:
 essas pastas são gitignored (vendorizadas via `scripts/vendor_sources.py`) e
@@ -40,6 +39,7 @@ GIFT_C = (
 SCHWAEMM_CFG_H = (
     REPO_ROOT / "sparkle" / "crypto_aead" / "schwaemm256128v2" / "ref" / "schwaemm_cfg.h"
 )
+GRAIN_C = REPO_ROOT / "grain-128aead" / "NIST" / "ref" / "grain128aead.c"
 
 _MARKER = "REDUCED_ROUNDS_PATCH"
 
@@ -153,6 +153,38 @@ _SCHWAEMM_PATCHED = f"""/* {_MARKER}: liberados para override externo via define
 #endif"""
 
 
+# ---------------------------------------------------------------------------
+# Grain-128AEAD: a inicializacao do NIST/ref/grain128aead.c tem DUAS fases:
+#   1. 256 clocks com a saida realimentando LFSR e NFSR   (grain_round = INIT)
+#   2. 128 clocks com a chave reintroduzida, enchendo acumulador e shift
+#      register do autenticador                            (grain_round = ADDKEY)
+# A literatura de criptanalise do Grain-128AEAD (ataques de cubo, zero-sum)
+# conta "rodadas" como os clocks da FASE 1 — e por isso que os resultados
+# publicados aparecem como 190 ou 193 de 256. Parametrizar so a fase 1 mantem
+# o numero comparavel com o que ja foi publicado.
+#
+# A fase 2 fica INTACTA de proposito: ela e o que constroi a tag. Encurta-la
+# mudaria o modo, e nao o numero de rodadas, e a comparacao deixaria de ser
+# "mesmo AEAD com menos rodadas".
+# ---------------------------------------------------------------------------
+
+_GRAIN_ORIGINAL = """	/* initialize grain and skip output */
+	grain_round = INIT;
+	for (int i = 0; i < 256; i++) {
+		next_z(grain, 0);
+	}"""
+
+_GRAIN_PATCHED = f"""	/* {_MARKER}: clocks da fase INIT liberados para override externo.
+	   Fase ADDKEY (128 clocks, logo abaixo) permanece intacta. */
+#ifndef GRAIN_INIT_ROUNDS_OVERRIDE
+#define GRAIN_INIT_ROUNDS_OVERRIDE 256
+#endif
+	grain_round = INIT;
+	for (int i = 0; i < GRAIN_INIT_ROUNDS_OVERRIDE; i++) {{
+		next_z(grain, 0);
+	}}"""
+
+
 def _apply(path: Path, original: str, patched: str, label: str, check_only: bool) -> bool:
     if not path.is_file():
         raise FileNotFoundError(
@@ -201,6 +233,7 @@ def apply_all(check_only: bool = False) -> bool:
     ok &= _apply(ASCON_PERM_H, _ASCON_ORIGINAL, _ASCON_PATCHED, "ascon", check_only)
     ok &= _apply(GIFT_C, _GIFT_ORIGINAL, _GIFT_PATCHED, "gift-cofb", check_only)
     ok &= _apply(SCHWAEMM_CFG_H, _SCHWAEMM_ORIGINAL, _SCHWAEMM_PATCHED, "schwaemm", check_only)
+    ok &= _apply(GRAIN_C, _GRAIN_ORIGINAL, _GRAIN_PATCHED, "grain", check_only)
     return ok
 
 
@@ -208,6 +241,7 @@ def unpatch_all() -> None:
     _unpatch(ASCON_PERM_H, _ASCON_PATCHED, _ASCON_ORIGINAL, "ascon")
     _unpatch(GIFT_C, _GIFT_PATCHED, _GIFT_ORIGINAL, "gift-cofb")
     _unpatch(SCHWAEMM_CFG_H, _SCHWAEMM_PATCHED, _SCHWAEMM_ORIGINAL, "schwaemm")
+    _unpatch(GRAIN_C, _GRAIN_PATCHED, _GRAIN_ORIGINAL, "grain")
 
 
 if __name__ == "__main__":

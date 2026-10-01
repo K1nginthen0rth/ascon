@@ -1,6 +1,6 @@
 """
-Compila variantes de rodadas reduzidas de Ascon-AEAD128, GIFT-COFB e
-Schwaemm256-128, a partir das MESMAS fontes vendorizadas de produção, já
+Compila variantes de rodadas reduzidas de Ascon-AEAD128, GIFT-COFB,
+Schwaemm256-128 e Grain-128AEAD, a partir das MESMAS fontes vendorizadas de produção, já
 patchadas por `scripts/patch_reduced_rounds.py` (rodar aquele script antes
 deste, uma vez).
 
@@ -18,12 +18,14 @@ Uso:
     python scripts/reduced_rounds/build_variant.py --algo ascon --pa 12 --pb 4
     python scripts/reduced_rounds/build_variant.py --algo gift --rounds 20
     python scripts/reduced_rounds/build_variant.py --algo schwaemm --slim 3 --big 11
-    python scripts/reduced_rounds/build_variant.py --all-baseline   # 3 variantes na spec, p/ diff vs. producao
+    python scripts/reduced_rounds/build_variant.py --algo grain --init-rounds 160
+    python scripts/reduced_rounds/build_variant.py --all-baseline   # 4 variantes na spec, p/ diff vs. producao
 """
 from __future__ import annotations
 
 import argparse
 import sys
+import sysconfig
 from pathlib import Path
 
 import cffi
@@ -36,6 +38,7 @@ ASCON_TESTS_DIR = REPO_ROOT / "ascon-c" / "tests"  # crypto_aead.h vive aqui, n�
 GIFT_OPT32_DIR = REPO_ROOT / "gift-cofb" / "crypto_aead" / "giftcofb128v1" / "opt32"
 GIFT_MSVC_COMPAT_DIR = REPO_ROOT / "src" / "crypto" / "_gift_cofb_msvc"
 SPARKLE_REF_DIR = REPO_ROOT / "sparkle" / "crypto_aead" / "schwaemm256128v2" / "ref"
+GRAIN_REF_DIR = REPO_ROOT / "grain-128aead" / "NIST" / "ref"
 
 _CDEF = """
     int crypto_aead_encrypt(
@@ -94,9 +97,21 @@ def _already_built(module_name: str) -> Path | None:
     classe de falha inteira.
     """
     d = OUT_ROOT / module_name
-    for pattern in (f"{module_name}.*.pyd", f"{module_name}.*.so", f"{module_name}.pyd"):
-        for hit in d.glob(pattern):
-            return hit
+    sufixo = sysconfig.get_config_var("EXT_SUFFIX") or ".pyd"
+    exato = d / f"{module_name}{sufixo}"
+    if exato.is_file():
+        return exato
+
+    # Só o nome do módulo não basta: um `.pyd` compilado por OUTRA versão de
+    # Python casa no glob, e a build é pulada como se estivesse pronta. O erro
+    # só aparece depois, no import, como "DLL load failed" — sem dizer que a
+    # causa é artefato velho. Acontece de verdade ao subir o interpretador,
+    # porque estes artefatos ficam em cache indefinidamente.
+    outros = [p for pat in (f"{module_name}.*.pyd", f"{module_name}.*.so")
+              for p in d.glob(pat)]
+    if outros:
+        print(f"[{module_name}] ignorando {len(outros)} artefato(s) de outra ABI "
+              f"({', '.join(p.name for p in outros)}); recompilando para {sufixo}")
     return None
 
 
@@ -178,14 +193,43 @@ def build_schwaemm(slim: int, big: int) -> Path:
     return Path(ffi.compile(tmpdir=str(_out_dir(module_name)), verbose=True))
 
 
+
+def build_grain(init_rounds: int) -> Path:
+    """init_rounds=GRAIN_INIT_ROUNDS_OVERRIDE, clocks da fase INIT. Producao: 256.
+
+    A fase ADDKEY (128 clocks) nao e parametrizada — ver a justificativa em
+    `scripts/patch_reduced_rounds.py`. Os numeros publicados de criptanalise do
+    Grain-128AEAD (190, 193) contam exatamente esta fase, entao a escala e a
+    mesma da literatura.
+    """
+    if not 1 <= init_rounds <= 256:
+        raise ValueError(f"init_rounds deve estar em [1,256], recebido {init_rounds}")
+    module_name = f"_grain_ref_init{init_rounds}"
+    cached = _already_built(module_name)
+    if cached is not None:
+        return cached
+    ffi = cffi.FFI()
+    ffi.cdef(_CDEF)
+    ffi.set_source(
+        module_name,
+        _C_HEADER_DECLS,
+        sources=[str(GRAIN_REF_DIR / "grain128aead.c")],
+        include_dirs=[str(GRAIN_REF_DIR)],
+        define_macros=[("GRAIN_INIT_ROUNDS_OVERRIDE", str(init_rounds))],
+    )
+    return Path(ffi.compile(tmpdir=str(_out_dir(module_name)), verbose=True))
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--algo", choices=["ascon", "gift", "schwaemm"])
+    parser.add_argument("--algo", choices=["ascon", "gift", "schwaemm", "grain"])
     parser.add_argument("--pa", type=int, default=12)
     parser.add_argument("--pb", type=int, default=8)
     parser.add_argument("--rounds", type=int, default=40)
     parser.add_argument("--slim", type=int, default=7)
     parser.add_argument("--big", type=int, default=11)
+    parser.add_argument("--init-rounds", type=int, default=256,
+                        help="clocks da fase INIT do Grain-128AEAD")
     parser.add_argument("--all-baseline", action="store_true",
                         help="compila as 3 variantes na spec (para diff binário vs. producao)")
     args = parser.parse_args()
@@ -194,6 +238,7 @@ if __name__ == "__main__":
         print("ascon  (12/8):", build_ascon(12, 8))
         print("gift   (40):  ", build_gift(40))
         print("schwaemm(7/11):", build_schwaemm(7, 11))
+        print("grain  (256): ", build_grain(256))
         sys.exit(0)
 
     if args.algo == "ascon":
@@ -202,5 +247,7 @@ if __name__ == "__main__":
         print(build_gift(args.rounds))
     elif args.algo == "schwaemm":
         print(build_schwaemm(args.slim, args.big))
+    elif args.algo == "grain":
+        print(build_grain(args.init_rounds))
     else:
         parser.error("--algo é obrigatório (exceto com --all-baseline)")

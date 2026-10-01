@@ -1,11 +1,12 @@
 """
 Valida uma variante compilada por `build_variant.py` contra os vetores de
 teste oficiais (defaults) ou contra o oráculo Python independente (rodadas
-reduzidas — só Ascon e GIFT têm oráculo hoje).
+reduzidas — só Ascon e GIFT têm oráculo hoje; Schwaemm e Grain ficam no
+roundtrip, que não prova corretude).
 
 Uso:
     python scripts/reduced_rounds/validate_variant.py --all-baseline
-        # os 3 .pyd na spec, contra os 1.089 KATs oficiais de cada um
+        # os 4 .pyd na spec, contra os 1.089 KATs oficiais de cada um
 
     python scripts/reduced_rounds/validate_variant.py --algo ascon --pa 12 --pb 4 --n-random 500
         # variante reduzida, contra o oráculo Python (amostragem aleatória)
@@ -25,12 +26,13 @@ sys.path.insert(0, str(REPO_ROOT / "tests"))
 from src.crypto.kat_parser import parse_kat_file  # noqa: E402
 from scripts.reduced_rounds.reduced_wrapper import ReducedRoundsCipher  # noqa: E402
 from scripts.reduced_rounds.build_variant import (  # noqa: E402
-    build_ascon, build_gift, build_schwaemm,
+    build_ascon, build_gift, build_schwaemm, build_grain,
 )
 
 _KAT_ASCON = REPO_ROOT / "data" / "kat" / "LWC_AEAD_KAT_ASCON128AV13.txt"
 _KAT_GIFT = REPO_ROOT / "data" / "kat" / "LWC_AEAD_KAT_GIFTCOFB128_128.txt"
 _KAT_SCHWAEMM = REPO_ROOT / "data" / "kat" / "LWC_AEAD_KAT_SCHWAEMM256_128.txt"
+_KAT_GRAIN = REPO_ROOT / "data" / "kat" / "LWC_AEAD_KAT_GRAIN128AEAD.txt"
 
 
 def validate_against_kat(pyd_path: Path, algo: str, kat_path: Path) -> None:
@@ -133,12 +135,14 @@ def validate_roundtrip_only(pyd_path: Path, algo: str, n_random: int) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--all-baseline", action="store_true")
-    parser.add_argument("--algo", choices=["ascon", "gift", "schwaemm"])
+    parser.add_argument("--algo", choices=["ascon", "gift", "schwaemm", "grain"])
     parser.add_argument("--pa", type=int, default=12)
     parser.add_argument("--pb", type=int, default=8)
     parser.add_argument("--rounds", type=int, default=40)
     parser.add_argument("--slim", type=int, default=7)
     parser.add_argument("--big", type=int, default=11)
+    parser.add_argument("--init-rounds", type=int, default=256,
+                        help="clocks da fase INIT do Grain-128AEAD")
     parser.add_argument("--n-random", type=int, default=500)
     args = parser.parse_args()
 
@@ -146,6 +150,7 @@ if __name__ == "__main__":
         validate_against_kat(build_ascon(12, 8), "ascon", _KAT_ASCON)
         validate_against_kat(build_gift(40), "gift", _KAT_GIFT)
         validate_against_kat(build_schwaemm(7, 11), "schwaemm", _KAT_SCHWAEMM)
+        validate_against_kat(build_grain(256), "grain", _KAT_GRAIN)
         sys.exit(0)
 
     if args.algo == "ascon":
@@ -166,3 +171,9 @@ if __name__ == "__main__":
             validate_against_kat(pyd, "schwaemm", _KAT_SCHWAEMM)
         else:
             validate_roundtrip_only(pyd, "schwaemm", args.n_random)
+    elif args.algo == "grain":
+        pyd = build_grain(args.init_rounds)
+        if args.init_rounds == 256:
+            validate_against_kat(pyd, "grain", _KAT_GRAIN)
+        else:
+            validate_roundtrip_only(pyd, "grain", args.n_random)
