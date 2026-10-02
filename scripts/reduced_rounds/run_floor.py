@@ -111,8 +111,18 @@ def _sampler(arm: str, pt_drbg: CTRDRBG):
     raise ValueError(f"braço desconhecido: {arm}")
 
 
+def _montar(ca: np.ndarray, cb: np.ndarray, representacao: str) -> np.ndarray:
+    """Amostra a partir dos dois lados do par, na representação pedida."""
+    if representacao == "xor":
+        return ca ^ cb
+    if representacao == "par":
+        return np.concatenate([ca, cb])
+    return np.concatenate([ca, cb, ca ^ cb])
+
+
 def generate(algo: str, arm: str, n_keys: int, rounds: list[int], cache: Path,
-             politica: str, contador: str = "sorteado") -> dict:
+             politica: str, contador: str = "sorteado",
+             representacao: str = "xor") -> dict:
     """XOR (payload + tag) de pares consecutivos, por contagem de rodadas.
 
     Incremental: só gera as contagens que faltam no cache. Chaves, nonces e
@@ -121,6 +131,14 @@ def generate(algo: str, arm: str, n_keys: int, rounds: list[int], cache: Path,
     """
     spec = ALGOS[algo]
     largura = MSG_BYTES + spec.tag_bytes
+    # `xor`: o XOR dos dois criptogramas do par (Baksi; Shen). `par`: os dois
+    # criptogramas inteiros lado a lado, como a entrada do Gohr. O Shen mostra
+    # que, com um par só, a entrada completa acerta mais que a diferença.
+    # `par+xor`: os dois criptogramas e o XOR deles. Testa se o XOR descarta
+    # informação útil: se esta forma subir o piso, descartava.
+    if representacao not in ("xor", "par", "par+xor"):
+        raise ValueError(f"representação desconhecida: {representacao!r}")
+    largura_amostra = {"xor": 1, "par": 2, "par+xor": 3}[representacao] * largura
 
     fp = impressao_digital(algo=algo, arm=arm, politica=politica, n_keys=n_keys,
                            pairs_per_key=PAIRS_PER_KEY, msg_bytes=MSG_BYTES,
@@ -128,7 +146,8 @@ def generate(algo: str, arm: str, n_keys: int, rounds: list[int], cache: Path,
                            seed_gen=SEED_GEN, esquema=ESQUEMA_AMOSTRA,
                            # só entra quando difere do padrão, para não invalidar
                            # os caches já gerados com contador sorteado
-                           **({} if contador == "sorteado" else {"contador": contador}))
+                           **({} if contador == "sorteado" else {"contador": contador}),
+                           **({} if representacao == "xor" else {"representacao": representacao}))
 
     store: dict[str, np.ndarray] = {}
     if cache.exists():
@@ -155,10 +174,10 @@ def generate(algo: str, arm: str, n_keys: int, rounds: list[int], cache: Path,
     sample, image_sampler = _sampler(arm, pt_drbg)
 
     n = n_keys * PAIRS_PER_KEY
-    novo = {f"r{r}": np.zeros((n, largura), np.uint8) for r in faltando}
+    novo = {f"r{r}": np.zeros((n, largura_amostra), np.uint8) for r in faltando}
     precisa_random = "random" not in store
     if precisa_random:
-        novo["random"] = np.zeros((n, largura), np.uint8)
+        novo["random"] = np.zeros((n, largura_amostra), np.uint8)
     key_idx = np.repeat(np.arange(n_keys), PAIRS_PER_KEY).astype(np.int32)
 
     n_resampled = 0
@@ -193,11 +212,20 @@ def generate(algo: str, arm: str, n_keys: int, rounds: list[int], cache: Path,
             for r, cipher in ciphers.items():
                 a = cipher.encrypt(key, n1, p1)
                 b = cipher.encrypt(key, n2, p2)
-                novo[f"r{r}"][i] = (
-                    np.frombuffer(a[:MSG_BYTES] + a[-spec.tag_bytes:], np.uint8)
-                    ^ np.frombuffer(b[:MSG_BYTES] + b[-spec.tag_bytes:], np.uint8))
+                ca = np.frombuffer(a[:MSG_BYTES] + a[-spec.tag_bytes:], np.uint8)
+                cb = np.frombuffer(b[:MSG_BYTES] + b[-spec.tag_bytes:], np.uint8)
+                novo[f"r{r}"][i] = _montar(ca, cb, representacao)
             if precisa_random:
-                novo["random"][i] = np.frombuffer(rnd_drbg.generate(largura), np.uint8)
+                # A classe aleatória é montada do MESMO jeito que a da cifra:
+                # dois blocos uniformes e independentes, combinados pela mesma
+                # regra. Em `par+xor`, 240 bytes uniformes puros vazariam o
+                # rótulo (bastaria checar se o 3º bloco é o XOR dos dois).
+                ra = np.frombuffer(rnd_drbg.generate(largura), np.uint8)
+                if representacao == "xor":
+                    novo["random"][i] = ra
+                else:
+                    rb = np.frombuffer(rnd_drbg.generate(largura), np.uint8)
+                    novo["random"][i] = _montar(ra, rb, representacao)
         if (k + 1) % 25 == 0 or k + 1 == n_keys:
             _log(f"[{algo}/{arm}] chaves {k + 1}/{n_keys} ({time.time() - t0:.0f}s)")
 
@@ -216,7 +244,7 @@ def generate(algo: str, arm: str, n_keys: int, rounds: list[int], cache: Path,
                 nonce=(("contador por dispositivo começando do zero" if contador == "zero"
                         else "contador por dispositivo a partir de offset sorteado (LSB 0)")
                        + f", big-endian {spec.nonce_bytes} bytes, par (n, n+1)"),
-                contador=contador,
+                contador=contador, representacao=representacao,
                 esquema=ESQUEMA_AMOSTRA,
                 plaintexts="P1 != P2, desconhecidos, mesmos para todas as contagens",
                 n_resampled_equal_plaintext=n_resampled,
@@ -230,7 +258,8 @@ def generate(algo: str, arm: str, n_keys: int, rounds: list[int], cache: Path,
 
 def run_config(algo: str, arm: str, rounds: int, data: dict, n_keys: int, n_test: int,
                n_cv: int, report_dir: Path, mode: str, model_names: list[str],
-               politica: str, contador: str = "sorteado") -> None:
+               politica: str, contador: str = "sorteado",
+               representacao: str = "xor") -> None:
     spec = ALGOS[algo]
     run_id = f"floor_{algo}_{arm}_r{rounds}"
     braco = f"floor_{algo}_{arm}"
@@ -267,7 +296,7 @@ def run_config(algo: str, arm: str, rounds: int, data: dict, n_keys: int, n_test
         unidade=spec.unidade, politica=politica, arm=arm,
         n_features=X.shape[1], seed_gen=SEED_GEN, classe_negativa="aleatório uniforme",
         access_model="mesma chave, nonces consecutivos (n,n+1) por dispositivo, P1!=P2 desconhecidos",
-        esquema=ESQUEMA_AMOSTRA, contador=contador,
+        esquema=ESQUEMA_AMOSTRA, contador=contador, representacao=representacao,
         diag_bloco1_max_abs_z=round(float(np.abs(z).max()), 2))
 
     def fit_eval(name, model, idx_tr, idx_ev, fold):
@@ -353,6 +382,9 @@ def main() -> None:
     ap.add_argument("--contador", choices=["sorteado", "zero"], default="sorteado",
                     help="estado do contador de nonce de cada dispositivo: 'sorteado' "
                          "(ponto qualquer, caso geral) ou 'zero' (recém-ligado, pior caso)")
+    ap.add_argument("--representacao", choices=["xor", "par", "par+xor"], default="xor",
+                    help="o que o classificador recebe: o XOR dos dois criptogramas "
+                         "do par, os dois inteiros lado a lado, ou os dois mais o XOR")
     ap.add_argument("--pares-por-chave", type=int, default=PAIRS_PER_KEY,
                     help="pares por dispositivo. Com --contador zero e 1 par, cada "
                          "dispositivo contribui só os nonces 0 e 1 (o 'primeiro par')")
@@ -389,6 +421,8 @@ def main() -> None:
     if PAIRS_PER_KEY != 100:
         # outro desenho de amostra: diretório próprio, para não misturar relatórios
         base = base.parent / f"{base.name}_ppk{PAIRS_PER_KEY}"
+    if args.representacao != "xor":
+        base = base.parent / f"{base.name}_{args.representacao.replace('+', '_')}"
     base = base / f"{args.algo}_floor"
     if args.smoke:
         n_keys, n_test = 10, 3
@@ -406,10 +440,12 @@ def main() -> None:
     for arm in args.arms:
         sufixo = "" if args.politica == "ambos" else f"_{args.politica}"
         cache = base / f"{args.algo}_{arm}{sufixo}_k{n_keys}.npz"
-        data = generate(args.algo, arm, n_keys, rounds, cache, args.politica, args.contador)
+        data = generate(args.algo, arm, n_keys, rounds, cache, args.politica, args.contador,
+                        args.representacao)
         for r in rounds:
             run_config(args.algo, arm, r, data, n_keys, n_test, args.n_cv,
-                       report_dir, args.mode, args.models, args.politica, args.contador)
+                       report_dir, args.mode, args.models, args.politica, args.contador,
+                       args.representacao)
 
     _log("fim")
 
