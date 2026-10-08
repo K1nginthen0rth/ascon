@@ -237,6 +237,113 @@ inferior, não o superior.
 
 ## 5. O que falta
 
+### 5.1 Redes e os outros caminhos
+
+Com o piso como tese, a pergunta mais perigosa da banca é se um modelo mais
+forte subiria o piso. Os modelos clássicos sobre bits não aprendem relações
+entre os dois criptogramas do par, então os outros caminhos do projeto foram
+adaptados em `scripts/reduced_rounds/neural_floor.py`, com interface do
+scikit-learn: entram no `run_floor.py` pelo `--models` e herdam amostra,
+split, CV, relato e critério de piso. Usam GPU automaticamente quando houver.
+
+| modelo | caminho | entrada |
+|---|---|---|
+| `ResNet_Gohr` | literatura (Gohr, CRYPTO 2019) | bits alinhados por posição de byte: o bit b de C1 e de C2 no mesmo passo |
+| `MLP_Shen` | literatura (Shen et al., JISA 2024) | os bits, em rede densa |
+| `CNN1D_bytes` | B, fiel ao original | sequência de bytes, com média global no fim |
+| `CNN2D_bits` | C, adaptado | imagem de bits (linhas: bits de cada byte; colunas: posição), cabeça densa |
+| `Hibrido_D` | D | bits crus + latentes da ResNet e da CNN 2D, numa regressão logística |
+| `Meta_F` | F | empilhamento de LR, XGBoost, RF, MLP, ResNet e CNN 2D (CV interna de 3) |
+
+O Caminho E (Transformer) ficou fora por decisão de 02/10/2026. O Caminho C
+original (co-ocorrência 256 × 256) não se aplica: 80 bytes geram 79 pares num
+mapa de 65.536 células. A CNN 2D adaptada termina numa camada densa, e não na
+média global do original, porque a média apaga a posição, que é onde o sinal
+está; a "imagem" de bits é artificial, e isso tem que ser dito junto do
+resultado. A CNN 1D ficou fiel ao original e serve de contraste.
+
+**Executado em 02/10 (ResNet_Gohr e MLP_Shen, contador zero, sem CV).** Nenhum
+piso subiu. Com o XOR: Ascon 3, GIFT 3, Grain 24, Schwaemm 2; com os dois
+criptogramas lado a lado: Ascon 3, GIFT 2, Grain 24, Schwaemm 2. Onde o sinal é
+forte as redes empatam com os clássicos (GIFT com 2 rodadas: 97 a 98% por par);
+onde é fraco ficam abaixo (Ascon com 3: 58% contra 65% da regressão logística;
+Grain com 28 clocks: não detectam). Consistente com o mecanismo: o sinal são
+poucos bits com viés quase fixo e independentes, caso em que contar bits é o
+detector ótimo. A ressalva é o orçamento: 30 mil pares e 15 épocas, contra os
+milhões de exemplos do Gohr e do Shen.
+
+Testes em `tests/test_neural_floor.py`, incluindo o de capacidade: rótulo igual
+ao XOR de um bit de C1 com o mesmo bit de C2. A regressão logística fica no
+acaso; ResNet e CNN 2D chegam a 100% com 12 mil exemplos (com 3 mil, nenhuma
+aprende).
+
+Para rodar localmente: `scripts\reduced_rounds\rodar_piso_neural.bat`. B, C, D
+e F são caros em CPU (o Meta_F treina seis modelos quatro vezes por ajuste) e
+vão para o Kaggle, junto da ResNet e da MLP com mais dados, só nas rodadas que
+decidem.
+
+**Pacote do Kaggle (02/10).** `exportar_kaggle.py` monta `build/kaggle_piso/`
+(902 MB): 3.000 dispositivos por braço (10x), tirados da curva abaixo e
+completados com a rodada 1 e a especificação, no formato de cache do
+`run_floor.py`; nenhuma cifra roda no Kaggle. `kaggle_piso.py` roda B, C, D, F,
+ResNet e MLP no piso, no piso + 1, na rodada 1 e na especificação, braços texto
+e aleatório, key-holdout 2.400 / 600, com retomada (`feitos.txt`) e limite de
+tempo; o notebook é `kaggle_piso.ipynb`, uma sessão por algoritmo. Testado
+localmente sem os binários de cifra (`--smoke --sem-binarios`).
+
+**Executado no Kaggle em 03/10 (10x, sem o Meta_F).** ResNet, MLP, B, C e D
+nos quatro algoritmos, piso pelo critério completo a partir das linhas
+RESULTADO coletadas do log (a saída salva pelo Kaggle veio incompleta):
+Ascon 3, GIFT 3, Grain 28, Schwaemm 2, iguais aos clássicos. Rodada seguinte
+no acaso nos quatro; controles limpos (um falso positivo em 30 configurações
+no GIFT, descartado pela monotonicidade). No piso, as redes extraem mais que a
+contagem de bits no Schwaemm (99,4% contra 94,3% por par) e no GIFT (bolsa de
+100: 85% contra 74%), e menos no Ascon e no Grain. Coleta e piso:
+`kaggle_publicar.py coletar|piso <algo>`; saídas em `floor_v2/kaggle/coleta/`.
+
+**GIFT com 100x (`kaggle_100x.py`, 03/10).** Como no GIFT a rede ganhou da
+contagem de bits, ResNet e MLP foram treinadas com 3.000 e 30.000 dispositivos
+(mesmo teste de 1.000 da curva, lote 1.024, 10 épocas):
+
+| GIFT | contagem de bits 10x / 100x | ResNet 10x / 100x |
+|---|---|---|
+| r3, por par | 53,3 / 53,5% | 56,2 / 61,7% |
+| r3, bolsa de 100 | 73,9 / 76,0% | 85,6 / 93,9% |
+| r4, por par | 50,0 / 49,9% | 49,9% / colapso (AUC 0,500) |
+
+Em 3 rodadas as redes continuam ganhando com dados, enquanto a contagem de bits
+satura: há estrutura conjunta entre bits que só elas usam. Em 4 rodadas, com
+6 milhões de exemplos, a perda de treino da ResNet e da MLP fica em ln 2
+(0,6932) da segunda época em diante, igual ao braço aleatório, que é nulo
+provado: não há nada aprendível nem no treino, e a rede converge para saída
+constante. O piso do GIFT continua 3.
+
+### 5.1.1 Curva de orçamento (concluída em 02/10)
+
+F1 por par (bolsa 1) e com bolsa de 100, detector de contagem de bits, de 1x a
+100x os dispositivos de treino; a regressão logística empata com ele em 1x e
+10x em todos os casos. Braço aleatório em 50% em tudo.
+
+| algoritmo | piso: 1x / 10x / 100x (bolsa 1) | piso, bolsa 100, 100x | piso + 1, 100x (bolsa 1 / 100) |
+|---|---|---|---|
+| Ascon (3 / 4) | 65,9 / 66,4 / 66,5% | 91,0% | 50,0 / 51,5% (IC inclui 50) |
+| Schwaemm (2 / 3) | 94,3 / 94,3 / 94,3% | 100% | no acaso |
+| Grain (28 / 29) | 51,8 / 52,9 / 53,1% | 74,4% | 49,8 / 49,3% |
+| GIFT (3 / 4) | 52,4 / 53,3 / 53,5% | 76,0% | 49,9 / 50,0% |
+
+A rodada seguinte ao piso não aparece com 100x os dados em nenhum dos quatro.
+No piso, o ganho vai quase todo de 1x para 10x e satura daí em diante, então o
+piso não é limitação de orçamento para detectores de bits independentes.
+
+`scripts/reduced_rounds/run_curva_orcamento.py`: o piso e a rodada seguinte de
+cada algoritmo com 1×, 10× e 100× os criptogramas de treino (300, 3.000 e
+30.000 dispositivos, 1.000 de teste fixos), com o detector de contagem de bits
+(Bernoulli ingênuo, ótimo para bits com viés independentes) e a regressão
+logística até 10×. A amostragem é byte a byte a do `run_floor.py`
+(`--validar`). Saídas em `floor_v2/curva_orcamento/`.
+
+### 5.2 Demais pendências
+
 1. **Par inteiro no lugar do XOR.** O Shen mostra que, com um par só, a entrada
    (C, C') acerta mais que a diferença C ⊕ C'. É a primeira pergunta que o
    desenho atual deixa aberta.

@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -83,6 +84,7 @@ from scripts.reduced_rounds.run_gift_floor import (  # noqa: E402
     _log, conferir_cache, impressao_digital,
 )
 from scripts.run_v2_caminho_a import build_models, get_proba  # noqa: E402
+from scripts.reduced_rounds.neural_floor import build_neural_models  # noqa: E402
 from src.crypto.ctr_drbg import CTRDRBG  # noqa: E402
 from src.eval.reporting import report_eval  # noqa: E402
 
@@ -96,7 +98,9 @@ SEED_GEN = 999004
 # algoritmos compartilham chaves, textos e offsets de nonce (Regra de Ouro 6),
 # e cada dispositivo tem o próprio contador, a partir de um offset sorteado.
 ESQUEMA_AMOSTRA = "v2-compartilhada-offset-por-chave"
-OUT_ROOT = REPO_ROOT / "build" / "reduced_rounds" / "floor_v2"
+# PISO_OUT_ROOT: no Kaggle o repositório fica numa entrada só de leitura.
+OUT_ROOT = Path(os.environ.get("PISO_OUT_ROOT",
+                               REPO_ROOT / "build" / "reduced_rounds" / "floor_v2"))
 
 
 def _sampler(arm: str, pt_drbg: CTRDRBG):
@@ -326,7 +330,12 @@ def run_config(algo: str, arm: str, rounds: int, data: dict, n_keys: int, n_test
              "direcional, não como evidência.")
 
     def modelos():
-        todos = build_models(seed=SEED_MODEL)
+        # Clássicos do Caminho A e as redes de `neural_floor.py`. As redes
+        # precisam saber quantos blocos de criptograma a amostra carrega, para
+        # alinhar os bits por posição de byte.
+        blocos = {"xor": 1, "par": 2, "par+xor": 3}[representacao]
+        todos = {**build_models(seed=SEED_MODEL),
+                 **build_neural_models(seed=SEED_MODEL, blocos=blocos)}
         faltantes = [m for m in model_names if m not in todos]
         if faltantes:
             raise ValueError(f"modelos desconhecidos: {faltantes}. Disponíveis: {list(todos)}")
@@ -385,6 +394,10 @@ def main() -> None:
     ap.add_argument("--representacao", choices=["xor", "par", "par+xor"], default="xor",
                     help="o que o classificador recebe: o XOR dos dois criptogramas "
                          "do par, os dois inteiros lado a lado, ou os dois mais o XOR")
+    ap.add_argument("--tag", default=None,
+                    help="sufixo do diretório de saída, para separar uma família de "
+                         "modelos (ex.: 'neural') dos relatórios dos clássicos; os "
+                         "dados são regerados idênticos pelo mesmo DRBG")
     ap.add_argument("--pares-por-chave", type=int, default=PAIRS_PER_KEY,
                     help="pares por dispositivo. Com --contador zero e 1 par, cada "
                          "dispositivo contribui só os nonces 0 e 1 (o 'primeiro par')")
@@ -423,6 +436,8 @@ def main() -> None:
         base = base.parent / f"{base.name}_ppk{PAIRS_PER_KEY}"
     if args.representacao != "xor":
         base = base.parent / f"{base.name}_{args.representacao.replace('+', '_')}"
+    if args.tag:
+        base = base.parent / f"{base.name}_{args.tag}"
     base = base / f"{args.algo}_floor"
     if args.smoke:
         n_keys, n_test = 10, 3

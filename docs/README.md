@@ -12,6 +12,7 @@ experimentos, a revisão de literatura e os textos escritos para o orientador.
 | Arquivo | O que é | Estado |
 |---|---|---|
 | [piso_rodadas.md](piso_rodadas.md) | Estudo de piso de rodadas: protocolo, números por algoritmo, ressalvas e o que falta | Linha de trabalho corrente |
+| [suficiencia_dados.md](suficiencia_dados.md) | Por que a quantidade de dados basta: SEI medido na rodada seguinte ao piso, teoria do distinguidor ótimo (Baignères 2004) e orçamentos da literatura (Gohr, Shen) | Resposta pronta para a banca (03/10/2026) |
 | [v1_experimento_concluido.md](v1_experimento_concluido.md) | Experimento v1 (Ascon vs GIFT-COFB, 60k): dataset, features, os 4 caminhos, resultados, ablação, controles | Encerrado em agosto de 2026 |
 | [plano_experimento_v2/](plano_experimento_v2/) | Plano do experimento v2 (4 algoritmos, 6 caminhos, 180k amostras). Ver o `README.md` da pasta | Código pronto, execução pendente |
 | [relatorio_orientador_piso_rodadas.md](relatorio_orientador_piso_rodadas.md) | Texto escrito para o orientador sobre o que a literatura fez e onde este trabalho difere | Enviado em setembro de 2026 |

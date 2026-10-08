@@ -39,7 +39,9 @@ features nas 180k amostras reais (~20h por braço) e os Caminhos B/C/E em
 GPU (Kaggle/Colab) — ver `06_implementacao_passo_a_passo.md` para o
 estado fase-a-fase.
 
-**Linha de trabalho corrente: piso de rodadas (desde setembro de 2026).** Depois
+**Linha de trabalho corrente: piso de rodadas (desde setembro de 2026). Decisão
+de 01/10/2026: o piso é a tese da dissertação; v1 e v2 passam a contexto
+(pendente aval do orientador).** Depois
 da banca de acompanhamento, a pergunta passou de "distinguir um algoritmo do
 outro" para "com quantas rodadas o algoritmo ainda é separável de aleatório".
 Mede-se, por algoritmo, o maior R em que um classificador ainda separa o
@@ -129,6 +131,16 @@ python scripts/reduced_rounds/run_floor.py --algo grain --arms texto aleatorio
 
 # determinar a fronteira a partir dos relatórios (BH-FDR + faixa de controle + monotonicidade)
 python scripts/reduced_rounds/report_floor.py --dir build/reduced_rounds/ascon_floor/reports --csv piso.csv
+```
+
+Redes e caminhos B, C, D, F do piso (em `scripts/reduced_rounds/neural_floor.py`,
+plugados no `run_floor.py` por `--models ResNet_Gohr MLP_Shen CNN1D_bytes
+CNN2D_bits Hibrido_D Meta_F`; o Caminho E ficou fora por decisão de 02/10).
+Curva de orçamento: `scripts/reduced_rounds/run_curva_orcamento.py`.
+
+```bat
+scripts\reduced_rounds\rodar_piso_neural.bat          :: sweep, ~5 h
+scripts\reduced_rounds\rodar_piso_neural.bat full     :: CV de 5 folds, ~6x mais lento
 ```
 
 O braço `aleatorio` é controle com verdade-terra provada: com plaintext
