@@ -107,6 +107,11 @@ def _sampler(arm: str, pt_drbg: CTRDRBG):
     """Fonte de plaintext do braço. Devolve (função, amostrador de imagem)."""
     if arm == "texto":
         return _TextPlaintextSampler(CORPORA_DIR, pt_drbg).sample, None
+    if arm == "texto-en":
+        # Prosa em inglês, sem o HTML do Gutenberg e só ASCII
+        # (`montar_corpus_en.py`). O braço `texto` é o corpus original, que é
+        # HTML bruto (~23% de markup) com quatro livros em outros idiomas.
+        return _TextPlaintextSampler(CORPORA_DIR.parent / "corpora_en", pt_drbg).sample, None
     if arm == "imagem":
         s = _ImagePlaintextSampler(IMAGES_DIR, IMAGES_MANIFEST, pt_drbg)
         return (lambda: s.sample()[0]), s
@@ -377,7 +382,7 @@ def main() -> None:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--algo", required=True, choices=sorted(ALGOS))
     ap.add_argument("--arms", nargs="+", default=["texto"],
-                    choices=["texto", "imagem", "aleatorio"])
+                    choices=["texto", "texto-en", "imagem", "aleatorio"])
     ap.add_argument("--rounds", nargs="+", type=int, default=None,
                     help="contagens a varrer; padrão = a varredura do catálogo "
                          "(região do piso + faixa de controle)")

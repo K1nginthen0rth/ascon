@@ -28,7 +28,7 @@ do arquivo ficou desatualizado, a config interna `CONFIG_50K` gera 60k).
 | Parâmetro | Valor |
 |---|---|
 | Total | 60.000 (30.000 Ascon-AEAD128 + 30.000 GIFT-COFB) |
-| Plaintext | 65.536 bytes fixos, 100% corpus Gutenberg (SPGC) |
+| Plaintext | 65.536 bytes fixos, 100% corpus Gutenberg (SPGC); na prática, HTML bruto do Gutenberg (84 de 85 arquivos com markup, ~23% dos bytes), com 2 livros em chinês, 1 em tagalo e 1 em alemão; ver `docs/piso_rodadas.md` §2, correção de 08/10 |
 | Chaves | 300, seed=42, `key_seed_offset=2000`, via `np.random.default_rng` (PCG64) |
 | Amostras por chave por algoritmo | 100 |
 | AD | vazio |

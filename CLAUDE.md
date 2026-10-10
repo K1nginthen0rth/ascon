@@ -50,7 +50,9 @@ e com adversário passivo. A afirmação que sai é "abaixo de R, até este atac
 genérico quebra", nunca "acima de R é seguro". Pisos (pior caso testado,
 contador do dispositivo perto do zero): Ascon-AEAD128 3 de 12, GIFT-COFB 3 de 40,
 Grain-128AEAD 28 de 256, Schwaemm256-128 2 de 11. Com o contador num ponto
-qualquer, GIFT cai para 2 e Grain para 24. No eixo `dados` (inicialização
+qualquer, GIFT cai para 2 e Grain para 24. Fonte principal desde 08/10:
+`texto-en` (prosa em inglês, `data/raw/corpora_en/`), com os mesmos pisos nos quatro
+(Grain 28 confirmado com 3 000 dispositivos); o corpus original (braço `texto`) é HTML bruto. No eixo `dados` (inicialização
 completa) não há piso. Resultados válidos estão em `build/reduced_rounds/floor_v2/`
 (gerador corrigido em 30/09: amostra comum aos quatro, contador por dispositivo). Estado, protocolo, números e ressalvas:
 **`docs/piso_rodadas.md`**. Código em `scripts/reduced_rounds/`, saídas em
@@ -174,7 +176,7 @@ abaixo) estão em `scripts/validate_2class_60k.py` (dataset principal) e
 
 | Parâmetro | Valor |
 |-----------|-------|
-| Corpus | Project Gutenberg (SPGC) apenas |
+| Corpus | Project Gutenberg (SPGC) apenas: na prática HTML bruto (~23% markup), com 4 livros não ingleses; ver `docs/piso_rodadas.md` §2 |
 | Total | 60.000 amostras (30.000 por algoritmo) |
 | Plaintext | 64 KB fixo |
 | Chaves | 300 (seed=42), key_seed_offset=2000 |

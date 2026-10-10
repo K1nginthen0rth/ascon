@@ -62,7 +62,7 @@ Controle binário (Ascon vs AES-ECB): 60.000 amostras, lidas do mesmo parquet.
 
 ## 1.5 Fonte de plaintext: 80% texto / 20% imagem ✅
 
-- **Texto (80%):** corpus SPGC (Project Gutenberg), como no v1.
+- **Texto (80%):** corpus SPGC (Project Gutenberg), como no v1. Correção de 08/10: HTML bruto do Gutenberg (84 de 85 arquivos com markup, ~23% dos bytes), com 2 livros em chinês, 1 em tagalo e 1 em alemão; ver `docs/piso_rodadas.md` §2, correção de 08/10.
 - **Imagem (20%):** ImageNet-1k 256×256 (Hugging Face,
   `benjamin-paine/imagenet-1k-256x256`), **split de validação** (50k imagens —
   não precisa baixar o treino de 1,28M), convertidas para tons de cinza →

@@ -26,6 +26,36 @@ chaves, textos e nonces para os quatro algoritmos, e CV de 5 folds.
 | Grain-128AEAD | clocks da fase INIT | 256 | 24 | 28 | 28 | **28** | 10,9% |
 | Schwaemm256-128 | passos SPARKLE, eixo `ambos` | 11 | 2 | 2 | 2 | **2** | 18,2% |
 
+**Duas fontes de texto (08/10).** A tabela acima foi medida com o corpus
+original, que é HTML bruto do Gutenberg (`texto-html`; ver a correção na seção
+2). Decidido em 08/10: a fonte principal passa a ser o `texto-en` (80 livros em
+inglês, prosa sem markup, ASCII), e o HTML fica como fonte de robustez. Contador
+zero, 300 dispositivos, mesmo critério:
+
+| Algoritmo | Piso com `texto-html` | Piso com `texto-en` | Aleatório |
+|---|---|---|---|
+| Ascon-AEAD128 | 3 de 12 | 3 de 12 | nenhum |
+| GIFT-COFB | 3 de 40 | 3 de 40 | nenhum |
+| Grain-128AEAD | 28 de 256 | 28 de 256 | nenhum |
+| Schwaemm256-128 | 2 de 11 | 2 de 11 | nenhum |
+
+A frase que isso sustenta é "o piso não muda entre duas fontes de texto
+redundante", e não "o piso independe do claro": com claro uniforme não há piso.
+O 29 do Grain passa pelo critério declarado, mas no limiar: na bolsa de 100 o
+HTML fica em 58,2% e a prosa em 60,6%, diferença dentro do intervalo de cerca de
+±9 pontos dessa medida. É coerente com o mecanismo da seção 4 (no Grain o sinal
+passa pelos bits 6, 5 e 3, cuja redundância muda entre as fontes; nos outros três
+passa pelo bit 7, redundante nas duas). Com 300 dispositivos o
+`texto-en` chegou a dar 29 (1 de 9 células); o aumento de amostra declarado
+(3 000 dispositivos, 600 de teste, Grain em 28, 29, 30 e 256, as duas fontes e o
+aleatório, mesmo critério; `floor_v2/contador_zero_grain3000/`) desfez isso: 28
+com 9 de 9 células nas duas fontes (bolsa de 100 a 73,3% no HTML e 78,7% na
+prosa), 29 no acaso nas duas (prosa 49,3%, HTML 53,2%, nenhuma célula), aleatório
+sem detecção. O 29 com 300 dispositivos foi um falso positivo no limiar, e o
+piso do Grain é 28 nas duas fontes.
+Resultados em `floor_v2/contador_zero_corpus_en/` e
+`floor_v2/contador_zero_html_29_31/`.
+
 No eixo `dados` (só o parâmetro entre blocos, com a inicialização completa), nem
 Ascon nem Schwaemm têm piso, nem com 1 rodada. Nos braços de controle (texto
 uniforme), nenhuma detecção em nenhum dos três cenários.
@@ -40,6 +70,26 @@ Todos os pisos dos cenários sorteado e contador zero têm 9 de 9 células
 monotônicas, exceto o GIFT (8 de 9: uma célula com detecção espúria na rodada
 8, descartada pela regra de monotonicidade). No primeiro par cada dispositivo
 tem um par só, então não há bolsa: são 3 células, 3 de 3 em todos.
+
+**Dia 1 do v3: detector em escala (08 e 09/10).** Com contagem por bit e por
+paridade de dois bits, laço em C, `texto-en` e 10⁹ a 2·10¹⁰ pares, a rodada
+seguinte ao piso aparece no **GIFT (rodada 4, já com ~10⁷ pares; paridades
+entre metades de 64 bits, viés ~0,2%)** e no **Ascon (rodada 4, com ~10¹⁰ pares;
+paridade dos bits 66 e 104, viés ~0,004%, confirmada em réplica com dados
+novos)**. Schwaemm 3 (10¹⁰ pares) e Grain 29 (10⁹) seguem no acaso, com cota de
+viés de 0,002% e 0,006% por bit; GIFT 5 no acaso com 10¹⁰. Pisos com esse
+detector: Ascon 4, GIFT 4, Grain 28, Schwaemm 2. A Tabela 1 acima é o piso dos
+classificadores genéricos com 300 dispositivos; a diferença é do instrumento.
+Detalhes em `floor_v2/RESULTADOS_2026-10-09.md`.
+
+**Dias 2 e 3 (09/10): o piso como faixa.** O piso depende de como o fabricante
+monta o nonce. Com o contador little-endian: Ascon 4 (r4 já com 10⁸ pares),
+GIFT 3, Schwaemm 1, Grain sem piso. AD no GIFT confirma a exposição (2 blocos de
+AD derrubam o piso de 4 para 2, limite em torno de 8 rodadas de exposição). No
+modelo de cabeçalho constante (valor desconhecido, relaxa a regra de 13/09): Grain
+30 por pares e **44 por cubos passivos** sobre o contador (zero-sum exato até 32),
+GIFT 4, Ascon 3, Schwaemm 2. Tabela completa em
+`floor_v2/RESULTADOS_2026-10-09.md`.
 
 ### 1.1 A correção do gerador e o estado do contador
 
@@ -150,6 +200,21 @@ completa:
 ### O braço de controle, e por que ele é forte
 
 Três braços de plaintext: `texto` (corpus Gutenberg), `imagem` e `aleatorio`.
+
+**Correção da descrição do corpus (08/10).** O braço `texto` não é prosa em
+inglês. Os 85 arquivos de `data/raw/corpora/` são, em 84 casos, o HTML bruto
+das páginas do Gutenberg (com CSS e tags; cerca de 23% dos bytes são markup),
+e o `_TextPlaintextSampler` só colapsa espaços. Há ainda dois livros em chinês
+(PG24141, PG27166), um em tagalo (PG20228), um em alemão (PG77700) e um e-mail
+da base Enron (`taylor-m__121.txt`, que o amostrador do piso ignora por ter
+menos de 64 KB). 3,2% dos bytes são ≥ 0x80. Todos os pisos da seção 1 foram
+medidos com essa fonte, que passa a se chamar `texto-html`. O braço `texto-en`
+(`montar_corpus_en.py`: só os 80 livros em inglês, sem markup, pontuação
+transliterada, ASCII puro) mede a mesma coisa na fonte que a dissertação
+descreve; a diferença entre os dois é a dependência da fonte. Varredura em
+`floor_v2/contador_zero_corpus_en/`. A mesma pasta de corpus foi usada pelo v1
+(`src/crypto/dataset_generator.py`) e pelo v2, então a descrição dos dois
+também precisa ser corrigida.
 O `aleatorio` é o mais informativo, e não pelo motivo óbvio.
 
 Com rodadas reduzidas, `C1 xor C2 = (Y1 xor Y2) xor (P1 xor P2)`. A intenção
@@ -220,6 +285,28 @@ que é o teste linear direto da seção 5.
 par fica entre 0,507 e 0,517 e só passa com folga com bolsa (0,59 a 0,66); no
 primeiro par, 0,51 a 0,52. É detecção, com controle limpo, mas o número vem com
 a margem declarada. No caso geral (contador sorteado) o Grain para em 24.
+
+**No Grain, o piso em clocks mistura difusão com alinhamento (medido em
+08/10).** No piso, o sinal do Grain não está no bit 7 dos bytes (|z| = 1,9 no
+clock 28), e sim nos bits 6, 5 e 3 dos bytes 0 a 3, e a posição muda com o
+número de clocks. A implementação de referência explica: a cifragem usa só os
+bits pares da pré-saída, e entre o fim da inicialização reduzida (c clocks) e o
+primeiro bit de keystream há ainda 128 clocks de ADDKEY e 16 de AD (DER do
+tamanho zero), sem realimentação da saída. O bit de keystream de índice t sai,
+portanto, no clock c + 144 + 2t. Estimando o viés do keystream nos bits 7, 6 e
+5 (viés observado dividido pelo viés do XOR dos textos), o viés em (c + 2, t)
+tem correlação 0,985 com o viés em (c, t + 1), contra −0,20 na mesma posição e
+−0,13 na hipótese c + t. Então o viés depende de c + 2t, e a não
+monotonicidade entre 1 e 12 clocks vem de o bit enviesado do keystream cair ou
+não numa posição em que o texto é redundante. O piso "28 clocks" é a maior
+inicialização em que essa coincidência ainda acontece com sinal detectável, e
+deve ser lido junto da escala c + 2t.
+
+**Schwaemm no piso vaza P1 ⊕ P2 em 8 bytes.** Com 2 passos, nos bytes 24 a 31
+do primeiro bloco de taxa (32 bytes), o viés observado no bit 7 é 0,997 vezes o
+viés do XOR dos textos: a diferença de keystream ali é zero, e o XOR do par é a
+diferença dos claros, sem máscara. Com 3 passos não sobra nada nesses bytes
+(viés 0,00 em todos os bits).
 
 **O piso depende do estado do contador.** GIFT e Grain ganham uma rodada com o
 contador perto do zero; Ascon e Schwaemm não mudam. Sem declarar o cenário, o
