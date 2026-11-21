@@ -50,6 +50,7 @@ BUNDLE = REPO_ROOT / "build" / "kaggle_piso"
 CODIGO = [
     "scripts/reduced_rounds/kaggle_piso.py",
     "scripts/reduced_rounds/kaggle_100x.py",
+    "scripts/reduced_rounds/metodo_redes.py",
     "scripts/reduced_rounds/run_floor.py",
     "scripts/reduced_rounds/run_gift_floor.py",
     "scripts/reduced_rounds/floor_algos.py",

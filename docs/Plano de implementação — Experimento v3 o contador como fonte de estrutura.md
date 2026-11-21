@@ -57,6 +57,23 @@ Só no Grain, porque é o único em que o grau cresce devagar o bastante para um
 
 **Resultado do Dia 3 (09/10).** Cubos no Grain, modelo de cabeçalho: detectado até o clock 44 (d = 3 a 5; z = 22 com 30 000 dispositivos), 46 a 128 no acaso; zero-sum exato até 32; controle limpo em tudo.
 
+## Pré-registro do método de ML (12/10/2026, escrito antes de rodar)
+
+Objetivo: responder "por que esses modelos e essas configurações?" com evidência. Dados: os caches do `texto-en` e do braço `aleatorio` em `floor_v2/contador_zero_corpus_en/` (300 dispositivos × 100 pares, contador zero, XOR, mesmo split por chave do `run_floor`: 240 chaves de treino, 60 de teste, seed 42). Células: piso, piso+1 e especificação (teto de controle) de cada algoritmo, nos dois braços: Ascon 3, 4, 12; GIFT 3, 4, 40; Grain 28, 29, 256; Schwaemm 2, 3, 11 (24 células). Decisão pelo mesmo critério do `report_floor.py` (bolsas 1, 10, 100; BH-FDR; teto; monotonicidade), aplicado a cada modelo na sua configuração escolhida.
+
+Busca aninhada: só nas 240 chaves de treino, `GroupKFold` de 3 por chave; métrica de seleção = AUC média na validação interna. A seleção é feita uma vez por (algoritmo, modelo), na célula que importa (piso+1, braço `texto-en`), e a configuração escolhida é aplicada a todas as células daquele algoritmo (piso, piso+1, especificação, nos dois braços): o braço aleatório e a rodada de especificação só calibram o detector se forem medidos com o mesmo detector. Cada célula retreina a configuração nas suas 240 chaves e é avaliada uma única vez no teste. (Correção feita antes de rodar: a primeira versão dizia busca por célula.) Busca aleatória com seed 13 (a de seleção de features), o mesmo número de configurações para RF e XGBoost.
+
+| modelo | espaço | orçamento |
+|---|---|---|
+| Regressão logística (com padronização) | C ∈ {10⁻³, 10⁻², 10⁻¹, 1, 10, 10²} | 6 (grade completa) |
+| Random Forest | árvores ∈ {200, 500, 1 000}; `max_features` ∈ {sqrt, 0,1, 0,3}; `min_samples_leaf` ∈ {1, 5, 20}; profundidade ∈ {None, 12, 24} | 20 sorteadas |
+| XGBoost | árvores ∈ {200, 500, 1 000, 2 000}; profundidade ∈ {3, 6, 9, 12}; taxa ∈ {0,01, 0,03, 0,1, 0,3}; `subsample` ∈ {0,6, 0,8, 1}; `colsample_bytree` ∈ {0,3, 0,6, 1} | 20 sorteadas |
+| SVM RBF (com padronização) | C ∈ {0,1, 1, 10}; gamma ∈ {0,1, 1, 10} × "scale" | 9 (grade completa), busca numa subamostra de 8 000 amostras do treino (custo n^2,5); a escolhida é treinada no treino inteiro |
+
+Relato: por célula e modelo, o teste com a configuração padrão (a dos pisos anteriores), com a escolhida, e a sensibilidade (melhor e pior AUC da validação interna). Se uma configuração ajustada detectar o piso+1 pelo critério, o piso sobe e isso é relatado como resultado.
+
+Redes (segunda etapa, mesmo pré-registro): parada antecipada pela AUC numa validação interna por chave (paciência de 5 épocas, máximo de 50), taxa de aprendizado com agenda cosseno a partir de 10⁻³, e uma grade pequena de capacidade para a ResNet (profundidade ∈ {3, 6, 10}, canais ∈ {32, 64}). Teste de capacidade com sinal plantado do tamanho do real: bits uniformes em que a paridade de dois bits tem viés de 0,2%, como no GIFT r4; a pergunta é com quantos exemplos a rede aprende. GIFT r4 com 10⁷ pares: ResNet nessa configuração e regressão logística por SGD com as 8 128 paridades como features.
+
 ## Fora deste ciclo (trabalho futuro no texto)
 
 Cubos no Ascon, Schwaemm e GIFT (o contador entra em posição ruim e a soma só é lida em 16 das 128 posições de saída); paridades de três bits; agregação por dispositivo como experimento próprio (as bolsas da curva já responderam); corpora em português e chinês; GIFT em escala, salvo se a `ref` tiver laço por rodada; redes neurais grandes.

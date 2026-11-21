@@ -1,0 +1,222 @@
+% =====================================================================
+% CAPÍTULO 4: METODOLOGIA (piso de rodadas)
+% Substitui o metodologia.tex do v1/v2, que fica fora do main.tex como material.
+% Fontes: scripts/reduced_rounds/ (floor_algos.py, run_floor.py,
+% report_floor.py, run_curva_orcamento.py, metodo_ml.py, neural_floor.py,
+% e tests/test_crypto_independente.py.
+% TODO: o experimento com o mesmo texto (descartado) vai para um apêndice
+% que ainda não existe; a menção na Seção 4.1 está sem \ref.
+% =====================================================================
+
+\chapter{Metodologia}
+\label{cap:metodologia}
+
+Este capítulo descreve como o piso de rodadas foi medido. A Seção~\ref{sec:met-adversario} define o adversário considerado, e a Seção~\ref{sec:met-algoritmos} apresenta os três algoritmos, as versões com rodadas reduzidas e a validação das implementações. A Seção~\ref{sec:met-dados} descreve a geração dos dados, a Seção~\ref{sec:met-representacoes} as formas de apresentar os criptogramas aos detectores, e a Seção~\ref{sec:met-detectores} os detectores usados. A Seção~\ref{sec:met-criterio} define o critério de detecção e o piso, e a Seção~\ref{sec:met-escopo} delimita o que o instrumento mede.
+
+\section{Modelo de adversário}
+\label{sec:met-adversario}
+
+O adversário considerado é passivo~\cite{KatzLindell2014IMC}. Ele observa as mensagens que um dispositivo envia, mas não escolhe nenhuma entrada, não conhece a chave nem o texto em claro e não interfere na comunicação. De cada mensagem, ele vê o criptograma, com a tag, e o nonce, que é público. Esse é o cenário de quem escuta o tráfego de um dispositivo com poucos recursos, e é mais restrito que o dos trabalhos que medem o número de rodadas seguras escolhendo as entradas cifradas, discutidos no Capítulo~\ref{cap:trabalhos-relacionados}.
+
+O nonce não pode se repetir com a mesma chave~\cite{Rogaway2004Nonce,nist_sp800232_2025}, e a forma mais comum de garantir isso é um contador, que aumenta de um a cada mensagem~\cite{NISTSP80038D}. Por isso, duas mensagens seguidas de um mesmo dispositivo são cifradas com a mesma chave e com nonces que diferem em poucos bits, e o adversário sabe disso apenas observando os nonces. No experimento principal, os pares são formados por mensagens consecutivas do mesmo dispositivo (Seção~\ref{sec:met-dispositivos}), mas o par não precisa ser consecutivo, basta que os dois nonces difiram em poucos bits. Pares de mensagens mais distantes, cujos nonces diferem em um único bit, e pares cujos nonces diferem em vários bits também foram testados. Outras configurações de nonce também foram testadas, com o contador começando de um valor sorteado e com o contador nos primeiros bytes do nonce, e em nenhuma delas o piso foi maior (Seção~\ref{sec:res-contador}). O experimento principal usa exatamente esse par de mensagens seguidas, com textos em claro diferentes e desconhecidos. O adversário não sabe o texto de nenhuma das duas mensagens, nem qualquer relação entre eles, e por isso o par não sai do cenário em que só se observam criptogramas. Um experimento em que as duas mensagens cifravam o mesmo texto foi descartado justamente por esse motivo, já que saber que dois criptogramas cifram o mesmo texto já é conhecimento sobre o texto; ele é descrito no Apêndice.
+
+A pergunta que o adversário tenta responder é se aquilo que ele observa vem do algoritmo reduzido ou de bytes aleatórios. Separar a saída de uma cifra de dados aleatórios é a forma mais básica de ataque: uma cifra segura deve produzir saídas indistinguíveis de dados aleatórios~\cite{GoldwasserMicali1984PE,KatzLindell2014IMC}, e qualquer separação com um certo número de rodadas mostra que, com esse número, o algoritmo não cumpre essa exigência.
+
+\section{Algoritmos e versões com rodadas reduzidas}
+\label{sec:met-algoritmos}
+
+\subsection{Os algoritmos}
+\label{sec:met-algoritmos-lista}
+
+Foram estudados três finalistas do processo de padronização de criptografia leve do NIST que processam a mensagem em blocos: o Ascon-AEAD128, escolhido como padrão e publicado no NIST SP~800-232~\cite{nist_sp800232_2025}, o GIFT-COFB~\cite{Banik2021} e o Schwaemm256-128, da família SPARKLE~\cite{Beierle2020Sparkle}. A Tabela~\ref{tab:met-algoritmos} resume os parâmetros usados.
+
+\begin{table}[htb]
+\centering
+\caption{Parâmetros dos três algoritmos na especificação.}
+\label{tab:met-algoritmos}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lcccccc}
+\toprule
+Algoritmo & Estado & Bloco de texto & Nonce & Tag & Inicialização & Entre blocos \\
+\midrule
+Ascon-AEAD128   & 320 bits & 128 bits & 128 bits & 128 bits & 12 rodadas & 8 rodadas \\
+GIFT-COFB       & 128 bits & 128 bits & 128 bits & 128 bits & 40 rodadas & 40 rodadas \\
+Schwaemm256-128 & 384 bits & 256 bits & 256 bits & 128 bits & 11 passos & 7 passos \\
+\bottomrule
+\end{tabular}
+\par\smallskip\footnotesize Os três usam chave de 128 bits. No GIFT-COFB, cada chamada da cifra de bloco GIFT-128 tem 40 rodadas, tanto na inicialização quanto entre os blocos, e, sem dado associado, a cifra de bloco é chamada duas vezes antes do primeiro bloco de texto, uma para o nonce e outra para o bloco de preenchimento do dado associado.
+\end{table}
+
+O Ascon-AEAD128 e o Schwaemm256-128 seguem a mesma ideia: um estado interno é embaralhado por uma permutação na inicialização, o texto é combinado com uma parte do estado a cada bloco, e o estado é embaralhado de novo entre um bloco e o seguinte, com menos rodadas que na inicialização. No GIFT-COFB, o embaralhamento é feito pela cifra de bloco GIFT-128, que usa a chave em todas as rodadas, a primeira chamada cifra o nonce, a seguinte processa o dado associado, e há uma chamada a cada bloco de texto, sempre com o mesmo número de rodadas.
+
+O Ascon-AEAD128 foi compilado a partir da implementação de referência mantida pelos seus autores~\cite{AsconC2024}, que segue a versão padronizada no NIST SP~800-232~\cite{nist_sp800232_2025}, e o GIFT-COFB~\cite{Banik2021} e o Schwaemm256-128~\cite{Beierle2021SparkleSub}, a partir das implementações de referência dos pacotes de submissão da rodada final do NIST.
+
+\subsection{Redução de rodadas}
+\label{sec:met-reducao}
+
+Uma rodada é a aplicação de um conjunto fixo de operações sobre o estado interno, que a cifra repete várias vezes, como permutações de bits e substituições. No Ascon-AEAD128 e no GIFT-COFB, cada rodada soma uma constante ao estado, e no GIFT-COFB também uma subchave, troca pequenos grupos de bits por meio de uma tabela fixa, a S-box, e mistura os bits entre posições diferentes do estado~\cite{nist_sp800232_2025,Banik2017}. No Schwaemm256-128, a unidade equivalente se chama passo, e usa somas, rotações e XOR no lugar da S-box~\cite{Beierle2021SparkleSub}. No GIFT-128, por exemplo, a S-box troca cada grupo de 4 bits por outro segundo uma tabela, de modo que 0001 vira 1010, e a permutação leva o bit da posição 1 para a posição 33, o da posição 2 para a 66, e assim por diante~\cite{Banik2017}. Uma rodada sozinha mistura pouco, é a repetição que faz cada bit da saída depender de todos os bits da entrada~\cite{shannon_1949}. No GIFT-128, a troca de um único bit do bloco de entrada muda, em média, 2 dos 128 bits de saída depois de uma rodada, 14 depois de três e 64, a metade, a partir de sete.
+
+Uma versão reduzida é o mesmo algoritmo, com o mesmo modo de operação, a mesma chave, o mesmo nonce e o mesmo tamanho de saída, em que só o número de rodadas muda~\cite{Dobraunig2021AsconSecurity,Rohit2021Ascon,gohr_2019}. A redução não altera o tamanho do criptograma, que seria uma diferença trivial entre as classes. No Ascon-AEAD128, uma permutação com $r$ rodadas usa as últimas $r$ constantes de rodada, como define a especificação. No GIFT-COFB, a cifra de bloco usa as $r$ primeiras rodadas, porque é nessa ordem que as subchaves são geradas, e todas as chamadas usam o mesmo $r$. No Schwaemm256-128, é reduzido o número de passos da permutação SPARKLE.
+
+Como o Ascon-AEAD128 e o Schwaemm256-128 têm dois números de rodadas, foram usadas três formas de redução. Na redução das duas fases, que é a do experimento principal, uma versão com $r$ rodadas tem $r$ rodadas na inicialização e na finalização e $\min(r, 8)$ rodadas entre blocos no Ascon-AEAD128, ou $\min(r, 7)$ passos no Schwaemm256-128, de modo que a versão com o número de rodadas da especificação reproduz exatamente o algoritmo original. Na redução da inicialização e da finalização, as duas têm $r$ rodadas e as rodadas entre blocos ficam na especificação. Na redução só entre blocos, a inicialização fica na especificação e as rodadas entre blocos variam de 1 até o seu valor na especificação. No experimento com criptogramas de 64~KB, foi usada a redução das duas fases, com uma rodada.
+
+\subsection{Validação das implementações}
+\label{sec:met-validacao}
+
+As versões completas foram conferidas contra os vetores de teste oficiais e reproduziram 1\,089 de 1\,089 vetores nos três algoritmos. No Ascon-AEAD128, os vetores são os da implementação de referência dos autores, na versão 1.3.0~\cite{AsconC2024}, já atualizada para o Ascon-AEAD128 do NIST SP~800-232~\cite{nist_sp800232_2025}. No GIFT-COFB e no Schwaemm256-128, são os dos pacotes de submissão à rodada final do NIST. No GIFT-COFB, a implementação em Python usada na validação também reproduz os três vetores oficiais da cifra GIFT-128~\cite{Banik2017}.
+
+As versões reduzidas não têm vetores oficiais, já que estão fora do escopo oficial da cifra, e foram conferidas contra uma segunda implementação, escrita em Python a partir da especificação, sem usar o código de referência. Essa implementação foi escrita para este trabalho, separadamente para cada algoritmo: o Ascon-AEAD128 a partir do NIST SP~800-232~\cite{nist_sp800232_2025}, o GIFT-COFB a partir da especificação da cifra GIFT-128~\cite{Banik2017} e da submissão do GIFT-COFB~\cite{Banik2021}, e o Schwaemm256-128 a partir da sua submissão~\cite{Beierle2021SparkleSub}. O número de rodadas é um parâmetro de cada função, e, com o valor da especificação, a implementação reproduz os 1\,089 vetores oficiais de cada algoritmo, de modo que uma versão reduzida só difere da versão já conferida no número de rodadas. A conferência cifrou as mesmas entradas nas duas implementações, com chaves, nonces e textos sorteados, e com tamanhos de texto e de dado associado escolhidos para passar por todos os caminhos do modo de operação: vazio, menor que um bloco, de um bloco exato, de um bloco e um byte e de vários blocos. Como as duas implementações foram escritas de forma independente, é improvável que tenham o mesmo erro e ainda assim produzam os mesmos bytes. As versões reduzidas do Ascon-AEAD128, de 1 a 12 rodadas, coincidiram bit a bit com essa implementação em 240 de 240 casos. As do Schwaemm256-128, nas 21 combinações de passos usadas nas três formas de redução, coincidiram em 2\,100 de 2\,100 casos. As do GIFT-COFB, de 1 a 40 rodadas, coincidiram em 1\,000 de 1\,000 casos.
+
+\section{Dados}
+\label{sec:met-dados}
+
+\subsection{Texto em claro}
+\label{sec:met-texto}
+
+O texto em claro foi extraído de livros do Project Gutenberg. No estudo principal, foram usados 80 livros em inglês, convertidos para texto sem marcação. Parte dos estudos de robustez usou o corpus original, que inclui marcação HTML e alguns livros em outros idiomas, e os pisos medidos foram os mesmos nas duas fontes. Cada mensagem é um trecho de 64 bytes que começa numa posição sorteada de um livro sorteado, se os dois textos de um par saíssem iguais, o segundo era sorteado de novo, para que o par nunca cifrasse o mesmo texto.
+
+O tamanho de 64 bytes foi escolhido por dois motivos. Ele é próximo do tamanho das mensagens que sensores e dispositivos de Internet das Coisas trocam~\cite{NIST2018LWCRequirements,IEEE802154_2020}, e concentra a análise no início da mensagem, logo depois da inicialização, onde o efeito da redução de rodadas é mais forte~\cite{Dobraunig2021AsconSecurity,Rohit2021Ascon}. Com a tag, o criptograma tem 80 bytes. No experimento com criptogramas de 64~KB, cada mensagem tinha 65\,536 bytes de texto.
+
+\subsection{Braço aleatório}
+\label{sec:met-braco-aleatorio}
+
+Cada estudo foi feito em dois braços, com exceção do experimento com criptogramas de 64~KB, que usou só o braço de texto, já que, como nenhuma célula foi detectada, não havia falso positivo a ser conferido no controle negativo. No braço de texto, os algoritmos cifram os trechos dos livros. No braço aleatório, os mesmos algoritmos, com as mesmas chaves e os mesmos nonces, cifram texto em claro formado por bytes sorteados. O braço aleatório é o controle negativo do trabalho, é o experimento inteiro repetido com texto em claro aleatório, em que não há sinal a detectar, e serve para verificar se o instrumento acusa sinal onde ele não existe. Ele não se confunde com a classe aleatória (Seção~\ref{sec:met-separacao}), que existe nos dois braços. Os bytes sorteados, assim como os da classe aleatória (Seção~\ref{sec:met-separacao}), foram gerados pelo CTR\_DRBG, um dos três geradores determinísticos de bits aleatórios aprovados pelo NIST SP~800-90A~\cite{NISTSP80090A}, com AES-128 e semente fixa. Ele foi escolhido por três motivos: é um gerador padronizado, cuja implementação pôde ser conferida contra os vetores de teste oficiais do NIST, e reproduziu todos eles; por ser determinístico, a semente fixa permite regerar os mesmos dados; e a sua saída não pode ser separada de bytes uniformes sem quebrar o AES, uma cifra diferente das avaliadas, de modo que nenhum detector deste trabalho encontraria nela um padrão. Nos três algoritmos, cada bloco cifrado é o bloco de texto em claro somado (XOR) a um valor que não depende desse bloco, então, quando o texto é aleatório, a parte cifrada de cada criptograma também é aleatória, e o mesmo vale para o XOR de dois criptogramas, por mais fraca que seja a cifra. No braço aleatório, portanto, não existe sinal a detectar na parte cifrada, e qualquer detecção é falso positivo~\cite{shannon_1949,KatzLindell2014IMC}. A tag não tem essa garantia, já que ela é calculada na finalização, que também tem rodadas reduzidas, e pode carregar estrutura própria, de modo que uma detecção com a tag incluída não é necessariamente um falso positivo. Por isso, o braço aleatório foi analisado de duas formas. Com a tag incluída, ele tem exatamente o mesmo formato do braço de texto, e uma detecção pode vir da cifra. Sem a tag, só com os 64 bytes de texto cifrado, não há sinal possível, e qualquer detecção é falso positivo. Como esses dois controles ainda passam pela cifra, a taxa de falso positivo do próprio procedimento foi medida também por um teste A/A, em que dois conjuntos gerados pelo mesmo processo aleatório, o CTR\_DRBG, são comparados pelo mesmo pipeline, com os mesmos classificadores, bolsas e separação por chave, em 20 réplicas (Seção~\ref{sec:res-calibracao}).
+
+\subsection{Dispositivos, chaves e nonces}
+\label{sec:met-dispositivos}
+
+Cada dispositivo tem uma chave de 128 bits, sorteada de forma determinística a partir de uma semente fixa. Os três algoritmos usam as mesmas chaves e os mesmos textos, na mesma ordem, de modo que as diferenças entre eles não vêm da amostra. No estudo principal, foram 300 dispositivos com 100 pares de mensagens cada, ou seja, 30\,000 pares por número de rodadas e por braço.
+
+O nonce de cada dispositivo é um contador que começa do zero, e cada par é formado por duas mensagens consecutivas de um dispositivo, com nonces $2j$ e $2j+1$, que diferem em um único bit. Com o contador começando do zero, todos os dispositivos usam a mesma sequência de nonces, e só as chaves e os textos mudam de um dispositivo para outro. No estudo principal, o contador ocupa os últimos bytes do nonce. As variações da Seção~\ref{sec:res-contador} mudam a posição do contador, que passa a ocupar os primeiros bytes, o seu valor inicial, que passa a ser sorteado por dispositivo, e a distância entre os nonces do par, que passa a ser de $k$ mensagens.
+
+\subsection{Classe aleatória e separação por chave}
+\label{sec:met-separacao}
+
+A tarefa dos detectores é separar o que o adversário observa de bytes aleatórios do mesmo tamanho. Esses bytes formam a classe aleatória, a classe concorrente usada em todos os experimentos, é dela que o classificador precisa separar as amostras do algoritmo, tanto no braço de texto quanto no braço aleatório. Para cada amostra do algoritmo, há uma amostra da classe aleatória, montada do mesmo jeito: um bloco de bytes sorteados quando a entrada é um criptograma ou o XOR de um par, e dois blocos sorteados quando a entrada são os dois criptogramas lado a lado, para que a classe aleatória não seja reconhecível pelo formato.
+
+Treinamento e teste foram separados por chave: 240 dispositivos para treinamento e 60 para teste, sorteados com uma semente fixa, e as duas classes de um mesmo dispositivo ficam sempre do mesmo lado. Nenhuma chave do teste aparece no treinamento, de modo que um detector não pode acertar por ter aprendido algo específico de uma chave. Cada número de rodadas tem, assim, 12\,000 amostras de teste, 6\,000 de cada classe.
+
+Os demais estudos usaram escalas diferentes. No experimento com criptogramas de 64~KB, foram 300 chaves com 100 mensagens cada, cifradas pelos três algoritmos, mais 30\,000 amostras aleatórias, 120\,000 no total, com a mesma separação de 240 e 60 chaves. No estudo de quantidade de dados, foram gerados 31\,000 dispositivos, dos quais 1\,000 ficaram fixos para teste e 300 ou 3\,000 foram usados no treinamento. No estudo do piso de dados (Seção~\ref{sec:res-piso-dados}), os mesmos 1\,000 dispositivos de teste foram mantidos, e os pares de treinamento, de 1 a 5\,000 por classe, foram tirados de uma permutação fixa dos pares de 300 dispositivos, em conjuntos aninhados, de modo que cada nível contém o anterior e a diferença entre dois níveis vem só dos pares acrescentados. Os níveis maiores, de 3 a 300 dispositivos inteiros, ou de 300 a 30\,000 pares, também foram aninhados. Nesse estudo, o mínimo de um classificador é o menor treinamento a partir do qual todos os níveis maiores também são detectados, e o teto de cada célula é o maior F1 entre a rodada da especificação e as duas rodadas do braço aleatório. As redes neurais foram treinadas com 3\,000 dispositivos, separados em 2\,400 para treinamento e 600 para teste.
+
+\section{Representações}
+\label{sec:met-representacoes}
+
+Esta seção descreve o que cada detector recebe como entrada. Em todas as representações, a classe aleatória é montada no mesmo formato da classe da cifra (Seção~\ref{sec:met-separacao}), de modo que a diferença entre as classes nunca está no formato da entrada. O nonce não entra como variável, porque a pergunta é se o conteúdo do criptograma denuncia a cifra, e a classe aleatória não tem um nonce correspondente.
+
+\subsection{Criptograma de 64 KB com atributos estatísticos}
+\label{sec:met-atributos}
+
+No primeiro experimento, cada criptograma de 64~KB foi descrito por 641 atributos estatísticos. Os atributos foram retirados diretamente dos trabalhos de identificação de algoritmos criptográficos por aprendizado de máquina apresentados na revisão sistemática do Capítulo~\ref{cap:trabalhos-relacionados}, com duas exceções: a autocorrelação e a complexidade de Lempel-Ziv, que vêm dos testes clássicos de aleatoriedade, e as estatísticas da região da tag, propostas neste trabalho. Eles pertencem a doze famílias:
+
+\begin{itemize}
+    \item histograma de bytes, a frequência de cada valor de byte, a representação mais usada nos trabalhos de identificação de algoritmos~\cite{MelloXexeo2016,Barbosa2017};
+    \item entropia e testes de qui-quadrado sobre a distribuição dos bytes~\cite{Li2025Generic,Jha2025};
+    \item estatísticas de n-gramas, isto é, de sequências de dois, três e quatro bytes~\cite{Jha2025};
+    \item autocorrelação e sequências de valores repetidos (\textit{runs}), dois testes clássicos de aleatoriedade~\cite{Menezes1996HAC};
+    \item complexidade de Lempel-Ziv~\cite{LempelZiv1976} e taxas de compressão por zlib, bz2 e lzma~\cite{Zhou2025};
+    \item espectro de frequências por FFT~\cite{Zhou2025}, como no teste espectral do NIST~\cite{Rukhin2010NIST80022};
+    \item a bateria de testes estatísticos do NIST SP~800-22~\cite{Rukhin2010NIST80022}, usada em vários trabalhos de identificação~\cite{yuan2022,Li2025Generic,Yuan2025MLP,Yao2025,Yuan2026Transformer};
+    \item momentos da distribuição dos bytes, a assimetria e a curtose~\cite{Zhou2025};
+    \item espectro de potência pelo método de Welch~\cite{Zhou2025};
+    \item distribuição do peso de Hamming dos bytes~\cite{Zhao2023Hamming};
+    \item histogramas de blocos de bits de tamanhos variados~\cite{MelloXexeo2016,Barbosa2017};
+    \item estatísticas da região da tag, calculadas separadamente do resto do criptograma, a única família proposta neste trabalho.
+\end{itemize}
+
+A família da região da tag foi a única proposta neste trabalho, e a ideia por trás dela é que as duas partes do criptograma são produzidas de formas diferentes. A parte cifrada é o texto em claro somado a uma máscara que, nos três algoritmos, é desenhada para parecer aleatória, enquanto a tag sai de um mecanismo próprio de cada algoritmo. No Ascon-AEAD128 e no Schwaemm256-128, ela é tirada do estado interno depois da permutação de finalização e somada à chave, e no GIFT-COFB é a saída da última chamada da cifra de bloco. Por isso, se um algoritmo deixa alguma marca própria no criptograma, a tag é o lugar mais provável, e calcular as estatísticas dela separadamente evita que essa marca se dilua nos 64~KB restantes.
+
+As doze famílias foram usadas para verificar se atributos calculados sobre o criptograma inteiro distinguiriam as versões enfraquecidas de dados aleatórios. Juntas, elas medem a distribuição dos valores, a dependência entre posições próximas, a compressibilidade e o espectro do criptograma, as mesmas propriedades avaliadas pelas baterias de aleatoriedade e pelos trabalhos de identificação. Com exceção da família da tag, todas são calculadas sobre o criptograma inteiro.
+
+Optou-se por manter todos os 641 atributos, sem etapa de seleção. Antes do treinamento, foram padronizados para média zero e desvio padrão um na regressão logística, que é sensível à escala das variáveis, e os demais receberam os valores originais.
+
+\subsection{Bits crus}
+\label{sec:met-bits}
+
+A partir do segundo experimento, o detector recebe os bits do criptograma de 80 bytes, cada bit como uma variável, o que dá 640 variáveis. Os 80 bytes são os 64 de texto cifrado seguidos dos 16 da tag, na ordem em que o algoritmo os produz. Com isso, cada posição do criptograma pode ser avaliada separadamente, ao contrário dos atributos, que resumem o criptograma inteiro. Usar os bits crus como entrada, sem atributos calculados, é a prática dos distinguidores com aprendizado de máquina~\cite{gohr_2019}. No experimento com um criptograma isolado, essa representação separa o efeito de observar a mensagem curta bit a bit do efeito de observar duas mensagens, que é o que o experimento principal acrescenta. Os bits são usados sem outro tratamento, e só a regressão logística os recebe padronizados (Seção~\ref{sec:met-classificadores}).
+
+\subsection{Par de mensagens}
+\label{sec:met-par}
+
+No experimento principal, a amostra é formada pelos dois criptogramas de 80 bytes de um par, apresentados ao classificador de duas formas. Na primeira, os dois criptogramas ficam lado a lado, o primeiro seguido do segundo, com 1\,280 bits, como na entrada do distinguidor de Gohr~\cite{gohr_2019}. Na segunda, que é a do piso principal, a amostra é o XOR, posição a posição, dos dois criptogramas, também com 640 bits, como em Shen et al.~\cite{Shen2024ND}. Como as duas mensagens usam a mesma chave e, na inicialização, diferem quase só no nonce, com poucas rodadas as duas máscaras somadas aos textos ficam parecidas, e o XOR cancela a parte em que coincidem. O que sobra é a diferença que as rodadas não espalharam~\cite{BihamShamir1991}, misturada à combinação dos dois textos em claro~\cite{Mason2006TwoTimePad}. Comparar dois criptogramas cifrados com entradas que diferem pouco é a ideia dos distinguidores diferenciais com aprendizado de máquina~\cite{gohr_2019,benamira_2021}, com a diferença de que, aqui, a diferença entre as entradas não é escolhida pelo adversário, ela vem do contador do próprio dispositivo. O XOR reduz o par a uma única sequência e descarta o valor de cada criptograma separado, e a comparação entre as duas formas mostra se essa informação faz falta.
+
+\section{Detectores}
+\label{sec:met-detectores}
+
+Os detectores foram escolhidos para cobrir tipos diferentes de padrão. A regressão logística pondera cada bit separadamente e é adequada quando o sinal está em vieses de bits isolados; o Random Forest e o XGBoost combinam bits por meio de árvores de decisão; e as redes neurais podem aprender combinações entre muitos bits. Os três classificadores são usados em todos os experimentos, com bits crus ou com atributos. As redes e a busca de hiperparâmetros entram nas verificações da Seção~\ref{sec:res-robustez}.
+
+\subsection{Classificadores}
+\label{sec:met-classificadores}
+
+Foram usados três classificadores, de famílias diferentes, que recebem cada bit da amostra, ou cada atributo no experimento com criptogramas de 64~KB, como uma variável. As configurações foram fixadas antes dos experimentos, com as bibliotecas scikit-learn~\cite{Pedregosa2011}, na versão 1.8, e XGBoost, na versão 3.2; o que não é citado abaixo segue o padrão dessas bibliotecas, e a semente dos modelos é fixa. Cada classificador devolve, para cada amostra, a probabilidade de ela vir da cifra, e, sem bolsa, a amostra é atribuída à classe mais provável. Se outras configurações mudariam o piso é verificado pela busca de hiperparâmetros da Seção~\ref{sec:met-busca}.
+
+\subsubsection{Regressão logística}
+
+A regressão logística~\cite{Cox1958} é um modelo linear, que atribui um peso a cada bit, soma os bits ponderados e converte a soma numa probabilidade. Foi usada com regularização L2 e $C = 1$, ajustada pelo método L-BFGS com até 2\,000 iterações. Os bits são padronizados antes do treinamento, para média zero e desvio padrão um, porque a regularização penaliza todos os pesos da mesma forma e supõe variáveis na mesma escala. Como cada bit tem um peso próprio, ela detecta vieses em bits isolados, mas não representa combinações entre bits, como dois bits que só carregam sinal quando considerados juntos.
+
+\subsubsection{Random Forest}
+
+O Random Forest~\cite{Breiman2001} é um conjunto de árvores de decisão, cada uma treinada numa reamostragem dos exemplos de treinamento, e a probabilidade final é a média das árvores. Foram usadas 500 árvores, sem limite de profundidade, com o critério de Gini e com $\sqrt{640} \approx 25$ bits sorteados em cada divisão. Os pesos de classe foram balanceados, o que não altera nada aqui, já que as duas classes têm o mesmo tamanho. Como uma árvore testa um bit depois do outro, ela representa combinações entre bits, mas precisa encontrá-las entre os 640 disponíveis, e, com só 25 bits sorteados por divisão, uma combinação específica pode nunca ser testada.
+
+\subsubsection{XGBoost}
+
+O XGBoost~\cite{ChenGuestrin2016} também é um conjunto de árvores, mas construídas em sequência, por \textit{boosting}, em que cada árvore nova é ajustada para corrigir os erros da soma das anteriores. Foram usadas 500 árvores com profundidade máxima 6 e taxa de aprendizado 0,1, construídas pelo método de histogramas, sem subamostragem de exemplos nem de variáveis. Com profundidade 6, cada árvore combina até seis bits num mesmo caminho, e o \textit{boosting} concentra as árvores seguintes nos exemplos que as anteriores erraram.
+
+\subsubsection{SVM com núcleo RBF}
+
+O SVM com núcleo RBF~\cite{CortesVapnik1995} foi usado só na busca de hiperparâmetros (Seção~\ref{sec:met-busca}). Ele compara cada exemplo com os exemplos de treinamento por uma medida de semelhança, o que permite fronteiras não lineares. Ficou fora dos demais experimentos porque o seu tempo de ajuste cresce com cerca de $n^{2{,}5}$ e tornaria inviável a varredura de rodadas, e por isso, na busca, foi treinado numa subamostra.
+
+\subsection{Bolsas}
+\label{sec:met-bolsas}
+
+A bolsa junta a opinião do classificador sobre várias amostras de um mesmo dispositivo numa decisão só, como faria um adversário que escuta várias mensagens antes de concluir. Para cada amostra, a probabilidade $p$ de ser da cifra é convertida em log-odds, $\ln\big(p/(1-p)\big)$, e a decisão da bolsa é o sinal da média dos log-odds das suas amostras. As amostras de uma bolsa vêm do mesmo dispositivo e compartilham a chave, de modo que não são evidências independentes, e a média dos log-odds é usada aqui como uma regra de agregação, sem supor essa independência. Essa combinação segue Gohr~\cite{gohr_2019}, que, no ataque de recuperação de chave contra o Speck32/64 com rodadas reduzidas, somou os log-odds do seu distinguidor sobre vários pares de criptogramas para decidir entre as chaves candidatas, já que um único par carrega pouca evidência. Gohr, Leander e Neumann~\cite{GohrLeanderNeumann2022} mostraram depois que os ganhos atribuídos a distinguidores treinados sobre vários pares ao mesmo tempo em geral desaparecem quando comparados com essa combinação de respostas de pares independentes, e por isso ela foi preferida a um modelo que recebesse a bolsa inteira. Foram usadas bolsas de 1, 10 e 100 amostras, sempre do mesmo dispositivo e da mesma classe. O classificador é sempre treinado amostra a amostra, a bolsa só muda como as suas respostas são combinadas no teste.
+
+\subsection{Busca de hiperparâmetros}
+\label{sec:met-busca}
+
+Para verificar se um ajuste mudaria o piso, foi feita uma busca de hiperparâmetros com o teste separado. A configuração de cada classificador foi escolhida apenas com as chaves de treinamento, por validação cruzada de três dobras separadas por chave, na rodada seguinte ao piso, e avaliada uma única vez no teste. A rodada foi fixada antes da busca, a partir do piso do estudo principal, como a busca procura subir o piso, e não confirmá-lo, essa escolha não favorece a detecção. Foram avaliadas seis configurações da regressão logística, com $C$ entre $10^{-3}$ e 100; vinte do Random Forest, sorteadas entre 200 e 1\,000 árvores, diferentes frações de atributos por divisão, tamanhos mínimos de folha e profundidades máximas; vinte do XGBoost, sorteadas entre 200 e 2\,000 árvores, profundidades de 3 a 12, taxas de aprendizado de 0,01 a 0,3 e diferentes frações de amostras e de atributos; e nove do SVM com núcleo RBF, combinando três valores de $C$ e três de $\gamma$, numa subamostra de 8\,000 exemplos. O espaço de cada classificador foi definido antes da busca, e a configuração escolhida foi aplicada às rodadas do piso, à seguinte e à da especificação, nos dois braços.
+
+\subsection{Redes neurais}
+\label{sec:met-redes}
+
+Foram avaliadas duas redes neurais, incluídas porque podem aprender combinações entre muitos bits que os classificadores clássicos têm dificuldade de encontrar. Elas foram usadas na verificação da Seção~\ref{sec:res-modelos}, treinadas com 3\,000 dispositivos, dez vezes os dados do experimento principal, nas rodadas 1, do piso, seguinte ao piso e da especificação. A MLP é uma rede densa com duas camadas ocultas, de 512 e 256 neurônios, com normalização em lote, ativação ReLU e \textit{dropout} de 0,2 na primeira camada, no estilo das redes densas que Shen et al.~\cite{Shen2024ND} aplicaram ao XOR de pares de criptogramas. A CNN 1D trata o criptograma como uma sequência de bytes, como as redes convolucionais sobre sequências de caracteres~\cite{Zhang2015CharCNN}, uma camada de \textit{embedding} de 32 dimensões, três blocos convolucionais de 128 filtros com núcleo 3 e média global no fim. Essa média descarta a posição de cada byte, o que limita a CNN 1D quando o sinal está em posições fixas do criptograma. As duas foram treinadas com o otimizador Adam, taxa de aprendizado de $10^{-3}$, lotes de 256 amostras e 15 épocas, sem parada antecipada. O número de épocas foi fixado para que todas as rodadas e algoritmos recebessem o mesmo treinamento.
+
+\section{Critério de detecção e definição do piso}
+\label{sec:met-criterio}
+
+Cada combinação de classificador e tamanho de bolsa, num dado número de rodadas, é chamada de célula. Com três classificadores e três tamanhos de bolsa, cada número de rodadas tem nove células. O desempenho de cada célula é medido pelo F1 macro, a média do F1 das duas classes~\cite{Sokolova2009}, e pela AUC, a área sob a curva ROC~\cite{fawcett2006}; na AUC, o acaso corresponde a 0,50. No F1 macro, o valor sem sinal depende das decisões do classificador. Com classes do mesmo tamanho, um classificador sem sinal que divida as respostas entre as duas classes fica perto de 0,50, mas um que responda sempre a mesma classe fica em cerca de 0,33. Como o p-valor é calculado em relação a 0,50, um classificador que passe a responder sempre a mesma classe nunca é declarado detectado, de modo que esse comportamento pode esconder um sinal, mas não produzir uma detecção, e é assim que o caso da CNN 1D no GIFT-COFB com três rodadas é tratado (Seção~\ref{sec:res-modelos}). O F1 mede a qualidade das decisões do classificador e depende do limiar que separa as classes, enquanto a AUC mede se o classificador ordena as amostras da cifra acima das aleatórias, independentemente do limiar. Usar as duas evita confundir a ausência de sinal com um limiar mal posicionado, caso em que a AUC fica alta e o F1 fica perto do acaso. O critério de detecção usa o F1, e a AUC é reportada como complemento. O intervalo de confiança de 95\% do F1 é obtido por \textit{bootstrap} com 1\,000 reamostragens de chaves~\cite{FieldWelsh2007}, e não de amostras, porque amostras do mesmo dispositivo compartilham a chave e não são independentes.
+
+Uma célula é contada como detectada quando passa por dois filtros, a correção de Benjamini-Hochberg e o teto da faixa de controle. A correção de Benjamini-Hochberg~\cite{Benjamini1995FDR} é aplicada, com nível de 5\%, aos p-valores de todas as células do estudo de cada algoritmo, nos dois braços e em todas as rodadas. Ela controla a proporção esperada de falsos positivos entre as células declaradas significativas, e foi preferida à de Bonferroni, que controla a chance de haver um único falso positivo entre todos os testes e, com centenas deles, esconderia os sinais fracos que existem perto do piso.
+
+O p-valor de cada célula vem da distância entre o seu F1 e 0,50, medida em erros padrão estimados a partir do intervalo de confiança. Só desempenhos acima do acaso contam, e, quando o F1 fica abaixo de 0,50, o p-valor é tomado como 1. Com $h$ a meia-largura do intervalo de confiança de 95\%, o erro padrão é estimado como $h/1{,}96$, e
+\begin{equation}
+z = \frac{F_1 - 0{,}50}{h/1{,}96}, \qquad p = 2\,[1 - \Phi(|z|)],
+\end{equation}
+em que $\Phi$ é a função de distribuição acumulada da normal padrão. Como esse p-valor é bicaudal e só o lado acima de 0,50 é considerado, o teste é, na prática, unilateral, com nível de 2,5\%. Essa conversão supõe que a distribuição bootstrap do F1 é aproximadamente normal, o que é menos seguro nas bolsas de 100 pares, que têm só 120 decisões. Por isso, as detecções com F1 abaixo de 0,9 foram conferidas também por um teste de permutação, em que, 20\,000 vezes, os rótulos das duas classes são trocados por chave inteira num subconjunto sorteado das chaves de teste, enquanto, acima de 0,9, o F1 fica tão longe de 0,50 que um erro da aproximação não muda a decisão. A troca por chave respeita a dependência entre as amostras de um mesmo dispositivo e não depende da aproximação normal. As 24 detecções desse tipo, nos estudos com o par e com o criptograma isolado, se mantiveram, com p-valor por permutação de no máximo 0,005, em nenhum caso maior que o da aproximação normal. No teste A/A, em que não há sinal, 2,8\% das células tiveram p-valor abaixo de 0,05, próximo dos 2,5\% esperados, e nenhuma passou pela correção (Seção~\ref{sec:res-calibracao}).
+
+O segundo filtro é o teto da faixa de controle. As rodadas a partir da metade da especificação formam a faixa de controle, em que não se espera sinal, e o maior F1 observado nessa faixa, para o mesmo classificador e tamanho de bolsa, vira o teto que a célula precisa superar. O teto é calculado separadamente para cada classificador e tamanho de bolsa porque cada detector oscila de um jeito diferente mesmo onde não há sinal, e assim o critério é calibrado contra essa oscilação, e não só contra o valor teórico de 0,50. A faixa começa na metade da especificação porque, a partir dali, a diferença entre os nonces já passou por pelo menos metade das rodadas previstas pelos projetistas, acima da região em que o sinal apareceu nos experimentos, e o limite é definido por algoritmo, já que um número fixo de rodadas cairia na região de sinal de um algoritmo com especificação longa. Metade das rodadas da especificação não garante ausência de sinal, e a ausência de sinal nessa faixa é uma suposição. Se ela estiver errada, o teto sobe e o critério fica mais rigoroso. O teto e a regra de monotonicidade, descrita a seguir, são escolhas deste trabalho, e não uma fronteira natural da cifra, e os pisos dependem delas. No estudo principal, nenhuma célula acima do piso passou pela correção de Benjamini-Hochberg, de modo que, nele, os pisos seriam os mesmos sem o teto e sem a regra de monotonicidade.
+
+O piso de uma célula é o maior número de rodadas em que ela é detectada, desde que todas as rodadas abaixo também sejam detectadas. Uma detecção isolada, acima de uma rodada não detectada, não entra no piso, por escolha do critério, embora não seja necessariamente ruído. O piso do algoritmo é o maior piso entre as suas células. Até o piso, o algoritmo reduzido é separável de dados aleatórios por pelo menos um dos detectores avaliados. Acima dele, a ausência de detecção não é evidência de segurança, apenas de que esses detectores, com essa quantidade de dados, não separam.
+
+\section{Escopo e limitações do instrumento}
+\label{sec:met-escopo}
+
+O piso medido é uma propriedade conjunta da cifra e da fonte de texto. O sinal só existe porque o texto em claro tem padrão~\cite{shannon_1949}, com texto aleatório, como mostra o braço aleatório, não foi detectado piso em nenhum número de rodadas. Uma fonte com menos padrão que os livros usados, como dados comprimidos, pode dar um piso menor, uma fonte com mais padrão, como cabeçalhos fixos de protocolo, pode dar um piso maior. A afirmação que o piso sustenta é, portanto, a de que, até aquele número de rodadas, o algoritmo é distinguível quando cifra texto como o dos livros avaliados. A mesma ressalva vale para as escolhas de desenho, os pisos foram medidos com mensagens de 64 bytes, sem dado associado, com o contador começando do zero e com a redução das duas fases, e outras escolhas podem dar pisos diferentes. As variações da Seção~\ref{sec:res-robustez} mostram o efeito de algumas delas.
+
+O piso também é uma propriedade do instrumento. Os classificadores procuram tipos específicos de padrão. Eles recebem uma mensagem de 80 bytes, ou o XOR de duas, e, no estudo principal, foram treinados com os dados de 300 dispositivos. O critério de detecção, com o teto e a regra de monotonicidade, também foi definido neste trabalho, e um critério menos rigoroso poderia apontar um piso maior. Detectores que procurem combinações de mais bits, ou que usem mais dados, podem ir além. Por isso, a ausência de detecção acima do piso não mostra que essas rodadas são seguras, só que este instrumento não encontrou sinal nelas, o piso é um limite inferior para o número de rodadas em que o algoritmo é distinguível. O trabalho não considera adversários ativos, que escolhem entradas, nem a recuperação da chave ou do texto em claro.
+
+Em resumo, o resultado deve ser lido assim: abaixo do piso, um adversário passivo, com detectores genéricos e sem conhecer a chave nem o texto, distingue o algoritmo de dados aleatórios, acima do piso, o trabalho não afirma nada sobre a segurança do algoritmo.
+
+%\section{Reprodutibilidade}
+%\label{sec:met-reproducao}
+
+%{\sloppy
+%O código está no repositório do trabalho, na pasta \texttt{scripts/reduced\_rounds}. O arquivo \texttt{floor\_algos.py} define os algoritmos e as formas de redução, \texttt{run\_floor.py} gera os dados e treina os classificadores, e \texttt{report\_floor.py} aplica o critério de detecção e determina o piso. O estudo de quantidade de dados está em \texttt{run\_curva\_orcamento.py}, a busca de hiperparâmetros em \texttt{metodo\_ml.py}, e as redes neurais em \texttt{neural\_floor.py}. A implementação independente usada na validação está no arquivo de testes \texttt{test\_crypto\_independente.py}. As sementes são fixas: 42 para a separação entre treinamento e teste e para o \textit{bootstrap}, e 7 para os modelos. O estudo principal de um algoritmo é reproduzido, por exemplo, com o comando abaixo, seguido de \texttt{report\_floor.py} sobre a pasta de relatórios gerada.
+%\par}
+
+%{\small
+%\begin{verbatim}
+%python scripts/reduced_rounds/run_floor.py %--algo ascon \
+%       --arms texto-en aleatorio --contador zero
+%\end{verbatim}
+%}

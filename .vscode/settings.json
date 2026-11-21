@@ -1,0 +1,43 @@
+{
+  // Dissertação (LaTeX Workshop + MiKTeX). O documento principal é
+  // dissertacao_rasc/main.tex; a pasta dissertacao/ é a versão antiga e fica
+  // fora da busca para a extensão não perguntar qual dos dois compilar.
+  "latex-workshop.latex.search.rootFiles.include": ["dissertacao_rasc/**/*.tex"],
+  "latex-workshop.latex.search.rootFiles.exclude": [
+    "dissertacao/**",
+    "TEMPLATE_SEMINARIO_ACOMPANHAMENTO*/**",
+    "build/**",
+    "docs/**"
+  ],
+  "latex-workshop.latex.rootFile.doNotPrompt": true,
+
+  // latexmk roda pdflatex e bibtex quantas vezes forem precisas
+  // (o abntex2cite usa bibtex).
+  "latex-workshop.latex.tools": [
+    {
+      "name": "latexmk",
+      "command": "latexmk",
+      "args": [
+        "-pdf",
+        "-synctex=1",
+        "-interaction=nonstopmode",
+        "-file-line-error",
+        "%DOC%"
+      ],
+      "env": {}
+    }
+  ],
+  "latex-workshop.latex.recipes": [
+    { "name": "latexmk (pdflatex + bibtex)", "tools": ["latexmk"] }
+  ],
+  "latex-workshop.latex.recipe.default": "first",
+
+  // Compila ao salvar e mostra o PDF numa aba ao lado.
+  "latex-workshop.latex.autoBuild.run": "onSave",
+  "latex-workshop.view.pdf.viewer": "tab",
+  "latex-workshop.latex.autoClean.run": "never",
+
+  "[latex]": {
+    "editor.wordWrap": "on"
+  }
+}

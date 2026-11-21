@@ -109,7 +109,8 @@ def _kaggle(*args: str) -> int:
 
 
 def _slug(algo: str) -> str:
-    return f"piso-rodadas-{algo}"
+    # "redes-piso" / "redes-gift4": notebooks do metodo_redes.py (kaggle_redes.py)
+    return f"piso-{algo}" if algo.startswith("redes-") else f"piso-rodadas-{algo}"
 
 
 def cmd_dataset(versao: bool) -> None:
@@ -119,7 +120,7 @@ def cmd_dataset(versao: bool) -> None:
     alvo.mkdir(parents=True)
     # dados_x100: caches da curva para o kaggle_100x.py (criar um dataset
     # próprio para eles falhou duas vezes com erro 500 do Kaggle)
-    for sub in ("codigo", "dados", "dados_x100"):
+    for sub in ("codigo", "dados", "dados_x100", "dados_metodo"):
         if (BUNDLE / sub).exists():
             shutil.copytree(BUNDLE / sub, alvo / sub, ignore=shutil.ignore_patterns("__pycache__"))
     (alvo / "dataset-metadata.json").write_text(json.dumps({

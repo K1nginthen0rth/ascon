@@ -57,6 +57,8 @@ from src.crypto.kat_parser import parse_kat_file
 _KAT_DIR = Path(__file__).parent.parent / "data" / "kat"
 _KAT_ASCON = _KAT_DIR / "LWC_AEAD_KAT_ASCON128AV13.txt"
 _KAT_GIFT = _KAT_DIR / "LWC_AEAD_KAT_GIFTCOFB128_128.txt"
+_KAT_SCHWAEMM = _KAT_DIR / "LWC_AEAD_KAT_SCHWAEMM256_128.txt"
+_BUILD_REDUZIDAS = Path(__file__).parent.parent / "build" / "reduced_rounds"
 
 
 # ======================================================================
@@ -385,6 +387,100 @@ def gift_cofb_encrypt(key: bytes, nonce: bytes, pt: bytes, ad: bytes = b"",
 
 
 # ======================================================================
+# 2b. Schwaemm256-128 — da especificação SPARKLE (submissão NIST LWC)
+# ======================================================================
+#
+# O KAT do Schwaemm já é oficial; esta implementação existe para conferir as
+# versões com passos reduzidos, que não têm vetores oficiais.
+
+_M32 = 0xFFFFFFFF
+_SPARKLE_RCON = [0xB7E15162, 0xBF715880, 0x38B4DA56, 0x324E7738,
+                 0xBB1185EB, 0x4F7C7B57, 0xCFBFA1C8, 0xC2B3293D]
+_SCHW_RATE_W, _SCHW_CAP_W = 8, 4
+
+
+def _rot32(x: int, n: int) -> int:
+    return ((x >> n) | (x << (32 - n))) & _M32
+
+
+def _alzette(x: int, y: int, c: int) -> tuple[int, int]:
+    for ra, rb in ((31, 24), (17, 17), (0, 31), (24, 16)):
+        x = (x + _rot32(y, ra)) & _M32 if ra else (x + y) & _M32
+        y ^= _rot32(x, rb)
+        x ^= c
+    return x, y
+
+
+def _ell(x: int) -> int:
+    return _rot32(x ^ ((x << 16) & _M32), 16)
+
+
+def sparkle384(s: list[int], steps: int) -> list[int]:
+    """SPARKLE384: 6 ramos, s[2i]=x_i, s[2i+1]=y_i."""
+    s = list(s)
+    nb, h = 6, 3
+    for i in range(steps):
+        s[1] ^= _SPARKLE_RCON[i % 8]
+        s[3] ^= i
+        for j in range(nb):
+            s[2 * j], s[2 * j + 1] = _alzette(s[2 * j], s[2 * j + 1], _SPARKLE_RCON[j])
+        x, y = s[0::2], s[1::2]
+        tx = _ell(x[0] ^ x[1] ^ x[2])
+        ty = _ell(y[0] ^ y[1] ^ y[2])
+        nx, ny = [0] * nb, [0] * nb
+        for j in range(h):
+            nx[(j - 1) % h] = x[j + h] ^ x[j] ^ ty
+            ny[(j - 1) % h] = y[j + h] ^ y[j] ^ tx
+            nx[j + h] = x[j]
+            ny[j + h] = y[j]
+        s = [v for par in zip(nx, ny) for v in par]
+    return s
+
+
+def _w32(b: bytes) -> list[int]:
+    return [int.from_bytes(b[i:i + 4], "little") for i in range(0, len(b), 4)]
+
+
+def _b32(w: list[int]) -> bytes:
+    return b"".join(v.to_bytes(4, "little") for v in w)
+
+
+def _schw_rho_w(s: list[int], d: list[int]) -> None:
+    """rho1 (FeistelSwap da taxa, xor D) + rate whitening com a capacidade duplicada."""
+    s1, s2 = s[0:4], s[4:8]
+    novo = s2 + [a ^ b for a, b in zip(s2, s1)]
+    for k in range(_SCHW_RATE_W):
+        s[k] = novo[k] ^ d[k] ^ s[_SCHW_RATE_W + (k % _SCHW_CAP_W)]
+
+
+def schwaemm256_128_encrypt(key: bytes, nonce: bytes, pt: bytes, ad: bytes = b"",
+                            slim: int = 7, big: int = 11) -> bytes:
+    """`slim`/`big` são os passos da SPARKLE entre blocos e na inicialização/
+    finalização; os padrões são os da especificação."""
+    s = sparkle384(_w32(nonce) + _w32(key), big)
+
+    def absorve(dados: bytes, c_parcial: int, c_completo: int) -> bytes:
+        nonlocal s
+        saida = b""
+        blocos = [dados[i:i + 32] for i in range(0, len(dados), 32)]
+        for n, blk in enumerate(blocos):
+            completo = len(blk) == 32
+            d = _w32(blk if completo else blk + b"\x80" + bytes(31 - len(blk)))
+            saida += _b32([a ^ b for a, b in zip(s[:_SCHW_RATE_W], d)])[:len(blk)]
+            ultimo = n == len(blocos) - 1
+            if ultimo:
+                s[11] ^= ((c_completo if completo else c_parcial) ^ 4) << 24
+            _schw_rho_w(s, d)
+            s = sparkle384(s, big if ultimo else slim)
+        return saida
+
+    if ad:
+        absorve(ad, 0, 1)
+    ct = absorve(pt, 2, 3) if pt else b""
+    return ct + _b32([a ^ b for a, b in zip(s[_SCHW_RATE_W:], _w32(key))])
+
+
+# ======================================================================
 # 3. Testes
 # ======================================================================
 
@@ -555,3 +651,39 @@ def test_giftb128_difere_do_gift128_na_interface() -> None:
     assert gift128_encrypt_block(pt, key) != giftb128_encrypt_block(pt, key)
     # rho é bijetiva: 256 entradas distintas -> 256 saídas distintas
     assert len({_rho_out(_rho_in(bytes([i] * 16))) for i in range(256)}) == 256
+
+
+# --- Schwaemm256-128: âncora para as versões com passos reduzidos -------
+
+def test_schwaemm_independente_vs_kat_oficial() -> None:
+    assert _KAT_SCHWAEMM.exists(), f"KAT não encontrado: {_KAT_SCHWAEMM}"
+    vetores = parse_kat_file(_KAT_SCHWAEMM)
+    assert len(vetores) == 1089
+    ruins = [v.count for v in vetores
+             if schwaemm256_128_encrypt(v.key, v.nonce, v.pt, v.ad) != v.ct]
+    assert not ruins, f"vetores divergentes: {ruins[:10]}"
+
+
+_PYD_SCHWAEMM = sorted(_BUILD_REDUZIDAS.glob("_sparkle_ref_slim*_big*/*.pyd"))
+
+
+@pytest.mark.skipif(not _PYD_SCHWAEMM, reason="nenhuma variante reduzida do Schwaemm compilada")
+@pytest.mark.parametrize("pyd", _PYD_SCHWAEMM, ids=lambda p: p.parent.name)
+def test_schwaemm_reduzido_independente_vs_binario(pyd: Path) -> None:
+    """As variantes compiladas com SPARKLE_STEPS_SLIM/BIG alterados batem com a
+    implementação independente nos mesmos passos. É o que sustenta as versões
+    reduzidas do Schwaemm256-128, que não têm vetores oficiais."""
+    import re
+    from scripts.reduced_rounds.reduced_wrapper import ReducedRoundsCipher
+
+    slim, big = map(int, re.search(r"slim(\d+)_big(\d+)", pyd.parent.name).groups())
+    c = ReducedRoundsCipher(pyd, "schwaemm")
+    rng = random.Random(20261028)
+    for _ in range(100):
+        key = bytes(rng.getrandbits(8) for _ in range(16))
+        nonce = bytes(rng.getrandbits(8) for _ in range(32))
+        pt = bytes(rng.getrandbits(8) for _ in range(rng.choice([0, 1, 31, 32, 33, 64, 65, 200])))
+        ad = bytes(rng.getrandbits(8) for _ in range(rng.choice([0, 1, 32, 40, 64])))
+        assert schwaemm256_128_encrypt(key, nonce, pt, ad, slim=slim, big=big) == c.encrypt(key, nonce, pt, ad), (
+            f"divergência em slim={slim} big={big} len(pt)={len(pt)} len(ad)={len(ad)}"
+        )

@@ -34,6 +34,10 @@ o que o piso significa. Duas políticas, ambas implementadas:
   termina no teto do parâmetro de dados (`pb <= 8`, `slim <= 7`), e pedir mais
   é erro, não saturação silenciosa: Ascon de 8 a 12 daria cinco vezes o mesmo
   cifrador com cinco rótulos diferentes.
+- `init` — o contrário de `dados`: reduz só o parâmetro de inicialização e
+  finalização (`pa`, `big`) e mantém o de dados na spec (`pb = 8`,
+  `slim = 7`). Separa o efeito da inicialização do das rodadas entre blocos
+  sob `ambos`, em que as duas fases caem juntas.
 
 A política tem que ser relatada junto do piso; sem ela o número não quer dizer
 nada. Ver o campo `politica` no metadado de cada execução.
@@ -79,7 +83,7 @@ class AlgoFloor(NamedTuple):
         if not 1 <= rounds <= self.max_rounds:
             raise ValueError(
                 f"{self.nome}: rodadas deve estar em [1,{self.max_rounds}], recebeu {rounds}")
-        if politica not in ("ambos", "dados"):
+        if politica not in ("ambos", "dados", "init"):
             raise ValueError(f"política desconhecida: {politica!r}")
         if not self.dois_parametros and politica != "ambos":
             raise ValueError(
@@ -143,7 +147,10 @@ def _build_ascon(rounds: int, politica: str):
     from scripts.reduced_rounds.build_variant import build_ascon
     from scripts.reduced_rounds.reduced_wrapper import ReducedRoundsCipher
 
-    pa, pb = (rounds, min(rounds, 8)) if politica == "ambos" else (12, min(rounds, 8))
+    if politica == "init":
+        pa, pb = rounds, 8
+    else:
+        pa, pb = (rounds, min(rounds, 8)) if politica == "ambos" else (12, min(rounds, 8))
     return ReducedRoundsCipher(build_ascon(pa, pb), "ascon")
 
 
@@ -151,7 +158,10 @@ def _build_schwaemm(rounds: int, politica: str):
     from scripts.reduced_rounds.build_variant import build_schwaemm
     from scripts.reduced_rounds.reduced_wrapper import ReducedRoundsCipher
 
-    big, slim = (rounds, min(rounds, 7)) if politica == "ambos" else (11, min(rounds, 7))
+    if politica == "init":
+        big, slim = rounds, 7
+    else:
+        big, slim = (rounds, min(rounds, 7)) if politica == "ambos" else (11, min(rounds, 7))
     return ReducedRoundsCipher(build_schwaemm(slim, big), "schwaemm")
 
 

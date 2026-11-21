@@ -1,0 +1,93 @@
+Neste experimento eu quero medir com quantas rodadas um algoritmo de criptografia leve ainda pode ser separado de dados aleatórios. a pergunta é: até onde cada um pode ser enfraquecido antes de deixar rastro. Esses algoritmos foram feitos para dispositivos com poucos recursos, e cada rodada a menos é menos processamento por mensagem, então saber onde fica esse limite diz quanto cada algoritmo pode ser aliviado. O atacante é o mesmo das primeiras versões, passivo, que só vê os criptogramas que o dispositivo envia. 
+
+Usei três finalistas do NIST LWC que processam a mensagem em blocos: o Ascon-AEAD128, escolhido pelo NIST como padrão, o GIFT-COFB e o Schwaemm256-128. Os três repetem o mesmo bloco de operações várias vezes para embaralhar a entrada, e cada repetição é uma rodada. A especificação oficial fixa o Ascon em 12 rodadas na inicialização  e 8 por bloco de mensagem, o GIFT-COFB em 40, e o Schwaemm256-128 em 11 na inicialização e 7 a cada bloco. Uma variante reduzida é o mesmo algoritmo com menos rodadas, e quanto menos rodadas, mais fraco ele fica. O piso é a maior quantidade de rodadas em que um classificador ainda consegue separar o criptograma de bytes aleatórios. Além da chave e do texto, os algoritmos recebem um número público que não pode se repetir com a mesma chave, o nonce, e a forma mais comum de gerá-lo é um contador.
+
+Cifragem do ascon: O ascon inicializa com 320 bits, incluindo nonce, chave e constante, ele Faz a permutação 12 vezes (Isso é chamado de rodada de inicialização), depois das 12 rodadas iniciais, ele fica com uma caixa de 320 bits, essa caixa é o estado inicial do algoritmo. A caixa recebe o primeiro bloco de texto em claro de 128 bits, e aplica um XOR nos primeiros 128 bits (esses primeiros 128 blocos são chamados de janela, enquanto os outros 196 são chamados de fundo, o fundo nunca é revelado), o resultado do XOR substitui os primeiros 128 bits da caixa (ou seja, se torna a nova janela), e também é a saída do primeiro bloco (criptograma). A partir desse momento, o ascon faz mais 8 rodadas de permutação (essas sao chamadas de rodadas de bloco) nos 320 bits, gerando um novo estado inicial (janela e fundo), ela recebe o segundo bloco de texto em claro, aplica novamente o xor nos primeiros 128 bits, gerando assim o segundo bloco do criptograma (e uma nova janela), aplica novamente as 8 rodadas de bloco (gerando uma nova caixa), e repete até que todos os blocos tenham sidos gerados. Ao final da cifragem, o ascon soma a chave de novo no estado (no fundo da caixa), embaralha pa = 12 vezes, pega os últimos 128 bits do estado, soma a chave mais uma vez, e gera a tag. O Schwaemm256 tem o mesmo funcionamento, mas a caixa tem 384 bits e não 320
+
+Gift-cofb: O gift tem uma cifragem diferente, primeiramente ele recebe a chave e transforma ela em 40 subchaves, através permutações. Depois ele passa o nonce em 40 rodadas de permutação utilizando essas subchaves para criar Y0, cujo os primeiros 8 bytes viram a mascara. Depois ele pega Y0, adiciona os dados associados (nessa etapa costuma estar vazio), adiciona a mascara, e gera Y1. faz um xor de Y1 com o texto em claro e gera o criptograma de saida. Depois ele faz algumas alterações em Y1, adiciona o texto em claro e a mascara, aplica 40 rodadas de permutação e gera Y2. Continuando esse processo até criptografar todo objeto desejado. 
+
+
+
+Experimento 1: criptograma único
+
+O objetivo era ver se um criptograma isolado já denuncia um algoritmo enfraquecido, usando o mesmo desenho das primeiras versões. Foi utilizado o pipeline das versões anteriores de classificação já montada, com as 641 features. A ideia era descobrir se enfraquecer o ascon e o gift já eram suficientes pra classifica-los. Primeiro testei o ascon reduzido a uma rodada, contra o gift completo. Depois inverti, o Gift com uma rodada contra o ascon completo. Em ambos os casos, os classificadores não tiveram resultados positivos. Uma cifra de 1 rodada não é segura, então deveria encontrar algum sinal, então cheguei à conclusão de que o problema estava no que o classificador observava, e não na cifra. Com poucas rodadas a saída depende muito da chave, e como as chaves de teste nunca aparecem no treino, o padrão que a cifra fraca deixa muda de uma chave para outra e some na média, talvez precisaria mudar um pouco a forma do experimento. Uma explicação é que os classificadores da forma como foram montados, olhavam para propriedades estatísticas gerais dos criptogramas, o que fazia com que o sinal se diluísse. Como demonstrado pela explicação do ascon, quanto maior o criptograma de saída, mais aleatório ele fica, uma vez que mesmo reduzindo a inicialização e a rodada de bloco, a entropia se acumula com o passar dos blocos. No caso do primeiro experimento, tínhamos criptogramas de 64kbytes, divididos em 4096 blocos de 16 bytes. Os primeiros blocos tinham sinais claros, mas a medida que mais blocos entravam, e consequentemente maior ficava o espaço de busca dos classificadores, mais difícil era deles aprenderem o sinal, já que depois de algumas rodadas, os blocos ficavam parecendo ruido, aliado a isso, tem o fato de os classificadores olharem para features de dados agrupados de todo o criptograma, esses sinais sumiam no meio do ruido.
+
+Configuração            Melhor modelo   F1 (IC 95%)           AUC     Ascon->Ascon  Ascon->GIFT  GIFT->Ascon  GIFT->GIFT
+----------------------  --------------  --------------------  -----   ------------  -----------  -----------  ----------
+Ascon pb=1 x GIFT 40    XGBoost         0,505 (0,497-0,512)   0,505          2 974        3 026        2 911       3 089
+Ascon pb=1 x GIFT 5     RandomForest    0,504 (0,494-0,513)   0,505          3 107        2 893        3 064       2 936
+Ascon 12/8 x GIFT 5     Reg. logística  0,509 (0,498-0,520)   0,511          3 065        2 935        2 962       3 038
+Ascon pa=1 x GIFT 40    LinearSVC       0,511 (0,503-0,520)   0,512          3 098        2 902        2 965       3 035
+
+Pa: rodadas de inicialização
+Pb: rodadas de Bloco
+
+
+Experimento 2: XOR de dois criptogramas com o mesmo texto (descartado)
+
+O objetivo era ver se olhar dois criptogramas da mesma chave, em vez de um, revela o algoritmo enfraquecido. Benamira et al. (EUROCRYPT 2021) e Chen et al. (The Computer Journal, 2023) passaram a alimentar o distinguidor com vários criptogramas da mesma chave, e Baksi et al. (DATE 2021) e depois o Shen usam o XOR de dois criptogramas, que cancela o que é comum aos dois, incluindo boa parte da contribuição da chave. Testei o XOR mantendo todo o resto igual ao experimento 1, ou seja, a mesma tarefa de Ascon contra GIFT-COFB, as mesmas features e chaves, com o RandomForest. A única mudança foi a amostra, que passou a ser o XOR de dois criptogramas gerados pelo mesmo algoritmo, com a mesma chave e o mesmo texto, mudando só um bit do nonce, e por isso os dois criptogramas saem diferentes. Com o Ascon de 1 rodada de inicialização o F1 foi de 0,50 para 0,92, com 2 rodadas caiu para 0,55, e com 4 e 12 ficou em 0,50. O experimento anterior não tinha nada errado, o que mudou foi o quanto o atacante sabe: como os dois criptogramas cifram o mesmo texto, o texto se cancela no XOR e sobra só a diferença causada pelo nonce, que com 1 rodada ainda não foi apagada. Só que saber que dois criptogramas cifram o mesmo texto já é conhecimento sobre o texto, então descartei, já que não seria mais ciphertext-only.  
+
+
+Experimento 3: pares de mensagens seguidas, o piso de cada algoritmo
+
+Comecei me perguntando até onde o experimento podia ir, ou seja, qual informação um observador passivo recebe de graça. Pensei que a única informação que o atacante recebe e o criptograma e o nonce que é publico. então peguei duas mensagens seguidas do mesmo dispositivo, porque a chave é a mesma, o nonce é público e o texto é diferente e desconhecido, não saindo do ciphertext-only. 
+
+Então eu foquei nas seguintes premissas: primeiramente olhar somente para os primeiros blocos do criptograma, ao invés do criptograma todo, já que por característica dos algoritmos criptográficos testados, o sinal deve aparecer com mais força nos blocos iniciais, dessa forma pude diminuir de 64kbytes para 64 bytes. Segunda, dentro de uma mesma chave, peguei as mensagens com nonce mais perto um do outro, isso por que, em todos os algoritmos, a chave e a constante seriam os mesmos, sendo o nonce a unica diferença, por isso pegar nonces proximos, significa pegar nonces com a menor diferença possivel, e por isso aumentar o sinal de entrada, com poucas rodadas o algoritmo não tem chance de dispersar esse sinal. Essa intuição tem como base os trabalhos de Gohr (CRYPTO 2019) e o Shen (JISA 2024) que mostram que é a diferença pequena que sobrevive por mais rodadas, o Shen testou no GIFT diferenças de 1 a 5 bits, e com 1 bit nenhuma ficou abaixo de 65% de acerto, enquanto com 5 todas ficaram abaixo de 55%. E terceira, é que o XOR do par carrega também o XOR dos dois textos, ou seja, ao fazer  xor dos criptogramas, eu consigo eliminar as igualdades e demonstrar melhor as diferenças, ou seja, o texto claro.
+
+Compilei variantes de cada algoritmo com as rodadas internas reduzidas, o Ascon de 1 a 12 rodadas (inicialização), o GIFT-COFB de 1 a 12, e o Schwaemm de 1 a 11 (inicialização), e cifro mensagens de 64 bytes de texto do corpus Gutenberg com 300 chaves, 100 pares de nonces consecutivos. Cada amostra é o XOR dos dois criptogramas do par, a outra classe são bytes aleatórios do mesmo tamanho, e os classificadores são RandomForest, XGBoost e regressão logística sobre os bits do XOR, com validação cruzada de 5 folds por chave. Para uma rodada contar como detectada ela precisa sobreviver à correção para múltiplas comparações, ficar acima do maior valor visto nas rodadas perto da especificação completa, onde não pode haver sinal, e todas as rodadas abaixo dela também precisam ser detectadas. Rodo também braços de controle em que o algoritmo cifra texto aleatório no lugar do texto real, caso em que o XOR do par é aleatório por mais fraca que a cifra seja, e qualquer detecção ali é falso positivo.
+
+Os resultados, foram: Ascon 3 de 12 rodadas (25% da especificação), GIFT 3 de 40 (7,5%), e Schwaemm 2 de 11 (18,2%). Ou seja, com até 3 rodadas o Ascon é separado de aleatório, e com 4 ou mais não é. Nos braços de controle não houve detecção em nenhum cenário, como esperado. A conclusão é que duas mensagens seguidas, sem saber nada dos textos, bastam para separar os quatro algoritmos de aleatório até o piso, e que o que o atacante explora é a inicialização. Para comparar, o criptograma único do Ascon refeito nessa mesma tarefa fica em 1 rodada, com sinal marginal (AUC de 0,52), então o par leva o piso de 1 para 3. Usei o pior caso como piso porque um aparelho recém-ligado é um caso real, e pode acontecer.
+
+
+
+
+Configuração              Melhor modelo   F1 (IC 95%)           AUC     Aleat->Aleat  Aleat->Cifra  Cifra->Aleat  Cifra->Cifra
+----------------------    --------------  --------------------  -----   ------------  ------------  ------------  ------------
+Ascon 1 de 12 (*)         RandomForest    1,000 (1,000-1,000)   1,000          6 000             0             0         6 000
+Ascon 2 de 12 (*)         XGBoost         0,999 (0,998-0,999)   1,000          5 984            16             1         5 999
+Ascon 3 de 12 (*) piso    XGBoost         0,669 (0,649-0,688)   0,729          4 041         1 959         2 011         3 989
+Ascon 4 de 12             RandomForest    0,509 (0,502-0,517)   0,509          3 115         2 885         3 002         2 998
+Ascon 5 de 12             Reg. logística  0,503 (0,493-0,513)   0,505          2 989         3 011         2 954         3 046
+Ascon 12 de 12            RandomForest    0,506 (0,497-0,514)   0,507          3 099         2 901         3 032         2 968
+
+GIFT 1 de 40 (*)          RandomForest    1,000 (1,000-1,000)   1,000          6 000             0             0         6 000
+GIFT 2 de 40 (*)          XGBoost         0,999 (0,998-0,999)   1,000          5 987            13             0         6 000
+GIFT 3 de 40 (*) piso     XGBoost         0,598 (0,584-0,610)   0,633          3 671         2 329         2 499         3 501
+GIFT 4 de 40              XGBoost         0,502 (0,494-0,510)   0,504          3 042         2 958         3 018         2 982
+GIFT 5 de 40              RandomForest    0,507 (0,498-0,516)   0,502          3 167         2 833         3 079         2 921
+GIFT 40 de 40             RandomForest    0,508 (0,499-0,516)   0,508          3 150         2 850         3 054         2 946
+
+Schwaemm 1 de 11 (*)      RandomForest    1,000 (1,000-1,000)   1,000          6 000             0             0         6 000
+Schwaemm 2 de 11 (*) piso XGBoost         0,998 (0,997-0,998)   1,000          5 972            28             0         6 000
+Schwaemm 3 de 11          XGBoost         0,504 (0,495-0,512)   0,504          3 012         2 988         2 968         3 032
+Schwaemm 4 de 11          RandomForest    0,505 (0,497-0,513)   0,505          3 107         2 893         3 044         2 956
+Schwaemm 11 de 11         RandomForest    0,502 (0,494-0,510)   0,501          3 128         2 872         3 102         2 898
+
+
+
+Piso de rodadas por algoritmo (experimento 3)
++-----------------+---------------+----------------------+-----------+----------------+
+| Algoritmo       | Especificação | Piso (contador zero) |  Piso (contador qualquer)  |
++-----------------+---------------+----------------------+-----------+----------------+
+| Ascon-AEAD128   | 12 rodadas    | 3                    | 3                          |
+| GIFT-COFB       | 40 rodadas    | 3                    | 2                          |
+| Schwaemm256-128 | 11 rodadas    | 2                    | 2                          |
++-----------------+---------------+----------------------+----------------------------+
+
+
+
+Expansões do experimento 3:
+
+
+Experimento 4: a escolha do XOR
+
+O objetivo era verificar se usar o XOR joga fora alguma informação, já que o Gohr dá ao classificador os dois criptogramas inteiros e o Shen mostra que, com um par só, a entrada completa acerta mais que a diferença. Também testei a escolha do XOR, comparando três entradas com os mesmos modelos e os mesmos dados do experimento 3: o XOR do par, os dois criptogramas lado a lado sem o XOR, e os dois criptogramas junto com o XOR. Juntar os criptogramas ao XOR não subiu nenhum piso, então o XOR não joga fora nada que esses modelos usem.
+
+Experimento 5: mais dados
+
+O objetivo era responder se o piso não subiu por falta de dados. Gohr, Leander e Neumann (ePrint 2022/1521) mostram que o acerto desse tipo de distinguidor acompanha o quanto a distribuição se afasta da aleatória, o que precisa ser medido em função da quantidade de dados. Gerei 31 mil dispositivos por algoritmo, com 100 pares cada, e treinei os detectores com 1, 10 e 100 vezes a quantidade de pares do experimento 3 mil, de 30 mil a 3 milhões de pares, testando sempre nos mesmos mil dispositivos. Os detectores foram a regressão logística e uma contagem de bits, que soma a evidência de cada bit separadamente. Na rodada acima do piso os quatro ficaram no acaso nas três quantidades de dados, e no piso o ganho satura cedo, no Ascon com 3 rodadas o acerto por par foi de 65,9% com 1x para 66,5% com 100x, e no Schwaemm com 2 rodadas ficou em 94,3% nas três. Com até 100 vezes mais dados a rodada seguinte ao piso continua indistinguível de aleatório, então o piso não vem de falta de dados.
+
+Experimento 6: modelos maiores
+
+O objetivo era responder se um modelo mais capaz subiria o piso, já que os modelos do experimento 3 olham basicamente cada bit e poucas combinações, e um modelo que aprende combinações entre muitos bits poderia achar algo que eles não acham. Adaptei os caminhos B (rede convolucional 1D), C (rede convolucional 2D) e D (híbrido, que junta os bits com o que as duas redes aprendem) para o piso, junto de uma ResNet no estilo do Gohr e uma rede densa no estilo do Shen, e rodei com 10 vezes os dados nos quatro algoritmos, nas rodadas do piso, do piso mais um, na rodada 1 e na especificação, com os braços de controle. Nenhum piso mudou. Comparando com a contagem de bits do experimento 5 com a mesma quantidade de dados, as redes acertaram mais no piso do GIFT (55,1% contra 53,3% por par) e do Schwaemm (99,4% contra 94,3%), e menos no Ascon (64,2% contra 66,4%) e no Grain (50,3% contra 52,9%). No Schwaemm o XGBoost do experimento 3, que também combina bits, já chegava a 98,9% com 10 vezes menos dados.
+

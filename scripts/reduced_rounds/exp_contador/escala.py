@@ -64,6 +64,9 @@ int acumula2(const unsigned char *keys, int ndev, int pares_por_disp,
 int cubos(const unsigned char *keys, int ndev, int D, int nonce_bytes, int layout,
           const unsigned char *cabs, int cab_por_msg,
           uint64_t *cnt_um, uint64_t *n_cubos);
+int pares_brutos(const unsigned char *keys, int ndev, int pares_por_disp,
+                 const unsigned char *buf, const uint32_t *idx,
+                 int nonce_bytes, int tag_bytes, unsigned char *out);
 """
 ALGO = {   # nonce, tag, largura do primeiro bloco de taxa em bytes
     "ascon": (16, 16, 16), "schwaemm": (32, 16, 32), "grain": (12, 8, 16), "gift": (16, 16, 16),
@@ -75,8 +78,9 @@ def _log(m: str) -> None:
 
 
 def _nome(algo: str, r: int) -> str:
-    # _escala3_: harness com os eixos do Dia 2 e os cubos do Dia 3
-    return f"_escala3_{algo}_r{r}"
+    # _escala4_: harness com os eixos do Dia 2, os cubos do Dia 3 e a
+    # exportação de pares brutos (redes no GIFT r4)
+    return f"_escala4_{algo}_r{r}"
 
 
 def build(algo: str, r: int) -> Path:
@@ -355,9 +359,35 @@ def stats_cubos(algo: str, rodadas: list[int]) -> None:
                                             zero_sum=int((cnt[d] == 0).sum()))) + "\n")
 
 
+def exportar_pares(algo: str, r: int, braco: str, shards: int) -> Path:
+    """XOR brutos de `shards` × 10⁶ pares (os mesmos shards dos Dias 1 a 3),
+    com o índice do dispositivo, para o treino das redes."""
+    mod = _importar(algo, r)
+    ffi, lib = mod.ffi, mod.lib
+    nb, tb, _ = ALGO[algo]
+    buf = trechos(braco)
+    n = DISP_POR_SHARD * PARES_POR_DISP
+    X = np.zeros((shards * n, MSG + tb), np.uint8)
+    for s in range(shards):
+        keys, idx, _ = material_shard(s)
+        out = np.zeros((n, MSG + tb), np.uint8)
+        rc = lib.pares_brutos(ffi.from_buffer("unsigned char[]", keys), DISP_POR_SHARD, PARES_POR_DISP,
+                              ffi.from_buffer("unsigned char[]", buf), ffi.from_buffer("uint32_t[]", idx),
+                              nb, tb, ffi.from_buffer("unsigned char[]", out))
+        if rc:
+            raise RuntimeError(f"pares_brutos devolveu {rc}")
+        X[s * n:(s + 1) * n] = out
+        _log(f"exportar {algo} r{r} {braco}: shard {s + 1}/{shards}")
+    disp = np.repeat(np.arange(shards * DISP_POR_SHARD, dtype=np.int32), PARES_POR_DISP)
+    destino = OUT / "brutos" / f"{algo}_r{r}_{braco}_{shards}M.npz"
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    np.savez(destino, x=X, disp=disp)
+    return destino
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("acao", choices=["build", "rodar", "stats", "cubos", "stats-cubos"])
+    ap.add_argument("acao", choices=["build", "rodar", "stats", "cubos", "stats-cubos", "exportar"])
     ap.add_argument("--shards", type=int, default=3)
     ap.add_argument("--algo", required=True, choices=sorted(ALGO))
     ap.add_argument("--rounds", nargs="+", type=int, required=True)
@@ -379,6 +409,11 @@ def main() -> None:
         for r in a.rounds:
             build(a.algo, r)
         rodar_cubos(a.algo, a.rounds, a.shards, a.workers)
+    elif a.acao == "exportar":
+        for r in a.rounds:
+            build(a.algo, r)
+            for b in a.bracos:
+                print(exportar_pares(a.algo, r, b, a.shards))
     elif a.acao == "stats-cubos":
         stats_cubos(a.algo, a.rounds)
     else:

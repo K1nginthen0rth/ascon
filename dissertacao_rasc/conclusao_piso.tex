@@ -1,0 +1,55 @@
+% =====================================================================
+% CAPÍTULO 7: CONCLUSÃO (piso de rodadas)
+% Estrutura prevista: abertura (objetivo geral e veredito); 7.1 respostas
+% às questões de pesquisa; 7.2 contribuições; 7.3 alcance e limitações;
+% 7.4 trabalhos futuros. A conclusão anterior (v1/v2) continua em
+% conclusao.tex, como material.
+% =====================================================================
+\chapter{Conclusão}
+\label{cap:conclusao}
+
+Este trabalho mediu, para o Ascon-AEAD128, o GIFT-COFB e o Schwaemm256-128, o maior número de rodadas em que as versões com rodadas reduzidas ainda podem ser separadas de dados aleatórios por um adversário passivo, que observa apenas criptogramas e nonces de contador. Observando duas mensagens do mesmo dispositivo, esse adversário separou o Ascon-AEAD128 com até 3 das 12 rodadas, o GIFT-COFB com até 3 das 40 e o Schwaemm256-128 com até 2 das 11. Esses pisos são cotas inferiores. Até eles, as versões reduzidas não servem contra esse adversário, e, acima deles, o trabalho não afirma nada sobre a segurança. A Seção~\ref{sec:conc-respostas} responde às questões de pesquisa da Seção~\ref{sec:intro-objetivo}, a Seção~\ref{sec:conc-contribuicoes} reúne as contribuições, a Seção~\ref{sec:conc-alcance} delimita o alcance das respostas e a Seção~\ref{sec:conc-futuros} indica os trabalhos futuros.
+
+\section{Respostas às questões de pesquisa}
+\label{sec:conc-respostas}
+
+\textbf{QP1.} Um criptograma isolado só foi separado de dados aleatórios praticamente sem rodadas. Com criptogramas de 64~KB descritos pelos 641 atributos estatísticos, nenhum dos três algoritmos foi detectado, nem com uma rodada, e o melhor F1 ficou entre 0,503 e 0,506 (Seção~\ref{sec:res-isolado-64k}). Com criptogramas de 80 bytes descritos pelos bits crus, o Ascon-AEAD128 e o GIFT-COFB foram detectados com uma rodada, o GIFT-COFB em uma única célula, e o Schwaemm256-128 com até dois passos, o segundo também em uma única célula (Seção~\ref{sec:res-isolado-80b}). A resposta é, portanto, sim, mas só até uma rodada no Ascon-AEAD128 e no GIFT-COFB e até dois passos no Schwaemm256-128.
+
+\textbf{QP2.} Sim. Observando duas mensagens consecutivas do mesmo dispositivo, com nonces que diferem em um único bit, os classificadores separaram dos dados aleatórios o Ascon-AEAD128 com até 3 das 12 rodadas, o GIFT-COFB com até 3 das 40 e o Schwaemm256-128 com até 2 das 11 (Seção~\ref{sec:res-piso}). No Ascon-AEAD128 e no GIFT-COFB, o piso subiu duas rodadas em relação ao criptograma isolado, e, no Schwaemm256-128, ficou em dois passos, mas a rodada 2 passou de uma detecção marginal a um F1 de 0,998 por par. Na rodada do piso, o melhor F1 por par foi de 0,669 no Ascon-AEAD128 e de 0,598 no GIFT-COFB, e, com bolsas de 100 pares, de 0,899 e 0,933. Esses pisos foram obtidos com esses pares de nonces e com os detectores avaliados.
+
+\textbf{QP3.} Na rodada do piso, com bolsas de um par, em que cada decisão usa um único par de mensagens, o F1 sobre o conjunto de teste já fica acima do acaso nos três algoritmos, com 1 a 2\,000 pares de treinamento, conforme o algoritmo e o classificador, mas, nesses mínimos, o classificador fica perto do acaso (Seção~\ref{sec:res-piso-dados}). Para decidir com confiança sobre um dispositivo, com F1 de pelo menos 0,9, o Ascon-AEAD128 e o GIFT-COFB precisam de cerca de 100 pares observados, ou 200 mensagens, e de 10\,000 e 30\,000 pares de treinamento, respectivamente. No Schwaemm256-128, com bolsas de um par, o F1 já é de 0,999, e dois pares de treinamento bastam para um F1 de 0,992 com bolsas de 100 pares.
+
+\textbf{QP4.} Com as variações e os detectores avaliados, o piso não aumentou (Seção~\ref{sec:res-robustez}). Dez vezes mais dados de treinamento, a busca de hiperparâmetros, que incluiu o SVM, e as redes neurais mantiveram os pisos de 3, 3 e 2, e o mesmo aconteceu sem a tag e com o corpus original, que inclui marcação HTML. No Ascon-AEAD128 e no Schwaemm256-128, reduzir só as rodadas entre blocos não produziu piso nenhum, e reduzir só a inicialização e a finalização reproduziu o piso. As variações do nonce nunca aumentaram o piso, e algumas o reduziram, com o contador nos primeiros bytes, para 2 no GIFT-COFB e para 1 no Schwaemm256-128, com o contador começando de um valor sorteado, para 2 no GIFT-COFB, e, com pares cujos nonces diferem em vários bits, para 2 no GIFT-COFB e, em dois dos três casos, no Ascon-AEAD128. A única exceção foi marginal. Com 20\% das mensagens trocadas por imagens, o sinal na rodada do piso ficou mais fraco, mas uma das nove células do Ascon-AEAD128 com quatro rodadas passou pelo critério, com F1 de 0,512.
+
+\section{Contribuições}
+\label{sec:conc-contribuicoes}
+
+As contribuições deste trabalho são as seguintes.
+\begin{itemize}
+\item A medida do piso de rodadas do Ascon-AEAD128, do GIFT-COFB e do Schwaemm256-128 contra um adversário passivo, que observa apenas criptogramas e nonces de contador, com pisos de 3 das 12 rodadas, 3 das 40 e 2 das 11. Entre os trabalhos comparados na Seção~\ref{sec:disc-literatura}, os que medem o número de rodadas desses algoritmos com o esquema completo o fazem com um adversário que escolhe as entradas ou os nonces.
+\item A evidência de que o contador do nonce entrega ao adversário passivo, sem custo, uma diferença de entrada que leva a detecção da primeira para a terceira rodada no Ascon-AEAD128 e no GIFT-COFB, e de que, para isso, o par não precisa ser de mensagens consecutivas, basta que os dois nonces difiram em poucos bits (Seções~\ref{sec:res-piso} e~\ref{sec:res-contador}).
+\item O piso de dados, que mostra que, na rodada do piso, com bolsas de um par o F1 já fica acima do acaso, e que, no Ascon-AEAD128 e no GIFT-COFB, decidir sobre um dispositivo com F1 de pelo menos 0,9 exige bolsas de cerca de 100 pares (Seção~\ref{sec:res-piso-dados}).
+\item Um protocolo de medição que pode ser aplicado a outros algoritmos, com versões reduzidas conferidas contra uma implementação independente, separação de treinamento e teste por chave, intervalos de confiança por reamostragem de chaves e um critério de detecção calibrado por controles, que combina a correção de Benjamini-Hochberg, o teto da faixa de controle e a exigência de que as rodadas abaixo também sejam detectadas, e é conferido pelo braço aleatório, com a tag e sem ela, pelo teste A/A e pelo teste de permutação por chave (Seções~\ref{sec:met-validacao} e~\ref{sec:met-criterio}).
+\end{itemize}
+
+\section{Alcance e limitações}
+\label{sec:conc-alcance}
+
+As respostas da Seção~\ref{sec:conc-respostas} valem para o adversário, as condições e os detectores avaliados. O adversário é passivo e só observa criptogramas e nonces de contador, e adversários que escolhem as entradas ou os nonces vão mais longe, como os ataques de sete rodadas à inicialização do Ascon (Seção~\ref{sec:disc-literatura}). As condições são as do estudo principal, com texto em claro de livros, mensagens de 64 bytes, sem dado associado, com o contador começando do zero e pares de nonces que diferem em um único bit. O sinal só existe porque o texto tem padrão, e fontes com menos padrão podem dar pisos menores, enquanto fontes com mais padrão, como cabeçalhos fixos de protocolo, podem dar pisos maiores (Seção~\ref{sec:met-escopo}). As variações da Seção~\ref{sec:res-robustez} mostram que mudar o nonce reduziu o piso em alguns casos e nunca o aumentou, mas não cobrem todas as condições de uso.
+
+Os detectores também limitam as respostas. Os classificadores foram treinados com até 300 mil pares. Detectores que combinem mais bits, ou que usem mais dados, podem detectar rodadas acima dos pisos medidos aqui. Os pisos dependem, além disso, do critério de detecção, que é uma escolha deste trabalho, e de uma única semente e uma única separação entre treinamento e teste. Os pisos do estudo principal foram detectados em quase todas as células e não mudaram com um critério mais rigoroso, mas os que dependem de uma única célula, como o piso isolado de dois passos do Schwaemm256-128, podem ser menores (Seção~\ref{sec:disc-limitacoes}). As dez detecções do braço aleatório, todas com a tag incluída, não foram reanalisadas sem ela, e as explicações propostas no Capítulo~\ref{cap:discussao}, como a origem do sinal na inicialização, são hipóteses, e não resultados medidos.
+
+O piso é, portanto, uma cota inferior. Até ele, o algoritmo reduzido é separável de dados aleatórios por pelo menos um dos detectores avaliados, e, acima dele, a ausência de detecção não é evidência de segurança, apenas de que esses detectores, com essa quantidade de dados e nessas condições, não separaram o algoritmo de dados aleatórios.
+
+\section{Trabalhos futuros}
+\label{sec:conc-futuros}
+
+Os trabalhos futuros mais diretos saem das limitações e das hipóteses deste trabalho.
+\begin{itemize}
+\item Testar a hipótese de que o sinal vem da inicialização, reduzindo só a inicialização, com a finalização e as rodadas entre blocos completas. Nenhum dos estudos deste trabalho fez essa redução isolada.
+\item Medir diretamente as explicações propostas no Capítulo~\ref{cap:discussao}, comparando as máscaras produzidas por chaves diferentes com o mesmo nonce, acompanhando a diferença entre os nonces rodada a rodada dentro do estado e medindo o sinal bloco a bloco, com os bits crus, ao longo de mensagens longas, o que separaria o efeito do tamanho da mensagem do efeito da representação.
+\item Reanalisar sem a tag as dez detecções do braço aleatório, para saber se são falsos positivos ou sinal da finalização reduzida.
+\item Repetir o estudo principal com várias sementes e separações entre treinamento e teste, e reportar, para cada célula, a frequência com que ela é detectada, o que mostraria quais pisos dependem de uma única separação.
+\item Medir o piso em outras condições de uso, com fontes de texto sem um bit mais significativo fixo, como texto em alfabetos não latinos ou dados comprimidos, com cabeçalhos fixos de protocolo, com dado associado nos três algoritmos, com mensagens de outros tamanhos e com o contador começando de um valor sorteado também nos livros em inglês.
+\item Aplicar o mesmo protocolo a outros algoritmos de criptografia leve, para comparar a margem de cada um diante do adversário passivo.
+\end{itemize}

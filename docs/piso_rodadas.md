@@ -91,6 +91,15 @@ modelo de cabeçalho constante (valor desconhecido, relaxa a regra de 13/09): Gr
 GIFT 4, Ascon 3, Schwaemm 2. Tabela completa em
 `floor_v2/RESULTADOS_2026-10-09.md`.
 
+**Método de ML (12 e 13/10).** Busca aninhada pré-registrada (LR, RF, XGBoost,
+SVM RBF) e redes com parada antecipada e grade de capacidade: nenhuma
+configuração muda um piso (Ascon 3, GIFT 3, Grain 28, Schwaemm 2 no `texto-en`).
+O SVM foi excluído da varredura por custo medido (n^2,5, 25 min por ajuste) e
+rodado com busca no piso e no piso+1. No GIFT r4, nenhum modelo treinado aprende
+com 10⁷ pares o sinal que a contagem de paridades acha (complexidade de amostra).
+Taxa de falso positivo medida: 0,34% após o critério. Ver
+`floor_v2/RESULTADOS_metodo_ml.md`.
+
 ### 1.1 A correção do gerador e o estado do contador
 
 A primeira rodada de medições (até 29/09) tinha dois problemas no gerador:

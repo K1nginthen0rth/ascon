@@ -167,3 +167,26 @@ int cubos(const unsigned char *keys, int ndev, int D, int nonce_bytes, int layou
     }
     return 0;
 }
+
+/* Exporta os XOR dos pares (payload + tag, ctb bytes cada) para treinar
+ * redes com o mesmo material dos Dias 1 a 3 (contador zero, layout v2). */
+int pares_brutos(const unsigned char *keys, int ndev, int pares_por_disp,
+                 const unsigned char *buf, const uint32_t *idx,
+                 int nonce_bytes, int tag_bytes, unsigned char *out) {
+    unsigned char n1[32], n2[32], c1[MAXCT + 16], c2[MAXCT + 16];
+    unsigned long long l1, l2;
+    const int ctb = MSG + tag_bytes;
+    layout_g = 0;
+    for (int d = 0; d < ndev; d++) {
+        const unsigned char *k = keys + 16 * (size_t)d;
+        for (int j = 0; j < pares_por_disp; j++) {
+            size_t p = (size_t)d * pares_por_disp + j;
+            nonce_be(n1, nonce_bytes, 2ull * j);
+            nonce_be(n2, nonce_bytes, 2ull * j + 1);
+            if (crypto_aead_encrypt(c1, &l1, buf + (size_t)idx[2 * p] * MSG, MSG, 0, 0, 0, n1, k)) return -1;
+            if (crypto_aead_encrypt(c2, &l2, buf + (size_t)idx[2 * p + 1] * MSG, MSG, 0, 0, 0, n2, k)) return -1;
+            for (int b = 0; b < ctb; b++) out[p * ctb + b] = c1[b] ^ c2[b];
+        }
+    }
+    return 0;
+}

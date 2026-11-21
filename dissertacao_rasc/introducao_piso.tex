@@ -1,0 +1,35 @@
+% =====================================================================
+% CAPÍTULO 1: INTRODUÇÃO (piso de rodadas)
+% A introdução será reescrita. Por enquanto, este capítulo traz só a
+% seção de objetivo e questões de pesquisa, pedida pelo orientador para
+% que os Capítulos 4 a 6 possam ser conferidos contra ela.
+% A introdução anterior (v1/v2) continua em introducao.tex, como material.
+% =====================================================================
+\chapter{Introdução}
+\label{cap:introducao}
+
+\section{Objetivo}
+\label{sec:intro-objetivo}
+
+O objetivo deste trabalho é medir, para o Ascon-AEAD128, o GIFT-COFB e o Schwaemm256-128, o maior número de rodadas em que as versões com rodadas reduzidas ainda podem ser separadas de dados aleatórios por um adversário passivo, que observa apenas criptogramas e nonces de contador. Esse número é chamado aqui de piso de rodadas. O adversário não conhece a chave nem o texto em claro e não escolhe nenhuma entrada, e o piso é uma cota inferior, até ele, o algoritmo reduzido é separável de dados aleatórios por pelo menos um dos detectores avaliados, e, acima dele, a ausência de detecção não é evidência de segurança.
+
+Para isso, foram definidos cinco objetivos específicos.
+\begin{enumerate}
+\item Construir versões dos três algoritmos com rodadas reduzidas e conferi-las contra uma implementação independente (Seção~\ref{sec:met-validacao}).
+\item Definir um critério de detecção e calibrá-lo com controles negativos, em que não há sinal, e positivos, em que o sinal é forte (Seções~\ref{sec:met-criterio} e~\ref{sec:res-calibracao}).
+\item Medir o piso com o criptograma isolado e com pares de mensagens do mesmo dispositivo (Seções~\ref{sec:res-isolado} e~\ref{sec:res-piso}).
+\item Medir quantos pares o adversário precisa observar, e quantos são necessários para treinar o classificador, para detectar a cifra e para decidir sobre um dispositivo (Seção~\ref{sec:res-piso-dados}).
+\item Verificar se o piso muda com o detector e com as escolhas do experimento (Seção~\ref{sec:res-robustez}).
+\end{enumerate}
+
+Os objetivos se traduzem em quatro questões de pesquisa.
+\begin{description}
+\item[QP1] Um criptograma isolado, com rodadas reduzidas, pode ser separado de dados aleatórios, e até quantas rodadas?
+\item[QP2] Observar duas mensagens do mesmo dispositivo aumenta o número de rodadas detectáveis, e qual é o piso de cada algoritmo?
+\item[QP3] Quantos pares o adversário precisa observar, e quantos são necessários para treinar o classificador, para detectar a cifra no piso?
+\item[QP4] O piso muda com o detector, isto é, com o modelo, os hiperparâmetros, as redes neurais e a quantidade de dados, ou com as escolhas do experimento, como a fase reduzida, a tag, o nonce e a fonte de texto?
+\end{description}
+
+A QP1 é respondida na Seção~\ref{sec:res-isolado}, a QP2 na Seção~\ref{sec:res-piso}, a QP3 na Seção~\ref{sec:res-piso-dados} e a QP4 na Seção~\ref{sec:res-robustez}. Em todas, a resposta é um número de rodadas, decidido pelo critério da Seção~\ref{sec:met-criterio}, que combina a correção de Benjamini-Hochberg, o teto da faixa de controle e a exigência de que as rodadas abaixo também sejam detectadas, e é acompanhada do F1 e do seu intervalo de confiança. Os dois primeiros objetivos específicos não têm questão própria, porque não perguntam nada sobre as cifras, eles constroem e calibram o instrumento com que as questões são respondidas.
+
+Ficam fora do escopo a recuperação de chave, a prova de segurança acima do piso e a distinção de um algoritmo em relação a outro. As explicações para os resultados, discutidas no Capítulo~\ref{cap:discussao}, são apresentadas como hipóteses, e não como respostas às questões de pesquisa.

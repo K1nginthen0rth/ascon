@@ -141,6 +141,7 @@
 \usepackage{array}
 \usepackage{makecell}
 \usepackage{booktabs}
+\usepackage{multirow}
 \usepackage{amsmath}
 \DeclareMathOperator*{\argmax}{arg\,max}
 \usepackage{tikz}
@@ -148,6 +149,23 @@
 % ----
 % Início do documento
 % ----
+% ----
+% Compilar só o capítulo de resultados (foco atual).
+% \socapitulotrue  -> gera só resultados_piso + referências
+% \socapitulofalse -> gera a dissertação inteira
+% O \includeonly preserva os .aux dos outros capítulos, então numeração
+% e \ref para capítulos anteriores continuam certos (desde que a versão
+% completa tenha sido compilada ao menos uma vez com \include).
+% ----
+\newif\ifsocapitulo
+\socapitulotrue
+% versão completa sem editar o arquivo:
+%   pdflatex "\def\completa{}\input{main}"
+\ifdefined\completa \socapitulofalse \fi
+\ifsocapitulo
+  \includeonly{introducao_piso,metodologia_piso,resultados_piso,discussao_piso,conclusao_piso}
+\fi
+
 \begin{document}
 
 % Seleciona o idioma do documento (conforme pacotes do babel)
@@ -162,6 +180,7 @@
 % ----------------------------------------------------------
 % \pretextual
 
+\ifsocapitulo\else
 % ---
 % Capa
 % ---
@@ -240,18 +259,24 @@
 \tableofcontents*
 \cleardoublepage
 % ---
+\fi % ifsocapitulo (pré-textuais)
 
 % ----------------------------------------------------------
 % ELEMENTOS TEXTUAIS
 % ----------------------------------------------------------
 \textual
 
-\input{introducao}
-\input{fundamentacao}
-\input{trabalhos-relacionados}
-\input{metodologia}
-%\input{resultados}
-%\input{conclusao}
+%\include{introducao}   % v1/v2, mantido como material
+\include{introducao_piso}
+\include{fundamentacao}
+\include{trabalhos-relacionados}
+%\include{metodologia}   % v1/v2, mantido como material
+\include{metodologia_piso}
+%\include{resultados}   % v1, mantido como material
+\include{resultados_piso}
+\include{discussao_piso}
+%\include{conclusao}   % v1/v2, mantido como material
+\include{conclusao_piso}
 
 % ----------------------------------------------------------
 % ELEMENTOS PÓS-TEXTUAIS
@@ -264,6 +289,7 @@
 % ----------------------------------------------------------
 \bibliography{refs}
 
+\ifsocapitulo\else
 % ----------------------------------------------------------
 % Apêndices
 % ----------------------------------------------------------
@@ -278,5 +304,6 @@
 \phantompart
 \printindex
 %---------------------------------------------------------------------
+\fi % ifsocapitulo (apêndices e índice)
 
 \end{document}

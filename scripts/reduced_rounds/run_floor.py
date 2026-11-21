@@ -98,13 +98,40 @@ SEED_GEN = 999004
 # algoritmos compartilham chaves, textos e offsets de nonce (Regra de Ouro 6),
 # e cada dispositivo tem o próprio contador, a partir de um offset sorteado.
 ESQUEMA_AMOSTRA = "v2-compartilhada-offset-por-chave"
+PROB_IMAGEM_MISTO = 0.2  # braço `misto`: a mesma proporção do dataset v2
 # PISO_OUT_ROOT: no Kaggle o repositório fica numa entrada só de leitura.
 OUT_ROOT = Path(os.environ.get("PISO_OUT_ROOT",
                                REPO_ROOT / "build" / "reduced_rounds" / "floor_v2"))
 
 
+SENSORES_DIR = REPO_ROOT / "data" / "raw" / "sensores"
+
+
+class _SensorSampler:
+    """Trechos de MSG_BYTES de leituras reais de sensores (Intel Berkeley Lab).
+
+    Ao contrário do `_TextPlaintextSampler`, mantém as quebras de linha: cada
+    mensagem é um pedaço do registro como o sensor o produz, começando numa
+    posição sorteada de um arquivo sorteado, via CTR_DRBG.
+    """
+
+    def __init__(self, pasta: Path, drbg: CTRDRBG) -> None:
+        self._drbg = drbg
+        self._dados = [p.read_bytes() for p in sorted(pasta.glob("*.txt"))]
+        self._dados = [d for d in self._dados if len(d) >= 4 * MSG_BYTES]
+        if not self._dados:
+            raise ValueError(f"nenhum registro de sensor em {pasta}")
+
+    def sample(self) -> bytes:
+        d = self._dados[self._drbg.randint(0, len(self._dados))]
+        ini = self._drbg.randint(0, len(d) - MSG_BYTES + 1)
+        return d[ini:ini + MSG_BYTES]
+
+
 def _sampler(arm: str, pt_drbg: CTRDRBG):
     """Fonte de plaintext do braço. Devolve (função, amostrador de imagem)."""
+    if arm == "sensor":
+        return _SensorSampler(SENSORES_DIR, pt_drbg).sample, None
     if arm == "texto":
         return _TextPlaintextSampler(CORPORA_DIR, pt_drbg).sample, None
     if arm == "texto-en":
@@ -115,6 +142,21 @@ def _sampler(arm: str, pt_drbg: CTRDRBG):
     if arm == "imagem":
         s = _ImagePlaintextSampler(IMAGES_DIR, IMAGES_MANIFEST, pt_drbg)
         return (lambda: s.sample()[0]), s
+    if arm == "misto":
+        # Texto e imagem num conjunto só, na proporção do v2 (80/20), sorteada
+        # por mensagem. A janela de imagem começa numa posição sorteada, como o
+        # trecho de texto; os primeiros 64 bytes seriam sempre a linha de cima.
+        texto = _TextPlaintextSampler(CORPORA_DIR.parent / "corpora_en", pt_drbg)
+        img = _ImagePlaintextSampler(IMAGES_DIR, IMAGES_MANIFEST, pt_drbg)
+        fonte = CTRDRBG(seed=SEED_GEN, label="floor-fonte-misto")
+
+        def amostra() -> bytes:
+            if fonte.choice_bool(PROB_IMAGEM_MISTO):
+                dados = img.sample()[0]
+                ini = pt_drbg.randint(0, len(dados) - MSG_BYTES + 1)
+                return dados[ini:ini + MSG_BYTES]
+            return texto.sample()
+        return amostra, img
     if arm == "aleatorio":
         return (lambda: pt_drbg.generate(MSG_BYTES)), None
     raise ValueError(f"braço desconhecido: {arm}")
@@ -124,6 +166,11 @@ def _montar(ca: np.ndarray, cb: np.ndarray, representacao: str) -> np.ndarray:
     """Amostra a partir dos dois lados do par, na representação pedida."""
     if representacao == "xor":
         return ca ^ cb
+    if representacao == "unico":
+        # Só o primeiro criptograma do par: o experimento de pares sem o
+        # segundo criptograma, para separar o efeito do par do efeito da
+        # mensagem curta e dos bits crus.
+        return ca
     if representacao == "par":
         return np.concatenate([ca, cb])
     return np.concatenate([ca, cb, ca ^ cb])
@@ -131,7 +178,7 @@ def _montar(ca: np.ndarray, cb: np.ndarray, representacao: str) -> np.ndarray:
 
 def generate(algo: str, arm: str, n_keys: int, rounds: list[int], cache: Path,
              politica: str, contador: str = "sorteado",
-             representacao: str = "xor") -> dict:
+             representacao: str = "xor", layout: str = "big", distancia: int = 1) -> dict:
     """XOR (payload + tag) de pares consecutivos, por contagem de rodadas.
 
     Incremental: só gera as contagens que faltam no cache. Chaves, nonces e
@@ -145,9 +192,9 @@ def generate(algo: str, arm: str, n_keys: int, rounds: list[int], cache: Path,
     # que, com um par só, a entrada completa acerta mais que a diferença.
     # `par+xor`: os dois criptogramas e o XOR deles. Testa se o XOR descarta
     # informação útil: se esta forma subir o piso, descartava.
-    if representacao not in ("xor", "par", "par+xor"):
+    if representacao not in ("xor", "par", "par+xor", "unico"):
         raise ValueError(f"representação desconhecida: {representacao!r}")
-    largura_amostra = {"xor": 1, "par": 2, "par+xor": 3}[representacao] * largura
+    largura_amostra = {"xor": 1, "par": 2, "par+xor": 3, "unico": 1}[representacao] * largura
 
     fp = impressao_digital(algo=algo, arm=arm, politica=politica, n_keys=n_keys,
                            pairs_per_key=PAIRS_PER_KEY, msg_bytes=MSG_BYTES,
@@ -156,7 +203,9 @@ def generate(algo: str, arm: str, n_keys: int, rounds: list[int], cache: Path,
                            # só entra quando difere do padrão, para não invalidar
                            # os caches já gerados com contador sorteado
                            **({} if contador == "sorteado" else {"contador": contador}),
-                           **({} if representacao == "xor" else {"representacao": representacao}))
+                           **({} if representacao == "xor" else {"representacao": representacao}),
+                           **({} if layout == "big" else {"layout": layout}),
+                           **({} if distancia == 1 else {"distancia": distancia}))
 
     store: dict[str, np.ndarray] = {}
     if cache.exists():
@@ -214,9 +263,15 @@ def generate(algo: str, arm: str, n_keys: int, rounds: list[int], cache: Path,
             # Um amostrador que devolva menos que MSG_BYTES quebraria a
             # largura das linhas de forma silenciosa em algumas combinações.
             assert len(p1) == len(p2) == MSG_BYTES, "amostrador devolveu tamanho errado"
-            c = (off + 2 * j) % mod_nonce
-            n1 = c.to_bytes(spec.nonce_bytes, "big")
-            n2 = (c + 1).to_bytes(spec.nonce_bytes, "big")
+            # `distancia` k: o par usa os nonces c e c+k, com c múltiplo de 2k,
+            # para que nenhum nonce se repita entre pares do mesmo dispositivo
+            # (reuso de nonce sairia do modelo). k = 1 é o par (2j, 2j+1).
+            c = (off + 2 * distancia * j) % mod_nonce
+            # `big`: contador no fim do nonce (o byte que muda é o último).
+            # `little`: no início (o byte que muda é o primeiro). O Dia 2 do v3
+            # mostrou que a posição muda o piso medido pela contagem de bits.
+            n1 = c.to_bytes(spec.nonce_bytes, layout)
+            n2 = ((c + distancia) % mod_nonce).to_bytes(spec.nonce_bytes, layout)
             i = k * PAIRS_PER_KEY + j
             for r, cipher in ciphers.items():
                 a = cipher.encrypt(key, n1, p1)
@@ -230,7 +285,7 @@ def generate(algo: str, arm: str, n_keys: int, rounds: list[int], cache: Path,
                 # regra. Em `par+xor`, 240 bytes uniformes puros vazariam o
                 # rótulo (bastaria checar se o 3º bloco é o XOR dos dois).
                 ra = np.frombuffer(rnd_drbg.generate(largura), np.uint8)
-                if representacao == "xor":
+                if representacao in ("xor", "unico"):
                     novo["random"][i] = ra
                 else:
                     rb = np.frombuffer(rnd_drbg.generate(largura), np.uint8)
@@ -252,8 +307,8 @@ def generate(algo: str, arm: str, n_keys: int, rounds: list[int], cache: Path,
                 classe_negativa="aleatório uniforme (CTR_DRBG)",
                 nonce=(("contador por dispositivo começando do zero" if contador == "zero"
                         else "contador por dispositivo a partir de offset sorteado (LSB 0)")
-                       + f", big-endian {spec.nonce_bytes} bytes, par (n, n+1)"),
-                contador=contador, representacao=representacao,
+                       + f", {layout}-endian {spec.nonce_bytes} bytes, par (n, n+{distancia})"),
+                distancia=distancia, contador=contador, representacao=representacao, layout=layout,
                 esquema=ESQUEMA_AMOSTRA,
                 plaintexts="P1 != P2, desconhecidos, mesmos para todas as contagens",
                 n_resampled_equal_plaintext=n_resampled,
@@ -268,7 +323,7 @@ def generate(algo: str, arm: str, n_keys: int, rounds: list[int], cache: Path,
 def run_config(algo: str, arm: str, rounds: int, data: dict, n_keys: int, n_test: int,
                n_cv: int, report_dir: Path, mode: str, model_names: list[str],
                politica: str, contador: str = "sorteado",
-               representacao: str = "xor") -> None:
+               representacao: str = "xor", layout: str = "big") -> None:
     spec = ALGOS[algo]
     run_id = f"floor_{algo}_{arm}_r{rounds}"
     braco = f"floor_{algo}_{arm}"
@@ -306,7 +361,7 @@ def run_config(algo: str, arm: str, rounds: int, data: dict, n_keys: int, n_test
         n_features=X.shape[1], seed_gen=SEED_GEN, classe_negativa="aleatório uniforme",
         access_model="mesma chave, nonces consecutivos (n,n+1) por dispositivo, P1!=P2 desconhecidos",
         esquema=ESQUEMA_AMOSTRA, contador=contador, representacao=representacao,
-        diag_bloco1_max_abs_z=round(float(np.abs(z).max()), 2))
+        layout=layout, diag_bloco1_max_abs_z=round(float(np.abs(z).max()), 2))
 
     def fit_eval(name, model, idx_tr, idx_ev, fold):
         if name in NEEDS_SCALING:
@@ -338,7 +393,7 @@ def run_config(algo: str, arm: str, rounds: int, data: dict, n_keys: int, n_test
         # Clássicos do Caminho A e as redes de `neural_floor.py`. As redes
         # precisam saber quantos blocos de criptograma a amostra carrega, para
         # alinhar os bits por posição de byte.
-        blocos = {"xor": 1, "par": 2, "par+xor": 3}[representacao]
+        blocos = {"xor": 1, "par": 2, "par+xor": 3, "unico": 1}[representacao]
         todos = {**build_models(seed=SEED_MODEL),
                  **build_neural_models(seed=SEED_MODEL, blocos=blocos)}
         faltantes = [m for m in model_names if m not in todos]
@@ -382,11 +437,11 @@ def main() -> None:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--algo", required=True, choices=sorted(ALGOS))
     ap.add_argument("--arms", nargs="+", default=["texto"],
-                    choices=["texto", "texto-en", "imagem", "aleatorio"])
+                    choices=["texto", "texto-en", "imagem", "misto", "sensor", "aleatorio"])
     ap.add_argument("--rounds", nargs="+", type=int, default=None,
                     help="contagens a varrer; padrão = a varredura do catálogo "
                          "(região do piso + faixa de controle)")
-    ap.add_argument("--politica", choices=["ambos", "dados"], default="ambos",
+    ap.add_argument("--politica", choices=["ambos", "dados", "init"], default="ambos",
                     help="só para Ascon e Schwaemm; ver floor_algos.py")
     ap.add_argument("--mode", choices=["sweep", "full"], default="sweep")
     ap.add_argument("--models", nargs="+", default=list(DEFAULT_MODELS))
@@ -396,9 +451,15 @@ def main() -> None:
     ap.add_argument("--contador", choices=["sorteado", "zero"], default="sorteado",
                     help="estado do contador de nonce de cada dispositivo: 'sorteado' "
                          "(ponto qualquer, caso geral) ou 'zero' (recém-ligado, pior caso)")
-    ap.add_argument("--representacao", choices=["xor", "par", "par+xor"], default="xor",
+    ap.add_argument("--representacao", choices=["xor", "par", "par+xor", "unico"], default="xor",
                     help="o que o classificador recebe: o XOR dos dois criptogramas "
-                         "do par, os dois inteiros lado a lado, ou os dois mais o XOR")
+                         "do par, os dois inteiros lado a lado, os dois mais o XOR, ou só o primeiro (unico)")
+    ap.add_argument("--layout", choices=["big", "little"], default="big",
+                    help="posição do contador no nonce: 'big' (no fim, padrão) ou "
+                         "'little' (no início)")
+    ap.add_argument("--distancia", type=int, default=1,
+                    help="distância k entre os nonces do par: (c, c+k), com c múltiplo "
+                         "de 2k. Padrão 1, o par de mensagens consecutivas")
     ap.add_argument("--tag", default=None,
                     help="sufixo do diretório de saída, para separar uma família de "
                          "modelos (ex.: 'neural') dos relatórios dos clássicos; os "
@@ -408,12 +469,26 @@ def main() -> None:
                          "dispositivo contribui só os nonces 0 e 1 (o 'primeiro par')")
     ap.add_argument("--smoke", action="store_true",
                     help="10 chaves, poucas contagens, saída separada")
+    ap.add_argument("--seed-gen", type=int, default=None,
+                    help="semente dos dados (chaves, textos, nonces, classe aleatória); "
+                         "padrão 999004. Entra na impressão digital do cache")
+    ap.add_argument("--seed-split", type=int, default=None,
+                    help="semente da separação 240/60 por chave; padrão 42")
+    ap.add_argument("--seed-model", type=int, default=None,
+                    help="semente dos modelos; padrão 7")
     args = ap.parse_args()
+    global SEED_GEN, SEED_SPLIT, SEED_MODEL
+    if args.seed_gen is not None:
+        SEED_GEN = args.seed_gen
+    if args.seed_split is not None:
+        SEED_SPLIT = args.seed_split
+    if args.seed_model is not None:
+        SEED_MODEL = args.seed_model
     # Sobrescreve o padrão do módulo: generate() e run_config() leem o global.
     PAIRS_PER_KEY = args.pares_por_chave
 
     spec = ALGOS[args.algo]
-    if args.politica == "dados" and not spec.dois_parametros:
+    if args.politica in ("dados", "init") and not spec.dois_parametros:
         raise SystemExit(f"{args.algo} tem um parâmetro de rodadas só; a política "
                          "'dados' existe para Ascon e Schwaemm, que têm dois.")
     # Sem --rounds, usa a varredura do catálogo. NÃO usar 1..spec: no Grain
@@ -441,6 +516,12 @@ def main() -> None:
         base = base.parent / f"{base.name}_ppk{PAIRS_PER_KEY}"
     if args.representacao != "xor":
         base = base.parent / f"{base.name}_{args.representacao.replace('+', '_')}"
+    if args.layout != "big":
+        base = base.parent / f"{base.name}_{args.layout}"
+    if args.distancia < 1:
+        raise SystemExit("--distancia precisa ser >= 1")
+    if args.distancia != 1:
+        base = base.parent / f"{base.name}_dist{args.distancia}"
     if args.tag:
         base = base.parent / f"{base.name}_{args.tag}"
     base = base / f"{args.algo}_floor"
@@ -461,11 +542,11 @@ def main() -> None:
         sufixo = "" if args.politica == "ambos" else f"_{args.politica}"
         cache = base / f"{args.algo}_{arm}{sufixo}_k{n_keys}.npz"
         data = generate(args.algo, arm, n_keys, rounds, cache, args.politica, args.contador,
-                        args.representacao)
+                        args.representacao, args.layout, args.distancia)
         for r in rounds:
             run_config(args.algo, arm, r, data, n_keys, n_test, args.n_cv,
                        report_dir, args.mode, args.models, args.politica, args.contador,
-                       args.representacao)
+                       args.representacao, args.layout)
 
     _log("fim")
 

@@ -1,8 +1,8 @@
 """
 Valida uma variante compilada por `build_variant.py` contra os vetores de
 teste oficiais (defaults) ou contra o oráculo Python independente (rodadas
-reduzidas — só Ascon e GIFT têm oráculo hoje; Schwaemm e Grain ficam no
-roundtrip, que não prova corretude).
+reduzidas — Ascon, GIFT e Schwaemm têm oráculo; o Grain fica no roundtrip,
+que não prova corretude).
 
 Uso:
     python scripts/reduced_rounds/validate_variant.py --all-baseline
@@ -104,6 +104,30 @@ def validate_against_oracle_gift(pyd_path: Path, rounds: int, n_random: int) -> 
         raise SystemExit(1)
 
 
+def validate_against_oracle_schwaemm(pyd_path: Path, slim: int, big: int, n_random: int) -> None:
+    from tests.test_crypto_independente import schwaemm256_128_encrypt  # noqa: E402
+
+    cipher = ReducedRoundsCipher(pyd_path, "schwaemm")
+    rng = random.Random(20260910)
+    ruins = []
+    for i in range(n_random):
+        key = bytes(rng.getrandbits(8) for _ in range(16))
+        nonce = bytes(rng.getrandbits(8) for _ in range(32))
+        pt_len = rng.choice([0, 1, 31, 32, 33, 63, 64, 65, 300])
+        ad_len = rng.choice([0, 1, 32, 40, 64])
+        pt = bytes(rng.getrandbits(8) for _ in range(pt_len))
+        ad = bytes(rng.getrandbits(8) for _ in range(ad_len))
+        esperado = schwaemm256_128_encrypt(key, nonce, pt, ad, slim=slim, big=big)
+        obtido = cipher.encrypt(key, nonce, pt, ad)
+        if obtido != esperado:
+            ruins.append(i)
+    status = "PASS" if not ruins else "FAIL"
+    print(f"[schwaemm slim={slim} big={big}] {pyd_path.name}: "
+          f"{n_random - len(ruins)}/{n_random} vs. oráculo Python — {status}")
+    if ruins:
+        raise SystemExit(1)
+
+
 def validate_roundtrip_only(pyd_path: Path, algo: str, n_random: int) -> None:
     """Sem oráculo (Schwaemm): valida só que encrypt/decrypt fecham o ciclo
     e que o comprimento do CT é o esperado — não prova corretude criptográfica
@@ -170,7 +194,7 @@ if __name__ == "__main__":
         if args.slim == 7 and args.big == 11:
             validate_against_kat(pyd, "schwaemm", _KAT_SCHWAEMM)
         else:
-            validate_roundtrip_only(pyd, "schwaemm", args.n_random)
+            validate_against_oracle_schwaemm(pyd, args.slim, args.big, args.n_random)
     elif args.algo == "grain":
         pyd = build_grain(args.init_rounds)
         if args.init_rounds == 256:
